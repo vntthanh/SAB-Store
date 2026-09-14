@@ -1,11 +1,10 @@
 import axios from 'axios';
 import { authClient } from '../lib/auth-client';
 
-// API Base URL
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-// Create axios instance
+// Same-origin relative path: frontend nginx proxies /api/ to the backend,
+// so the bundle never needs to know the domain (AD-3).
 const api = axios.create({
-	baseURL: `${API_BASE_URL}/api`,
+	baseURL: '/api',
 	timeout: 10000,
 	headers: {
 		'Content-Type': 'application/json',

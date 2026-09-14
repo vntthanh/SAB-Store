@@ -7,6 +7,11 @@ services:
     # which is shared with ~40 containers from other projects.
     command: ["--wiredTigerCacheSizeGB", "0.25"]
     mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME is required}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required}
@@ -27,9 +32,19 @@ services:
 
   # SAB Lanyard MinIO Object Storage
   minio:
-    image: minio/minio:latest
+    # Pinned (P2-27): `:latest` + pull_policy: always let the version change
+    # underfoot on every `up -d`. minio/minio was archived upstream in 2026
+    # (RELEASE.2025-10-15T17-29-55Z is the final published image) so this tag
+    # will not move; bumping it later requires a deliberate image swap.
+    image: minio/minio:RELEASE.2025-10-15T17-29-55Z
     restart: unless-stopped
     command: server /data --console-address ":9001"
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
@@ -57,17 +72,32 @@ services:
       dockerfile: Dockerfile
     pull_policy: always
     restart: unless-stopped
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${BACKEND_PORT:-5000}
-      BASE_URL: ${BACKEND_URL:-http://localhost}
+      # PUBLIC_URL is the single source for the public origin (AD-2):
+      # BASE_URL and CORS_ORIGIN both derive from it instead of carrying
+      # their own copies that can drift apart.
+      PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL is required}
+      BASE_URL: ${PUBLIC_URL}
       MONGODB_URI: ${MONGODB_URI:?MONGODB_URI is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
       ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
       APPSCRIPT_URL: ${APPSCRIPT_URL:?APPSCRIPT_URL is required}
-      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN is required}
+      CORS_ORIGIN: ${PUBLIC_URL}
+      # MinIO service account TODO: backend currently authenticates with the
+      # MinIO root credential. Intentionally NOT merged with
+      # MINIO_ROOT_USER/PASSWORD above (AD-2) - split into a bucket-scoped
+      # `sabstore` service account via `mc admin user add` + policy; out of
+      # scope for this phase, tracked separately.
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: ${MINIO_PORT:-9000}
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
@@ -80,10 +110,18 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+        restart: true
       minio:
         condition: service_healthy
+        restart: true
     volumes:
       - backend_uploads:/app/uploads
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5000/health" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     # Only the frontend joins multi-domain. The backend is reachable
     # exclusively through the frontend nginx /api/ proxy.
     #
@@ -97,20 +135,25 @@ services:
 
   # SAB Lanyard Frontend React App (with Nginx Reverse Proxy)
   frontend:
+    # No VITE_API_URL build arg/env: the SPA calls the API via the relative
+    # path /api (AD-3), so nothing domain-specific is baked into the bundle.
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:
-        - VITE_API_URL=${REACT_APP_API_URL:-http://localhost}
     pull_policy: always
-    environment:
-      VITE_API_URL: ${REACT_APP_API_URL:-http://localhost}
     restart: unless-stopped
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     expose:
       - 80
     depends_on:
       backend:
         condition: service_started
+        restart: true
     networks:
       sabstore_network:
       multi-domain:

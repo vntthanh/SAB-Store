@@ -72,12 +72,7 @@ export const getImageUrl = (imageUrl) => {
 		return imageUrl;
 	}
 
-	// If it's a relative path starting with /uploads/, construct full URL
-	if (imageUrl.startsWith('/uploads/')) {
-		const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-		return `${apiUrl}${imageUrl}`;
-	}
-
-	// For other cases (like relative paths without /uploads/), return as is
-	return imageUrl;
+	// Relative paths (e.g. /uploads/...) are already same-origin: frontend
+	// nginx proxies them directly, no domain needs to be prepended (AD-3).
+	return imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`;
 };

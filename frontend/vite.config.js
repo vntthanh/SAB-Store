@@ -24,9 +24,11 @@ export default defineConfig({
 		port: 3000,
 		host: true,
 		strictPort: true,
+		// Dev-only proxy target: the backend always runs on :5000 locally,
+		// so this needs no env var (VITE_API_URL is retired - AD-3).
 		proxy: {
 			'/api': {
-				target: process.env.VITE_API_URL || 'http://localhost:5000',
+				target: 'http://localhost:5000',
 				changeOrigin: true,
 				secure: false,
 			}
