@@ -1,4 +1,5 @@
 const path = require('path');
+const crypto = require('crypto');
 
 const ALLOWED_IMAGE_TYPES = {
 	'image/jpeg': {
@@ -31,7 +32,9 @@ const ALLOWED_IMAGE_TYPES = {
 	}
 };
 
-const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB
+// The frontend resizes images via canvas before upload, so a real product
+// photo never approaches this. nginx caps /api/upload at 50MB independently.
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const DANGEROUS_PATTERNS = [
 	/\.\./,
 	/[<>:"|?*\x00-\x1f]/,
@@ -51,6 +54,22 @@ const DANGEROUS_PATTERNS = [
 	/\.svg$/i
 ];
 
+// WEBP's fourCC sits at byte offset 8-11, after the 4-byte "RIFF" tag and a
+// 4-byte little-endian file-size field. RIFF alone is shared by AVI/WAV/other
+// RIFF containers — checking only the first 4 bytes let any of those through
+// as long as they were uploaded with a .webp filename.
+const WEBP_FOURCC = [0x57, 0x45, 0x42, 0x50]; // "WEBP"
+const WEBP_FOURCC_OFFSET = 8;
+
+function matchesSignature(buffer, signature, offset = 0) {
+	for (let i = 0; i < signature.length; i++) {
+		if (buffer[offset + i] !== signature[i]) {
+			return false;
+		}
+	}
+	return true;
+}
+
 function checkFileSignature(buffer, mimetype) {
 	if (!ALLOWED_IMAGE_TYPES[mimetype]) {
 		return false;
@@ -59,16 +78,15 @@ function checkFileSignature(buffer, mimetype) {
 	const signatures = ALLOWED_IMAGE_TYPES[mimetype].signatures;
 
 	for (const signature of signatures) {
-		let matches = true;
-		for (let i = 0; i < signature.length; i++) {
-			if (buffer[i] !== signature[i]) {
-				matches = false;
-				break;
-			}
+		if (!matchesSignature(buffer, signature)) {
+			continue;
 		}
-		if (matches) {
-			return true;
+
+		if (mimetype === 'image/webp' && !matchesSignature(buffer, WEBP_FOURCC, WEBP_FOURCC_OFFSET)) {
+			continue;
 		}
+
+		return true;
 	}
 
 	return false;
@@ -161,7 +179,9 @@ async function validateImageFile(file) {
 function generateSecureFilename(originalFilename) {
 	const ext = path.extname(originalFilename).toLowerCase();
 	const timestamp = Date.now();
-	const randomStr = Math.random().toString(36).substring(2, 15);
+	// Math.random() is not cryptographically secure and its output is
+	// predictable enough to make filenames guessable. crypto.randomBytes is.
+	const randomStr = crypto.randomBytes(12).toString('hex');
 
 	return `image-${timestamp}-${randomStr}${ext}`;
 }

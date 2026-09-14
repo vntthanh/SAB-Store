@@ -1,5 +1,6 @@
 const express = require('express');
 const Product = require('../../models/Product');
+const { asString, asEnum, asPageLimit, safeSearch } = require('../../utils/query-guard');
 const router = express.Router();
 
 /**
@@ -9,26 +10,24 @@ const router = express.Router();
  */
 router.get('/', async (req, res) => {
 	try {
-		const { page = 1, limit = 10, search = '', category = '', status = '' } = req.query;
+		const { page, limit, search, category, status } = req.query;
+		const searchMatch = safeSearch(search);
+		const safeCategory = asString(category, 100);
+		// `status` used to compare against the *string* 'true': anything else —
+		// including the UI's own 'all' — fell through to `false`, inverting the
+		// filter. asEnum only accepts the two real values and drops the rest.
+		const availableFilter = asEnum(status, ['true', 'false']);
 
-		// Build filter
-		const filter = {};
-		if (search) {
-			filter.$or = [
-				{ name: { $regex: search, $options: 'i' } },
-				{ description: { $regex: search, $options: 'i' } }
-			];
-		}
-		if (category) {
-			filter.category = category;
-		}
-		if (status !== '') {
-			filter.available = status === 'true';
-		}
+		const filter = {
+			...(searchMatch && { $or: [{ name: searchMatch }, { description: searchMatch }] }),
+			...(safeCategory && safeCategory !== 'all' && { category: safeCategory }),
+			...(availableFilter !== undefined && { available: availableFilter === 'true' })
+		};
 
+		const { page: safePage, limit: safeLimit } = asPageLimit(page, limit);
 		const options = {
-			page: parseInt(page),
-			limit: parseInt(limit),
+			page: safePage,
+			limit: safeLimit,
 			sort: { createdAt: -1 }
 		};
 
@@ -62,6 +61,9 @@ router.get('/', async (req, res) => {
  */
 router.post('/', async (req, res) => {
 	try {
+		// stockQuantity intentionally not destructured: it is Phase 06's atomic
+		// stock path's field alone. Accepting it here would let an absolute
+		// admin write race the guarded increment/decrement path.
 		const {
 			name,
 			description,
@@ -70,7 +72,6 @@ router.post('/', async (req, res) => {
 			imageUrl,
 			available,
 			isActive,
-			stockQuantity,
 			minOrderQuantity
 		} = req.body;
 
@@ -90,7 +91,7 @@ router.post('/', async (req, res) => {
 			imageUrl: imageUrl || undefined, // Let the schema default handle it
 			available: available !== undefined ? available : true,
 			isActive: isActive !== undefined ? isActive : true,
-			stockQuantity: stockQuantity || 0,
+			stockQuantity: 0,
 			minOrderQuantity: minOrderQuantity || 1
 		});
 
@@ -136,12 +137,23 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
 	try {
 		const { id } = req.params;
-		const updateData = { ...req.body };
 
-		// Handle imageUrl field - only update if provided and not empty
-		if (updateData.imageUrl === '') {
-			delete updateData.imageUrl; // Let existing value remain
-		}
+		// Explicit allow-list, not `{...req.body}`: mongoose `strict` drops
+		// unknown paths but every *real* schema path — including `stockQuantity`
+		// (Phase 06's atomic stock path owns absolute writes to it), `sku`
+		// (unique; setting it to another product's value would 11000-block that
+		// product's own future update) and `createdAt` — was still writable.
+		const { name, description, price, category, imageUrl, available, isActive, minOrderQuantity } = req.body;
+		const updateData = {
+			...(name !== undefined && { name }),
+			...(description !== undefined && { description }),
+			...(price !== undefined && { price }),
+			...(category !== undefined && { category }),
+			...(imageUrl && { imageUrl }), // empty string: let existing value remain
+			...(available !== undefined && { available }),
+			...(isActive !== undefined && { isActive }),
+			...(minOrderQuantity !== undefined && { minOrderQuantity })
+		};
 
 		const product = await Product.findByIdAndUpdate(
 			id,

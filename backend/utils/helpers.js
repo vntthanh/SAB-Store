@@ -53,16 +53,6 @@ function isValidEmail(email) {
 }
 
 /**
- * Sanitize string input
- * @param {string} str 
- * @returns {string}
- */
-function sanitizeString(str) {
-  if (typeof str !== 'string') return '';
-  return str.trim().replace(/[<>]/g, '');
-}
-
-/**
  * Calculate total amount from order items
  * @param {Array} items 
  * @returns {number}
@@ -100,7 +90,6 @@ module.exports = {
   formatCurrency,
   formatDate,
   isValidEmail,
-  sanitizeString,
   calculateTotal,
   getPaginationInfo
 };
