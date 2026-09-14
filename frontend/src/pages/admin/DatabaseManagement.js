@@ -31,17 +31,19 @@ const DatabaseManagement = () => {
 	const handleExportDatabase = async () => {
 		try {
 			const result = await Swal.fire({
-				title: 'Xuất toàn bộ database?',
+				title: 'Xuất dữ liệu nghiệp vụ?',
 				html: `
 					<div class="text-left">
-						<p class="mb-3">Thao tác này sẽ xuất toàn bộ dữ liệu database thành file JSON bao gồm:</p>
+						<p class="mb-3">Thao tác này sẽ xuất dữ liệu nghiệp vụ thành file JSON bao gồm:</p>
 						<ul class="list-disc list-inside space-y-1 text-sm text-gray-600">
-							<li>Người dùng (${stats?.collections?.users || 0} records)</li>
 							<li>Sản phẩm (${stats?.collections?.products || 0} records)</li>
 							<li>Đơn hàng (${stats?.collections?.orders || 0} records)</li>
 							<li>Combo (${stats?.collections?.combos || 0} records)</li>
-							<li>Tài khoản (${stats?.collections?.accounts || 0} records)</li>
 						</ul>
+						<p class="mt-3 text-sm text-gray-600">
+							<i class="fas fa-info-circle mr-1"></i>
+							Không bao gồm người dùng/tài khoản đăng nhập vì lý do bảo mật. Sao lưu toàn hệ thống dùng mongodump ở tầng vận hành.
+						</p>
 						<p class="mt-3 text-sm text-yellow-600">
 							<i class="fas fa-exclamation-triangle mr-1"></i>
 							Chỉ admin mới có quyền thực hiện thao tác này
@@ -65,9 +67,11 @@ const DatabaseManagement = () => {
 			console.error('Export error:', error);
 
 			const errorMessage = error.response?.data?.message || error.message || 'Lỗi khi xuất database';
-			const errorDetails = error.response?.data?.errorDetails;
+			// Server no longer reflects stack traces or source data back to the
+			// client — only a correlation id, matched against server logs.
+			const correlationId = error.response?.data?.correlationId;
 
-			if (errorDetails) {
+			if (correlationId) {
 				await Swal.fire({
 					title: 'Lỗi Export!',
 					html: `
@@ -91,11 +95,8 @@ Generated: ${new Date().toISOString()}
 ERROR MESSAGE:
 ${errorMessage}
 
-ERROR DETAILS:
-${errorDetails}
-
-STACK TRACE:
-${error.stack || 'Not available'}
+CORRELATION ID (tra trong server log):
+${correlationId}
 `;
 								const blob = new Blob([errorText], { type: 'text/plain;charset=utf-8' });
 								const url = URL.createObjectURL(blob);
@@ -210,6 +211,12 @@ ${error.stack || 'Not available'}
 									<i class="fas fa-exclamation-triangle mr-2"></i>
 									Có ${totalErrors} lỗi xảy ra. Nhấn nút bên dưới để tải file lỗi.
 								</div>` : ''}
+								${response.rejected ? `<div class="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
+									<i class="fas fa-shield-alt mr-2"></i>
+									${Object.entries(response.rejected).map(([section, info]) =>
+										`${section}: ${info.count} bản ghi bị từ chối — ${info.reason}`
+									).join('<br/>')}
+								</div>` : ''}
 								${downloadErrorButton}
 							</div>
 						`,
@@ -241,9 +248,11 @@ ${error.stack || 'Not available'}
 				console.error('Import error:', error);
 
 				const errorMessage = error.response?.data?.message || error.message || 'Lỗi khi import database';
-				const errorDetails = error.response?.data?.errorDetails;
+				// Server no longer reflects stack traces or source data back to the
+				// client — only a correlation id, matched against server logs.
+				const correlationId = error.response?.data?.correlationId;
 
-				if (errorDetails) {
+				if (correlationId) {
 					await Swal.fire({
 						title: 'Lỗi Import!',
 						html: `
@@ -267,11 +276,8 @@ Generated: ${new Date().toISOString()}
 ERROR MESSAGE:
 ${errorMessage}
 
-ERROR DETAILS:
-${errorDetails}
-
-STACK TRACE:
-${error.stack || 'Not available'}
+CORRELATION ID (tra trong server log):
+${correlationId}
 `;
 									const blob = new Blob([errorText], { type: 'text/plain;charset=utf-8' });
 									const url = URL.createObjectURL(blob);
@@ -320,10 +326,6 @@ DETAILED ERRORS BY COLLECTION:
 						report += `\nError #${index + 1}:\n`;
 						report += `  Index: ${error.index}\n`;
 						report += `  Message: ${error.error}\n`;
-						report += `  Data: ${JSON.stringify(error.data, null, 2)}\n`;
-						if (error.stack) {
-							report += `  Stack: ${error.stack}\n`;
-						}
 						report += '\n';
 					});
 				}
@@ -448,7 +450,7 @@ DETAILED ERRORS BY COLLECTION:
 						</div>
 
 						<p className="text-sm text-gray-600 mb-4">
-							Xuất toàn bộ dữ liệu database thành file JSON. Bao gồm tất cả users, products, orders và accounts.
+							Xuất dữ liệu nghiệp vụ (products, combos, orders) thành file JSON. Không bao gồm users/accounts — dùng mongodump để sao lưu toàn hệ thống.
 						</p>
 
 						<button
@@ -518,7 +520,7 @@ DETAILED ERRORS BY COLLECTION:
 							<h4 className="font-medium text-yellow-800 mb-1">Bảo mật</h4>
 							<p className="text-sm text-yellow-700">
 								Các thao tác này chỉ dành cho quản trị viên và được bảo vệ bởi Better-Auth.
-								Dữ liệu được xử lý an toàn với MongoDB transactions để đảm bảo tính toàn vẹn.
+								File import được kiểm tra cấu trúc trước khi ghi; file sai định dạng bị từ chối toàn bộ, không ghi dữ liệu.
 							</p>
 						</div>
 					</div>
