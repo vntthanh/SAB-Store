@@ -1,5 +1,11 @@
 # Migration từ Create React App sang Vite
 
+> **Lỗi thời một phần (14/09/2026).** `VITE_API_URL` đã bị **xóa hẳn**, không còn
+> là build arg hay biến môi trường. Frontend gọi API bằng path tương đối `/api`,
+> nên không cần biến nào chứa domain — xem AD-3 trong plan
+> `260914-1430-harden-prod-single-route-and-critical-fixes`. Mọi đoạn nhắc tới
+> `VITE_API_URL` bên dưới chỉ còn giá trị lịch sử.
+
 ## Tóm tắt thay đổi
 
 Frontend đã được chuyển từ **Create React App (react-scripts)** sang **Vite** để:
