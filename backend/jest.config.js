@@ -9,6 +9,11 @@ module.exports = {
 	setupFilesAfterEnv: ['<rootDir>/tests/setup.js'],
 	testMatch: ['<rootDir>/tests/**/*.test.js'],
 	testTimeout: 30000,
+	// better-auth opens its own MongoClient at require time and never exposes it
+	// for closing, so the process keeps a live handle after the last test and the
+	// run hangs instead of exiting. Drop this once lib/auth.js exports the client
+	// and tests/setup.js can close it in afterAll.
+	forceExit: true,
 	collectCoverageFrom: [
 		'services/**/*.js',
 		'utils/**/*.js',

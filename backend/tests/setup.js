@@ -1,22 +1,22 @@
 /**
  * Per-suite database wiring.
  *
- * The server itself is started once in tests/global-setup.js; this only points
- * mongoose at it and keeps state from leaking between tests. Each suite gets
- * its own database name so suites running in parallel workers cannot see each
- * other's documents.
+ * The server itself starts once in tests/global-setup.js; this only connects
+ * mongoose to it and keeps state from leaking between tests.
+ *
+ * The URI comes from MONGODB_URI (built in tests/env.js) rather than being
+ * assembled here, so mongoose and better-auth's own MongoClient share one
+ * database instead of silently using two.
  */
 const mongoose = require('mongoose');
 
 beforeAll(async () => {
-	const uri = process.env.MONGO_TEST_URI;
-	if (!uri) {
+	const uri = process.env.MONGODB_URI;
+	if (!process.env.MONGO_TEST_URI) {
 		throw new Error('MONGO_TEST_URI is not set — tests/global-setup.js did not run');
 	}
 
-	// One database per worker keeps parallel suites isolated.
-	const dbName = `test_${process.env.JEST_WORKER_ID || '1'}`;
-	await mongoose.connect(uri, { dbName });
+	await mongoose.connect(uri);
 });
 
 // Clear every collection between tests so ordering never leaks state.
