@@ -206,8 +206,30 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
 			});
 
 			if (newStockDeducted !== null) {
-				await Order.updateOne({ _id: id }, { $set: { stockDeducted: newStockDeducted } });
-				transitioned.stockDeducted = newStockDeducted;
+				// F8: guard this write on the exact (status, stockDeducted) pair
+				// this request's own decision was based on — the same shape as
+				// the status transition's own conditional match above. Without
+				// the guard, an interleaved cancel + immediate un-cancel (two
+				// requests racing the same order) could have this write land
+				// *after* a second request already transitioned the order
+				// further, unconditionally clobbering the flag the second
+				// request had already set correctly. If the guard misses (0
+				// matched), someone else changed the order first — leave the
+				// flag alone rather than overwrite it and log for reconciliation
+				// instead of silently losing which write "won".
+				const flagResult = await Order.updateOne(
+					{ _id: id, status, stockDeducted: transitioned.stockDeducted },
+					{ $set: { stockDeducted: newStockDeducted } }
+				);
+				if (flagResult.matchedCount > 0) {
+					transitioned.stockDeducted = newStockDeducted;
+				} else {
+					ErrorLogger.logCritical(
+						'stockDeducted không được ghi vì đơn hàng đã bị thay đổi bởi yêu cầu khác — cần đối soát thủ công',
+						new Error('STOCK_DEDUCTED_FLAG_RACE'),
+						{ orderId: id, previousStatus, status, intendedStockDeducted: newStockDeducted }
+					);
+				}
 			}
 		} catch (stockErr) {
 			// The status transition already committed; since there is no

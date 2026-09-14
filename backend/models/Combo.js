@@ -108,6 +108,20 @@ comboSchema.methods.calculateSavings = function (products) {
 // would then apply as if only B was required. Breaking as soon as a 0 shows
 // up also avoids evaluating requirements that can no longer change the
 // result.
+//
+// F11: requirement quantities are summed PER CATEGORY before computing
+// possible applications. `categoryRequirements` is a plain array — nothing
+// stops an admin from creating a combo with two separate requirement entries
+// on the same category (e.g. 1x"hat" + 1x"hat" instead of a single 2x"hat").
+// Evaluating each requirement independently against the category's full
+// available quantity (the previous code) double-counts that availability:
+// with 3 hats in the cart, each 1x"hat" requirement independently computes
+// floor(3/1)=3 possible applications, so maxApplications comes back 3 even
+// though 2 applications would need 4 hats — only 3 are available.
+// ComboService.applyComboToProducts then tries to actually consume 2 hats ×
+// 3 applications = 6 from a cart that only has 3, and its own post-condition
+// check throws a plain Error, surfacing as a 500 on checkout for any cart
+// that matches such a combo.
 comboSchema.methods.getMaxApplications = function (products) {
 	const productsByCategory = {};
 
@@ -119,11 +133,18 @@ comboSchema.methods.getMaxApplications = function (products) {
 		productsByCategory[item.product.category] += item.quantity;
 	});
 
+	// Merge requirements sharing a category: total quantity NEEDED per
+	// application, summed across every requirement entry for that category.
+	const neededPerCategory = {};
+	for (const requirement of this.categoryRequirements) {
+		neededPerCategory[requirement.category] = (neededPerCategory[requirement.category] || 0) + requirement.quantity;
+	}
+
 	let maxApplications = Infinity;
 
-	for (const requirement of this.categoryRequirements) {
-		const availableQuantity = productsByCategory[requirement.category] || 0;
-		const possibleApplications = Math.floor(availableQuantity / requirement.quantity);
+	for (const [category, neededQuantity] of Object.entries(neededPerCategory)) {
+		const availableQuantity = productsByCategory[category] || 0;
+		const possibleApplications = Math.floor(availableQuantity / neededQuantity);
 		maxApplications = Math.min(maxApplications, possibleApplications);
 		if (maxApplications === 0) break;
 	}

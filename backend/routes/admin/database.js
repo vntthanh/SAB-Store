@@ -18,10 +18,17 @@ const router = express.Router();
 // in-memory multer buffer itself means peak transient memory is roughly 5x
 // the file size, and this endpoint has no legitimate reason to restore a file
 // larger than the business data (products/combos/orders) could ever produce.
+// frontend/nginx.conf's `/api/admin/database/import` location must stay at
+// or above this limit (F10) — nginx previously allowed 50M for a route that
+// has only ever accepted 10M at the multer layer, so an oversized file failed
+// with a generic 500 instead of the explicit 413/400 nginx or the handler
+// below now produce.
+const MAX_IMPORT_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
 const upload = multer({
 	storage: multer.memoryStorage(),
 	limits: {
-		fileSize: 10 * 1024 * 1024 // 10MB limit
+		fileSize: MAX_IMPORT_FILE_SIZE
 	},
 	fileFilter: (req, file, cb) => {
 		if (file.mimetype === 'application/json') {
@@ -35,30 +42,44 @@ const upload = multer({
 /**
  * Only these fields can be written by an imported record.
  *
- * `_id`, `createdAt` and `updatedAt` are absent from every whitelist on
- * purpose: Mongoose assigns a fresh `_id` on `.create()` and manages
- * timestamps itself when the field is left out, so an imported record can
- * never pin an identity or fabricate a history.
+ * `createdAt`/`updatedAt` are absent from every whitelist on purpose:
+ * Mongoose manages timestamps itself when the field is left out, so an
+ * imported record can never fabricate a history.
  *
- * `orders` also excludes `totalAmount` — Phase 05 closed the hole where a
- * client sets its own order total; accepting it from a restore file would
- * reopen exactly that hole. The total is recomputed from the (whitelisted)
- * `items` array by computeOrderTotal() instead of trusted from the file.
+ * `_id` IS whitelisted for `products` and `combos` (F2): order
+ * `items[].productId` / `comboInfo.comboId` are imported verbatim from the
+ * file, still pointing at the *original* ids. If products/combos got fresh
+ * ids on every import, a restore would produce a database whose orders
+ * reference products that no longer exist (populate → null, dashboard
+ * `$group` by productId splits). Phase 08's instinct not to trust a
+ * client-supplied `_id` is kept, just moved from "discard it" to "validate
+ * it" — see `pick()` below, which only accepts a well-formed 24-hex ObjectId
+ * string and silently drops anything else, exactly as before.
+ *
+ * `orders` excludes both `_id` (nothing else references an order's own id)
+ * and `totalAmount` — Phase 05 closed the hole where a client sets its own
+ * order total; accepting it from a restore file would reopen exactly that
+ * hole. The total is recomputed from the (whitelisted) `items` array by
+ * computeOrderTotal()/computeOrderTotalWithCombo() instead of trusted from
+ * the file.
  */
 const IMPORT_WHITELIST = {
 	products: [
-		'name', 'description', 'price', 'imageUrl', 'category', 'available',
+		'_id', 'name', 'description', 'price', 'imageUrl', 'category', 'available',
 		'isActive', 'stockQuantity', 'minOrderQuantity', 'maxOrderQuantity',
 		'sku', 'tags', 'weight', 'dimensions', 'featured', 'salePrice',
 		'saleStartDate', 'saleEndDate'
 	],
-	combos: ['name', 'description', 'price', 'categoryRequirements', 'isActive', 'priority'],
+	combos: ['_id', 'name', 'description', 'price', 'categoryRequirements', 'isActive', 'priority'],
 	orders: [
 		'phoneNumber', 'orderCode', 'orderNumber', 'studentId', 'fullName', 'email',
 		'additionalNote', 'items', 'status', 'transactionCode', 'cancelReason',
 		'lastUpdatedBy', 'isDirectSale', 'comboInfo', 'statusUpdatedAt'
 	]
 };
+
+/** A 24-char hex string — the only shape `JSON.stringify`d ObjectId export produces. */
+const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
 
 // users and accounts are never imported, full stop — restoring credential
 // material is mongodump/mongorestore's job at the operational layer, not this
@@ -72,18 +93,30 @@ const REJECTED_SECTIONS = {
 
 const KNOWN_IMPORT_SECTIONS = [...Object.keys(IMPORT_WHITELIST), ...Object.keys(REJECTED_SECTIONS)];
 
-/** Keep only whitelisted keys from an untrusted record. */
+/**
+ * Keep only whitelisted keys from an untrusted record.
+ *
+ * `_id` gets special handling: it is accepted only when it is a well-formed
+ * 24-hex ObjectId string (see F2 doc comment on IMPORT_WHITELIST above) — a
+ * missing/malformed/forged `_id` is silently dropped, same as before this
+ * field was ever whitelisted, and Mongo assigns a fresh one.
+ */
 function pick(obj, allowed) {
 	const out = {};
 	for (const key of allowed) {
-		if (Object.prototype.hasOwnProperty.call(obj, key)) {
-			out[key] = obj[key];
+		if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+		if (key === '_id') {
+			if (OBJECT_ID_RE.test(String(obj._id))) {
+				out._id = obj._id;
+			}
+			continue;
 		}
+		out[key] = obj[key];
 	}
 	return out;
 }
 
-/** Sum item price * quantity — the only trustworthy source for an order's total. */
+/** Sum item price * quantity — the only trustworthy source for a non-combo order's total. */
 function computeOrderTotal(items) {
 	if (!Array.isArray(items)) return 0;
 	return items.reduce((sum, item) => {
@@ -91,6 +124,35 @@ function computeOrderTotal(items) {
 		const quantity = Number(item?.quantity) || 0;
 		return sum + price * quantity;
 	}, 0);
+}
+
+/**
+ * Total for an order whose `comboInfo` is present (F1).
+ *
+ * `services/pricing.js:198-210` documents the contract every combo order is
+ * created under: combo lines (`items[].fromCombo === true`) keep their
+ * original per-unit price for display, and the combo's actual contribution
+ * to `totalAmount` is `comboInfo.finalTotal`, not Σ(price × quantity) over
+ * those lines — that sum double-counts the combo's own discount away.
+ * `computeOrderTotal()` alone therefore inflates a combo order's restored
+ * total by exactly the combo's savings.
+ *
+ * This mirrors pricing.js's own formula (`comboInfo.finalTotal` + Σ of only
+ * the non-combo lines) rather than trusting the file's `totalAmount`
+ * outright: a genuine export was itself produced by that exact formula, so
+ * recomputing it here reproduces the original total exactly (round-trips),
+ * while a corrupted/hand-edited `comboInfo.finalTotal` still gets caught
+ * instead of silently accepted.
+ *
+ * @returns {number|null} null when comboInfo.finalTotal is missing/not a
+ *          finite number — the caller reports that record as an error
+ *          instead of importing a bogus total.
+ */
+function computeOrderTotalWithCombo(items, comboInfo) {
+	const finalTotal = Number(comboInfo?.finalTotal);
+	if (!Number.isFinite(finalTotal)) return null;
+	const nonComboItems = Array.isArray(items) ? items.filter((item) => !item?.fromCombo) : [];
+	return finalTotal + computeOrderTotal(nonComboItems);
 }
 
 /**
@@ -314,19 +376,26 @@ router.post('/import', upload.single('dataFile'), async (req, res) => {
 						continue;
 					}
 					const picked = pick(raw, IMPORT_WHITELIST.orders);
-					picked.totalAmount = computeOrderTotal(picked.items);
-					const created = await Order.create(picked);
-					// Order.js's pre('save') hook (owned by Phase 06) stamps
-					// statusUpdatedAt to "now" on every create because the status
-					// path is always modified on a new document — round-tripping
-					// through export/import would otherwise silently erase the
-					// original timestamp. Bypass the hook with a direct update.
-					if (picked.statusUpdatedAt) {
-						await Order.updateOne(
-							{ _id: created._id },
-							{ $set: { statusUpdatedAt: picked.statusUpdatedAt } }
-						);
+
+					// F1: a combo order's total is comboInfo.finalTotal + the
+					// non-combo lines, never Σ(price × quantity) over every
+					// line — see computeOrderTotalWithCombo's doc comment.
+					if (picked.comboInfo) {
+						const comboTotal = computeOrderTotalWithCombo(picked.items, picked.comboInfo);
+						if (comboTotal === null) {
+							throw new Error('comboInfo.finalTotal không hợp lệ, không thể khôi phục tổng tiền đơn hàng combo');
+						}
+						picked.totalAmount = comboTotal;
+					} else {
+						picked.totalAmount = computeOrderTotal(picked.items);
 					}
+
+					// Order.js's pre('save') hook only bumps statusUpdatedAt for
+					// an existing document (`!this.isNew`), so on a fresh
+					// `create()` the value passed in here already wins — no
+					// follow-up write needed to preserve the original timestamp
+					// through an export/import round-trip.
+					await Order.create(picked);
 					importResults.orders.imported++;
 				} catch (error) {
 					importResults.orders.errors++;
@@ -403,6 +472,34 @@ router.get('/stats', async (req, res) => {
 			correlationId
 		});
 	}
+});
+
+// Multer throws its own errors (LIMIT_FILE_SIZE, the fileFilter rejection)
+// from the upload.single() middleware itself, before either route handler's
+// own try/catch ever runs — uncaught, those reached the global handler as a
+// generic 500 instead of the explicit 400 every other rejection on this
+// router returns (F10). Mirrors routes/upload.js's own handler. Mounted
+// last so it only sees errors from the routes above.
+router.use((err, req, res, next) => {
+	if (err instanceof multer.MulterError) {
+		const messages = {
+			LIMIT_FILE_SIZE: `Kích thước file vượt quá giới hạn ${MAX_IMPORT_FILE_SIZE / (1024 * 1024)}MB`
+		};
+		return res.status(400).json({
+			error: messages[err.code] || `Lỗi tải file: ${err.code}`,
+			code: 'UPLOAD_ERROR'
+		});
+	}
+
+	// fileFilter's rejection reaches here as a plain Error, not a MulterError.
+	if (err && err.message === 'Only JSON files are allowed') {
+		return res.status(400).json({
+			error: 'Chỉ chấp nhận file JSON',
+			code: 'INVALID_FILE_TYPE'
+		});
+	}
+
+	next(err);
 });
 
 module.exports = router;

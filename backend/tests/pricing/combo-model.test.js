@@ -44,6 +44,53 @@ describe('Combo.getMaxApplications', () => {
 
 		expect(combo.getMaxApplications(cartLines)).toBe(2);
 	});
+
+	// F11 — two separate requirement entries on the same category (instead of
+	// one entry with the summed quantity) used to be evaluated independently
+	// against that category's full available quantity, double-counting
+	// availability: 3 hats independently satisfies two separate 1x"hat"
+	// requirements (floor(3/1)=3 each), so this returned 3 even though 2
+	// applications would need 4 hats total. ComboService.applyComboToProducts
+	// then tried to actually consume 6 hats from a cart with only 3, and its
+	// own post-condition check threw a plain Error — a 500 on checkout.
+	it('merges two requirements on the same category instead of double-counting availability', async () => {
+		const combo = await makeCombo({
+			categoryRequirements: [
+				{ category: 'hat', quantity: 1 },
+				{ category: 'hat', quantity: 1 }
+			]
+		});
+		const hat = await makeProduct({ category: 'hat', price: 100 });
+
+		const cartLines = [{ productId: hat._id.toString(), product: hat, quantity: 3 }];
+
+		// Needs 2 hats per application (1+1); 3 available → floor(3/2) = 1, not 3.
+		expect(combo.getMaxApplications(cartLines)).toBe(1);
+	});
+
+	it('applies a same-category-requirement combo without throwing, consuming exactly what it needs', async () => {
+		const combo = await makeCombo({
+			price: 10,
+			categoryRequirements: [
+				{ category: 'hat', quantity: 1 },
+				{ category: 'hat', quantity: 1 }
+			]
+		});
+		const hat = await makeProduct({ category: 'hat', price: 100 });
+		const cartLines = [{ productId: hat._id.toString(), product: hat, quantity: 3 }];
+
+		const maxApplications = combo.getMaxApplications(cartLines);
+		const comboAnalysis = { combo, maxApplications };
+
+		// A single call: applyComboToProducts mutates cartLines' item objects
+		// in place (decrementing quantity as it consumes), so invoking it
+		// twice against the same cartLines would double-consume and give a
+		// false read on the second call.
+		const result = ComboService.applyComboToProducts(comboAnalysis, cartLines);
+		expect(result.applicationsUsed).toBe(1);
+		expect(result.itemsUsed.reduce((sum, i) => sum + i.quantity, 0)).toBe(2);
+		expect(result.remainingProducts.reduce((sum, i) => sum + i.quantity, 0)).toBe(1);
+	});
 });
 
 describe('ComboService.applyComboToProducts', () => {

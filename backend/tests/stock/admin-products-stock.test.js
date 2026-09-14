@@ -140,4 +140,47 @@ describe('PUT /api/admin/products/:id — guarded delta', () => {
 		expect(final.stockQuantity).toBe(70); // 50 + 10 + 10, composed — proves the guarded $inc, not the
 		// last-write-wins absolute write the route used to perform
 	});
+
+	// F7 — findByIdAndUpdate(updateData) used to run BEFORE the guarded stock
+	// $inc, so when the stock delta was rejected as INSUFFICIENT_STOCK,
+	// name/price/etc had already been committed while the response was a 400
+	// — a partially-applied edit on a request the admin was told failed.
+	//
+	// INSUFFICIENT_STOCK only fires when the *actual current* stock (at the
+	// instant adjustStock's atomic filter runs) can no longer satisfy the
+	// delta computed from this request's own (now stale) read of `existing`
+	// — a plain negative target is rejected earlier, before either write, by
+	// isValidStockQuantity's absolute-value check, so it can't exercise this
+	// path. A concurrent sale draining stock between this request's read and
+	// its own stock write is simulated the same way the "compose, not
+	// last-write-wins" test above does.
+	it('rejects the whole request and writes nothing when a concurrent sale makes the stock delta invalid, even with other fields present', async () => {
+		const product = await makeProduct({ stockQuantity: 5, name: 'Original Name', price: 10000 });
+
+		const originalFindById = Product.findById.bind(Product);
+		const spy = jest.spyOn(Product, 'findById').mockImplementation(async (...args) => {
+			const doc = await originalFindById(...args);
+			// Simulate another sale draining stock to 0 between this
+			// request's read of `existing` and its own guarded $inc.
+			await Product.updateOne({ _id: product._id }, { $set: { stockQuantity: 0 } });
+			return doc;
+		});
+
+		let res;
+		try {
+			res = await request(app)
+				.put(`/api/admin/products/${product._id}`)
+				.set('Cookie', cookies)
+				.send({ name: 'Renamed During Failed Edit', price: 99999, stockQuantity: 3 }); // delta computed as -2
+		} finally {
+			spy.mockRestore();
+		}
+
+		expect(res.status).toBe(400);
+		expect(res.body.message).toMatch(/dưới 0/);
+
+		const stored = await Product.findById(product._id);
+		expect(stored.name).toBe('Original Name');
+		expect(stored.price).toBe(10000);
+	});
 });

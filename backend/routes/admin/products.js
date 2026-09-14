@@ -186,21 +186,23 @@ router.put('/:id', async (req, res) => {
 		};
 
 		let product = existing;
-		if (Object.keys(updateData).length > 0) {
-			product = await Product.findByIdAndUpdate(
-				id,
-				updateData,
-				{ new: true, runValidators: true }
-			);
-		}
 
-		// stockQuantity: the delta is computed from the value this admin's
-		// request actually observed (`existing`, read above, before any other
-		// field was touched), then applied as a guarded atomic $inc. Two
-		// admins concurrently reading stock=50 and both submitting 60 each
-		// compute delta=+10 independently and both apply it — the result is
-		// 70 (composed), never a last-write-wins 60. A negative delta can
-		// never push stock below 0 (see services/stock.js#adjustStock).
+		// stockQuantity is applied FIRST, before updateData (F7): this is the
+		// one field in this route that can still be rejected after the
+		// request has already been validated (INSUFFICIENT_STOCK — a
+		// concurrent sale dropped stock below what this delta needs). Doing
+		// the guarded $inc before writing name/price/category/etc. means a
+		// rejected stock delta returns 400 with NOTHING written, instead of
+		// the previous order (other fields committed, then a 400) which left
+		// a partially-applied edit on a rejected request.
+		//
+		// The delta is computed from the value this admin's request actually
+		// observed (`existing`, read above, before any other field was
+		// touched), then applied as a guarded atomic $inc. Two admins
+		// concurrently reading stock=50 and both submitting 60 each compute
+		// delta=+10 independently and both apply it — the result is 70
+		// (composed), never a last-write-wins 60. A negative delta can never
+		// push stock below 0 (see services/stock.js#adjustStock).
 		if (stockQuantity !== undefined) {
 			const delta = stockQuantity - existing.stockQuantity;
 			if (delta !== 0) {
@@ -217,6 +219,14 @@ router.put('/:id', async (req, res) => {
 					throw stockErr;
 				}
 			}
+		}
+
+		if (Object.keys(updateData).length > 0) {
+			product = await Product.findByIdAndUpdate(
+				id,
+				updateData,
+				{ new: true, runValidators: true }
+			);
 		}
 
 		res.json({
