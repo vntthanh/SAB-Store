@@ -16,9 +16,15 @@ async function initDatabase() {
 		console.log('✅ Connected to MongoDB via Mongoose');
 
 		// Admin credentials from environment
-		const adminEmail = process.env.ADMIN_EMAIL || 'sab@fit.hcmus.edu.vn';
-		const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-		const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+		const adminEmail = process.env.ADMIN_EMAIL;
+		const adminUsername = process.env.ADMIN_USERNAME;
+		const adminPassword = process.env.ADMIN_PASSWORD;
+
+		// No fallbacks: a deploy with a missing .env used to silently create an
+		// admin with a well-known password.
+		if (!adminEmail || !adminUsername || !adminPassword) {
+			throw new Error('ADMIN_EMAIL, ADMIN_USERNAME and ADMIN_PASSWORD are all required');
+		}
 
 		// Check if admin user already exists in database
 		const existingUser = await User.findOne({

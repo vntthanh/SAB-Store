@@ -3,9 +3,13 @@ services:
   mongodb:
     image: mongo:6.0
     restart: unless-stopped
+    # Default WiredTiger cache is 50% x (RAM - 1GB) ~= 4.3GB on this box,
+    # which is shared with ~40 containers from other projects.
+    command: ["--wiredTigerCacheSizeGB", "0.25"]
+    mem_limit: 512m
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-admin}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-password123}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME is required}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required}
       MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE:-minipreorder}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     expose:
@@ -27,12 +31,14 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+    # Never published to the host: MinIO is reached only from inside
+    # sabstore_network (backend SDK, and the frontend nginx /uploads/ proxy).
+    expose:
+      - "9000"
+      - "9001"
     volumes:
       - minio_data:/data
     networks:
@@ -55,17 +61,17 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: ${BACKEND_PORT:-5000}
       BASE_URL: ${BACKEND_URL:-http://localhost}
-      MONGODB_URI: ${MONGODB_URI:-mongodb://admin:password123@mongodb:27017/minipreorder?authSource=admin}
-      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-here}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-sab@fit.hcmus.edu.vn}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
-      APPSCRIPT_URL: ${APPSCRIPT_URL:-your-appscript-url-here}
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
+      MONGODB_URI: ${MONGODB_URI:?MONGODB_URI is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      APPSCRIPT_URL: ${APPSCRIPT_URL:?APPSCRIPT_URL is required}
+      CORS_ORIGIN: ${CORS_ORIGIN:?CORS_ORIGIN is required}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: ${MINIO_PORT:-9000}
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
       MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-sabstore}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
@@ -78,9 +84,10 @@ services:
         condition: service_healthy
     volumes:
       - backend_uploads:/app/uploads
+    # Only the frontend joins multi-domain. The backend is reachable
+    # exclusively through the frontend nginx /api/ proxy.
     networks:
       - sabstore_network
-      - multi-domain
 
   # SAB Lanyard Frontend React App (with Nginx Reverse Proxy)
   frontend:

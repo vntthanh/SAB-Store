@@ -125,7 +125,10 @@ app.use((req, res, next) => {
 app.all('/api/auth/*', toNodeHandler(auth));
 
 // Routes
-app.use('/api/upload', require('./routes/upload'));
+// Upload writes to and deletes from object storage. Only the admin product UI
+// uses it, so it must never be reachable without an admin session.
+const { authenticateAdmin } = require('./middleware/better-auth');
+app.use('/api/upload', authenticateAdmin, require('./routes/upload'));
 app.use('/api/products', require('./routes/products'));
 app.use('/api/orders', require('./routes/orders'));
 app.use('/api/combos', require('./routes/combos'));

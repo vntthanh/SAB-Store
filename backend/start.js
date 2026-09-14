@@ -38,8 +38,10 @@ async function initializeDatabase() {
 				console.log('[OK] Database initialized successfully');
 				resolve();
 			} else {
-				console.log('[WARN] Database initialization completed with warnings or was skipped');
-				resolve(); // Don't fail if init has warnings
+				// Used to resolve() here, so a failed init (e.g. missing admin
+				// credentials) still reported success and the stack came up with
+				// no admin account and nobody noticed.
+				reject(new Error(`Database initialization failed with exit code ${code}`));
 			}
 		});
 

@@ -12,6 +12,16 @@ if (!MONGODB_URI) {
 	throw new Error('MONGODB_URI environment variable is required');
 }
 
+// Session signing secret. Better-auth only hard-fails on its own DEFAULT_SECRET,
+// so a committed placeholder would boot silently with a publicly known key.
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+	throw new Error('JWT_SECRET environment variable is required and must be at least 32 characters');
+}
+if (/change-this|your-super-secret|secret-key-here|changeme/i.test(JWT_SECRET)) {
+	throw new Error('JWT_SECRET is still a placeholder value; set a real secret');
+}
+
 // Create MongoDB connection
 const client = new MongoClient(MONGODB_URI);
 const db = client.db();
@@ -19,7 +29,7 @@ const db = client.db();
 const auth = betterAuth({
 	database: mongodbAdapter(db),
 	baseURL: process.env.BASE_URL || "http://localhost:5000",
-	secret: process.env.JWT_SECRET,
+	secret: JWT_SECRET,
 	trustedOrigins: [
 		...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim()) : []),
 		'https://store.sab.edu.vn',
@@ -89,6 +99,10 @@ const auth = betterAuth({
 				type: "string",
 				defaultValue: "user",
 				required: false,
+				// Must never be settable from the request body. Without this, `role`
+				// joins the public /sign-up/email and /update-user schemas and any
+				// visitor can register straight into the admin role.
+				input: false,
 			},
 		},
 		modelName: "user",
