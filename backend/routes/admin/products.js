@@ -1,7 +1,11 @@
 const express = require('express');
 const Product = require('../../models/Product');
 const { asString, asEnum, asPageLimit, safeSearch } = require('../../utils/query-guard');
+const { StockError, adjustStock } = require('../../services/stock');
 const router = express.Router();
+
+/** `stockQuantity` must be a non-negative integer; anything else is rejected outright. */
+const isValidStockQuantity = (v) => Number.isInteger(v) && v >= 0;
 
 /**
  * @route   GET /api/admin/products
@@ -61,9 +65,9 @@ router.get('/', async (req, res) => {
  */
 router.post('/', async (req, res) => {
 	try {
-		// stockQuantity intentionally not destructured: it is Phase 06's atomic
-		// stock path's field alone. Accepting it here would let an absolute
-		// admin write race the guarded increment/decrement path.
+		// stockQuantity IS accepted here (unlike PUT below): nothing can race a
+		// product that does not exist yet, so a plain absolute write is safe —
+		// there is no concurrent editor to compose with.
 		const {
 			name,
 			description,
@@ -72,7 +76,8 @@ router.post('/', async (req, res) => {
 			imageUrl,
 			available,
 			isActive,
-			minOrderQuantity
+			minOrderQuantity,
+			stockQuantity
 		} = req.body;
 
 		// Validate required fields
@@ -80,6 +85,13 @@ router.post('/', async (req, res) => {
 			return res.status(400).json({
 				success: false,
 				message: 'Tên, giá và danh mục sản phẩm là bắt buộc'
+			});
+		}
+
+		if (stockQuantity !== undefined && !isValidStockQuantity(stockQuantity)) {
+			return res.status(400).json({
+				success: false,
+				message: 'Số lượng tồn kho không hợp lệ'
 			});
 		}
 
@@ -91,7 +103,7 @@ router.post('/', async (req, res) => {
 			imageUrl: imageUrl || undefined, // Let the schema default handle it
 			available: available !== undefined ? available : true,
 			isActive: isActive !== undefined ? isActive : true,
-			stockQuantity: 0,
+			stockQuantity: stockQuantity !== undefined ? stockQuantity : 0,
 			minOrderQuantity: minOrderQuantity || 1
 		});
 
@@ -139,11 +151,29 @@ router.put('/:id', async (req, res) => {
 		const { id } = req.params;
 
 		// Explicit allow-list, not `{...req.body}`: mongoose `strict` drops
-		// unknown paths but every *real* schema path — including `stockQuantity`
-		// (Phase 06's atomic stock path owns absolute writes to it), `sku`
+		// unknown paths but every *real* schema path — including `sku`
 		// (unique; setting it to another product's value would 11000-block that
 		// product's own future update) and `createdAt` — was still writable.
-		const { name, description, price, category, imageUrl, available, isActive, minOrderQuantity } = req.body;
+		// `stockQuantity` is handled separately below: it is never written as
+		// an absolute value here, only as a guarded delta (see below), so two
+		// concurrent edits compose instead of last-write-wins.
+		const { name, description, price, category, imageUrl, available, isActive, minOrderQuantity, stockQuantity } = req.body;
+
+		if (stockQuantity !== undefined && !isValidStockQuantity(stockQuantity)) {
+			return res.status(400).json({
+				success: false,
+				message: 'Số lượng tồn kho không hợp lệ'
+			});
+		}
+
+		const existing = await Product.findById(id);
+		if (!existing) {
+			return res.status(404).json({
+				success: false,
+				message: 'Không tìm thấy sản phẩm'
+			});
+		}
+
 		const updateData = {
 			...(name !== undefined && { name }),
 			...(description !== undefined && { description }),
@@ -155,17 +185,38 @@ router.put('/:id', async (req, res) => {
 			...(minOrderQuantity !== undefined && { minOrderQuantity })
 		};
 
-		const product = await Product.findByIdAndUpdate(
-			id,
-			updateData,
-			{ new: true, runValidators: true }
-		);
+		let product = existing;
+		if (Object.keys(updateData).length > 0) {
+			product = await Product.findByIdAndUpdate(
+				id,
+				updateData,
+				{ new: true, runValidators: true }
+			);
+		}
 
-		if (!product) {
-			return res.status(404).json({
-				success: false,
-				message: 'Không tìm thấy sản phẩm'
-			});
+		// stockQuantity: the delta is computed from the value this admin's
+		// request actually observed (`existing`, read above, before any other
+		// field was touched), then applied as a guarded atomic $inc. Two
+		// admins concurrently reading stock=50 and both submitting 60 each
+		// compute delta=+10 independently and both apply it — the result is
+		// 70 (composed), never a last-write-wins 60. A negative delta can
+		// never push stock below 0 (see services/stock.js#adjustStock).
+		if (stockQuantity !== undefined) {
+			const delta = stockQuantity - existing.stockQuantity;
+			if (delta !== 0) {
+				try {
+					product = await adjustStock(id, delta);
+				} catch (stockErr) {
+					if (stockErr instanceof StockError && stockErr.code === 'INSUFFICIENT_STOCK') {
+						return res.status(400).json({
+							success: false,
+							message: 'Không thể giảm tồn kho xuống dưới 0',
+							details: stockErr.details
+						});
+					}
+					throw stockErr;
+				}
+			}
 		}
 
 		res.json({
