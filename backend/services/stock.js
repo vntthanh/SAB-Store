@@ -118,19 +118,43 @@ async function restoreStock(productId, quantity, opts = {}) {
  * forward and the reverse write) cannot be un-done automatically — it is
  * logged as critical for manual reconciliation rather than silently
  * swallowed, and the original error still propagates.
+ *
+ * `tolerateMissingProduct` (F5): when restoring stock for an order whose
+ * product was hard-deleted after the sale, `adjustStock` has nothing to
+ * increment and throws PRODUCT_NOT_FOUND. Without this, that line's whole
+ * cancel/status-transition fails, the caller reverts the order's status, and
+ * the order becomes permanently un-cancellable — every future cancel attempt
+ * hits the same missing product. With it, a missing product on a *restore*
+ * is logged and skipped (nothing to compensate for that line either: the
+ * item never applied) instead of failing the whole operation. Only
+ * `restoreStockForItems` opts into this — `deductStockForItems` (selling
+ * stock of a product that no longer exists) must still fail hard.
  */
 async function applyStockDeltaForItems(items, sign, opts = {}) {
+	const { tolerateMissingProduct = false, ...adjustOpts } = opts;
 	const applied = [];
 	try {
 		for (const item of items) {
-			await adjustStock(item.productId, sign * item.quantity, opts);
-			applied.push(item);
+			try {
+				await adjustStock(item.productId, sign * item.quantity, adjustOpts);
+				applied.push(item);
+			} catch (err) {
+				if (tolerateMissingProduct && err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') {
+					ErrorLogger.logCritical(
+						'Sản phẩm đã bị xóa — bỏ qua hoàn kho cho dòng này, cần đối soát thủ công nếu cần',
+						err,
+						{ productId: item.productId, quantity: item.quantity, sign }
+					);
+					continue; // nothing was applied for this line, so nothing to compensate
+				}
+				throw err;
+			}
 		}
 		return applied;
 	} catch (err) {
 		for (const item of applied.reverse()) {
 			try {
-				await adjustStock(item.productId, -sign * item.quantity, opts);
+				await adjustStock(item.productId, -sign * item.quantity, adjustOpts);
 			} catch (compensationError) {
 				ErrorLogger.logCritical(
 					'Bù kho thất bại sau khi trừ/hoàn một phần — cần sửa tay',
@@ -148,9 +172,13 @@ function deductStockForItems(items, opts = {}) {
 	return applyStockDeltaForItems(items, -1, opts);
 }
 
-/** Restore stock for every `{productId, quantity}` line; compensates on partial failure. */
+/**
+ * Restore stock for every `{productId, quantity}` line; compensates on
+ * partial failure. Tolerates a hard-deleted product (F5) — see
+ * `applyStockDeltaForItems`'s doc comment.
+ */
 function restoreStockForItems(items, opts = {}) {
-	return applyStockDeltaForItems(items, 1, opts);
+	return applyStockDeltaForItems(items, 1, { ...opts, tolerateMissingProduct: true });
 }
 
 /**

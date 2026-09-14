@@ -170,6 +170,29 @@ describe('Admin PUT /api/admin/orders/:id — stock accounting', () => {
 		const saved = await Order.findById(order._id);
 		expect(saved.statusHistory.length).toBe(historyBefore + 1);
 	});
+
+	// F5 — a hard-deleted product used to make a past direct-sale order
+	// permanently un-cancellable: restore → PRODUCT_NOT_FOUND →
+	// applyStatusTransitionStockEffect's catch reverted the status → 500,
+	// forever, on every future cancel attempt. Deleting is a real feature
+	// (DELETE /api/admin/products/:id), so this is reachable in production.
+	it('cancelling a direct-sale order whose product was hard-deleted still succeeds', async () => {
+		const { order, product } = await makeDirectSaleOrder();
+		await Product.deleteOne({ _id: product._id });
+
+		const res = await request(app)
+			.put(`/api/admin/orders/${order._id}`)
+			.set('Cookie', cookies)
+			.send({ status: 'cancelled', cancelReason: 'product deleted after sale' });
+
+		expect(res.status).toBe(200);
+
+		const saved = await Order.findById(order._id);
+		expect(saved.status).toBe('cancelled');
+		// Nothing to restore — the flag still flips, there is just no stock
+		// mutation for this line.
+		expect(saved.stockDeducted).toBe(false);
+	});
 });
 
 describe('Seller PUT /api/seller/orders/:id/status — stock accounting (the route the POS UI actually calls)', () => {
@@ -217,5 +240,24 @@ describe('Seller PUT /api/seller/orders/:id/status — stock accounting (the rou
 			.send({ status: 'pending' });
 
 		expect(res.status).toBe(400);
+	});
+
+	// F9 — this route had no validateOrderUpdate (admin's identical route
+	// does). Mongoose 8 does reject the over-length note at the schema level
+	// (empirically verified), but this route's catch-all turned that
+	// ValidationError into an opaque 500 instead of a clean 400 — asserted
+	// here as a 400 with no oversized note left in statusHistory.
+	it('rejects a note over 500 characters instead of pushing it unbounded into statusHistory', async () => {
+		const { order } = await makeWebOrder();
+		const res = await request(app)
+			.put(`/api/seller/orders/${order._id}/status`)
+			.set('Cookie', cookies)
+			.send({ status: 'paid', transactionCode: 'TX1', note: 'x'.repeat(501) });
+
+		expect(res.status).toBe(400);
+
+		const saved = await Order.findById(order._id);
+		expect(saved.status).toBe('confirmed'); // transition never committed
+		expect(saved.statusHistory.some((h) => h.note && h.note.length > 500)).toBe(false);
 	});
 });

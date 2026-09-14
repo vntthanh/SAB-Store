@@ -219,8 +219,17 @@ router.get('/:orderCode', async (req, res) => {
 		}
 
 		// Generate QR code URL and payment description. studentId/fullName are
-		// needed here to build them but must not leak into the response below
-		// (P1-7 — this route is public to anyone holding the order code).
+		// needed here to build them but must not leak as top-level response
+		// fields below (P1-7).
+		//
+		// Accepted trade-off (not fixed further): studentId and a
+		// name-derived short name are still embedded verbatim inside
+		// paymentDescription/qrUrl's addInfo, because bank-transfer
+		// reconciliation needs the student id in the transfer content to
+		// match a payment to a student. P1-7 only stops studentId/fullName
+		// from appearing as their own top-level fields — anyone holding an
+		// order code can still read the student id (and initials+surname)
+		// out of paymentDescription/qrUrl. This is accepted, not an oversight.
 		let qrUrl = null;
 		let paymentDescription = null;
 		try {
@@ -240,7 +249,9 @@ router.get('/:orderCode', async (req, res) => {
 		}
 
 		// Return order information including payment details. studentId and
-		// fullName are intentionally excluded — see the comment above.
+		// fullName are intentionally excluded as top-level fields — see the
+		// comment above about paymentDescription/qrUrl still carrying the
+		// student id by design.
 		res.json({
 			success: true,
 			data: {

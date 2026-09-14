@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Combo = require('../models/Combo');
 const Product = require('../models/Product');
 
@@ -19,12 +20,54 @@ class ComboService {
 			};
 		}
 
+		// Merge duplicate productId lines and normalize ObjectId casing —
+		// mirrors services/pricing.js:96-107.
+		//
+		// F3: without merging, two cart lines for the same product each keep
+		// their own entry in `remainingProducts`. applyComboToProducts()
+		// consumes combo quantity via `remainingProducts.find(p =>
+		// p.productId === item.productId)`, which always returns the FIRST
+		// matching entry — so the second line's consumption is subtracted
+		// from the first line while the second line's full quantity survives
+		// untouched. A 2-unit duplicate-line cart (two lines of 1 each) that
+		// qualifies for a combo needing 2 then bills combo(2) + individual(1)
+		// and deducts 3 units of stock for a 2-unit purchase.
+		//
+		// F4: an uppercase-hex productId passes Product.find's `$in` (Mongo
+		// casts case-insensitively) but fails the strict `p._id.toString() ===
+		// item.productId` compare below, silently dropping the line.
+		// Normalizing every id through `new ObjectId(...).toString()` here
+		// (lowercase, canonical form) fixes both the merge key and the
+		// compare the same way.
+		const qtyByProductId = new Map();
+		for (const item of items) {
+			const rawId = item && item.productId;
+			if (!rawId || !mongoose.Types.ObjectId.isValid(rawId)) continue;
+			const key = new mongoose.Types.ObjectId(rawId).toString();
+			const quantity = Number(item.quantity) || 0;
+			if (quantity <= 0) continue;
+			qtyByProductId.set(key, (qtyByProductId.get(key) || 0) + quantity);
+		}
+
+		const mergedItems = [...qtyByProductId.entries()].map(([productId, quantity]) => ({ productId, quantity }));
+
+		if (mergedItems.length === 0) {
+			return {
+				originalTotal: 0,
+				finalTotal: 0,
+				totalSavings: 0,
+				appliedCombos: [],
+				remainingItems: [],
+				breakdown: []
+			};
+		}
+
 		// Get product details
-		const productIds = items.map(item => item.productId);
+		const productIds = mergedItems.map(item => item.productId);
 		const products = await Product.find({ _id: { $in: productIds } });
 
 		// Create products with quantities
-		let remainingProducts = items.map(item => {
+		let remainingProducts = mergedItems.map(item => {
 			const product = products.find(p => p._id.toString() === item.productId);
 			return {
 				productId: item.productId,
@@ -47,6 +90,18 @@ class ComboService {
 		const originalTotal = remainingProducts.reduce((total, item) => {
 			return total + (item.product.price * item.quantity);
 		}, 0);
+
+		// F3 defense-in-depth: the per-application post-condition inside
+		// applyComboToProducts (e.g. "2 items consumed for 2 needed") cannot
+		// catch the duplicate-line bug above, because it only checks the
+		// count *within one combo application* — 2 consumed for a combo
+		// needing 2 is correct in isolation even when the wrong entry was
+		// decremented. This checks the whole cart instead, after every combo
+		// has been applied below: total quantity consumed across every combo
+		// application plus every remaining individual item must equal the
+		// merged input quantity, or stock/money for this cart would silently
+		// not match what was actually charged/deducted.
+		const totalInputQuantity = mergedItems.reduce((sum, item) => sum + item.quantity, 0);
 
 		const appliedCombos = [];
 		const breakdown = [];
@@ -118,6 +173,20 @@ class ComboService {
 		}
 
 		currentTotal += remainingTotal;
+
+		// F3 defense-in-depth post-condition (see comment above): every unit
+		// bought must be accounted for exactly once, either inside a combo
+		// application or as a remaining individual line.
+		const comboConsumedQuantity = appliedCombos.reduce(
+			(sum, applied) => sum + applied.itemsUsed.reduce((s, i) => s + i.quantity, 0),
+			0
+		);
+		const remainingQuantity = remainingProducts.reduce((sum, item) => sum + item.quantity, 0);
+		if (comboConsumedQuantity + remainingQuantity !== totalInputQuantity) {
+			throw new Error(
+				`Kiểm tra số lượng thất bại: giỏ hàng có ${totalInputQuantity} sản phẩm nhưng đã xử lý ${comboConsumedQuantity + remainingQuantity}`
+			);
+		}
 
 		return {
 			originalTotal,

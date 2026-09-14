@@ -3,7 +3,7 @@ const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const { authenticateSeller } = require('../middleware/better-auth');
-const { validatePasswordChange } = require('../middleware/validation');
+const { validatePasswordChange, validateOrderUpdate } = require('../middleware/validation');
 const { getPaginationInfo, formatDate, formatCurrency } = require('../utils/helpers');
 const { sendOrderToAppScript } = require('../utils/appscript');
 const { generateDirectSalePaymentQR } = require('../utils/paymentHelper');
@@ -262,18 +262,23 @@ router.get('/orders', async (req, res) => {
  * @route   PUT /api/seller/orders/:id/status
  * @desc    Update order status
  * @access  Private (Seller)
+ *
+ * validateOrderUpdate (F9): the admin PUT /:id route already ran this; this
+ * route didn't. Mongoose 8's `runValidators` DOES validate a `$push`-ed
+ * statusHistory entry (verified directly — an over-length note throws a real
+ * ValidationError here), so an oversized note was never actually stored; the
+ * defect was that this route's catch-all `catch` block has no `ValidationError`
+ * branch (unlike the admin route's), so that rejection surfaced as an opaque
+ * 500 instead of the clean 400 every other rejection on this API returns.
+ * Running the same express-validator chain admin's route already uses closes
+ * that gap the same way admin's route closes it — the request is now
+ * rejected before it ever reaches Mongoose. Also folds in the status-enum
+ * check the manual `if` below used to do, from the same list.
  */
-router.put('/orders/:id/status', async (req, res) => {
+router.put('/orders/:id/status', validateOrderUpdate, async (req, res) => {
 	const { id } = req.params;
 	try {
 		const { status, transactionCode, cancelReason, note } = req.body;
-
-		if (!ORDER_STATUSES.includes(status)) {
-			return res.status(400).json({
-				success: false,
-				message: 'Trạng thái đơn hàng không hợp lệ'
-			});
-		}
 
 		const existing = await Order.findById(id).lean();
 		if (!existing) {
@@ -347,8 +352,24 @@ router.put('/orders/:id/status', async (req, res) => {
 			});
 
 			if (newStockDeducted !== null) {
-				await Order.updateOne({ _id: id }, { $set: { stockDeducted: newStockDeducted } });
-				transitioned.stockDeducted = newStockDeducted;
+				// F8: guard on the exact (status, stockDeducted) pair this
+				// request's decision was based on — see the identical comment
+				// in routes/admin/orders.js PUT /:id for the full race and why
+				// an unguarded write here could clobber a concurrent
+				// cancel/un-cancel's already-correct flag.
+				const flagResult = await Order.updateOne(
+					{ _id: id, status, stockDeducted: transitioned.stockDeducted },
+					{ $set: { stockDeducted: newStockDeducted } }
+				);
+				if (flagResult.matchedCount > 0) {
+					transitioned.stockDeducted = newStockDeducted;
+				} else {
+					ErrorLogger.logCritical(
+						'stockDeducted không được ghi vì đơn hàng đã bị thay đổi bởi yêu cầu khác — cần đối soát thủ công',
+						new Error('STOCK_DEDUCTED_FLAG_RACE'),
+						{ orderId: id, previousStatus, status, intendedStockDeducted: newStockDeducted }
+					);
+				}
 			}
 		} catch (stockErr) {
 			await Order.updateOne(
