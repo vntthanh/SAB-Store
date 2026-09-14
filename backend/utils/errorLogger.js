@@ -70,7 +70,13 @@ class ErrorLogger {
 		if (!body || typeof body !== 'object') return body;
 
 		const sanitized = { ...body };
-		const sensitiveFields = ['password', 'token', 'apiKey', 'secret', 'creditCard'];
+		const sensitiveFields = [
+			'password', 'token', 'apiKey', 'secret', 'creditCard',
+			// Student PII: this app stores real names, emails, phone numbers and
+			// student IDs for 430+ live orders — logs must not become a second,
+			// unaudited copy of that data.
+			'email', 'phoneNumber', 'studentId', 'fullName'
+		];
 
 		const sanitizeRecursive = (obj) => {
 			for (const key in obj) {

@@ -3,6 +3,7 @@ const Combo = require('../models/Combo');
 const Product = require('../models/Product');
 const ComboService = require('../services/ComboService');
 const { authenticateAdmin, authenticateSeller, authenticateUser } = require('../middleware/better-auth');
+const { validateComboItems } = require('../middleware/validation');
 const ErrorLogger = require('../utils/errorLogger');
 const router = express.Router();
 
@@ -31,7 +32,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
 			data: { combos }
 		});
 	} catch (error) {
-		ErrorLogger.logRoute(error, 'GET /combos', req);
+		ErrorLogger.logRoute('GET /combos', error, req);
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi lấy danh sách combo'
@@ -53,7 +54,7 @@ router.get('/active', async (req, res) => {
 			data: { combos }
 		});
 	} catch (error) {
-		ErrorLogger.logRoute(error, 'GET /combos/active', req);
+		ErrorLogger.logRoute('GET /combos/active', error, req);
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi lấy danh sách combo'
@@ -66,16 +67,9 @@ router.get('/active', async (req, res) => {
  * @desc    Detect optimal combo combination for given products
  * @access  Public
  */
-router.post('/detect', async (req, res) => {
+router.post('/detect', validateComboItems, async (req, res) => {
 	try {
 		const { items } = req.body;
-
-		if (!items || !Array.isArray(items) || items.length === 0) {
-			return res.status(400).json({
-				success: false,
-				message: 'Danh sách sản phẩm là bắt buộc'
-			});
-		}
 
 		// Get product details for all items
 		const productIds = items.map(item => item.productId);
@@ -205,7 +199,7 @@ router.post('/detect', async (req, res) => {
 			}
 		});
 	} catch (error) {
-		ErrorLogger.logRoute(error, 'POST /combos/detect', req);
+		ErrorLogger.logRoute('POST /combos/detect', error, req);
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi phát hiện combo'
@@ -266,13 +260,22 @@ router.post('/', authenticateAdmin, async (req, res) => {
 			message: 'Tạo combo thành công'
 		});
 	} catch (error) {
-		ErrorLogger.logRoute(error, 'POST /combos', req);
+		ErrorLogger.logRoute('POST /combos', error, req);
 
 		if (error.name === 'ValidationError') {
 			const errors = Object.values(error.errors).map(err => err.message);
 			return res.status(400).json({
 				success: false,
 				message: errors.join(', ')
+			});
+		}
+
+		// e.g. { price: 'abc' } fails Number coercion at save time as a CastError,
+		// not a ValidationError — left uncaught this fell through to a 500.
+		if (error.name === 'CastError') {
+			return res.status(400).json({
+				success: false,
+				message: `Dữ liệu không hợp lệ: ${error.path}`
 			});
 		}
 
@@ -288,16 +291,9 @@ router.post('/', authenticateAdmin, async (req, res) => {
  * @desc    Calculate optimal pricing for cart items
  * @access  Public
  */
-router.post('/pricing', async (req, res) => {
+router.post('/pricing', validateComboItems, async (req, res) => {
 	try {
 		const { items } = req.body;
-
-		if (!items || !Array.isArray(items)) {
-			return res.status(400).json({
-				success: false,
-				message: 'Danh sách sản phẩm là bắt buộc'
-			});
-		}
 
 		const pricingBreakdown = await ComboService.getPricingBreakdown(items);
 
@@ -306,7 +302,7 @@ router.post('/pricing', async (req, res) => {
 			data: pricingBreakdown
 		});
 	} catch (error) {
-		ErrorLogger.logRoute(error, 'POST /combos/pricing', req);
+		ErrorLogger.logRoute('POST /combos/pricing', error, req);
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi tính toán giá'
@@ -390,13 +386,22 @@ router.put('/:id', authenticateAdmin, async (req, res) => {
 			message: 'Cập nhật combo thành công'
 		});
 	} catch (error) {
-		ErrorLogger.logRoute(error, 'PUT /combos/:id', req);
+		ErrorLogger.logRoute('PUT /combos/:id', error, req);
 
 		if (error.name === 'ValidationError') {
 			const errors = Object.values(error.errors).map(err => err.message);
 			return res.status(400).json({
 				success: false,
 				message: errors.join(', ')
+			});
+		}
+
+		// e.g. { price: 'abc' } fails Number coercion at save time as a CastError,
+		// not a ValidationError — left uncaught this fell through to a 500.
+		if (error.name === 'CastError') {
+			return res.status(400).json({
+				success: false,
+				message: `Dữ liệu không hợp lệ: ${error.path}`
 			});
 		}
 
@@ -439,7 +444,7 @@ router.delete('/:id', authenticateAdmin, async (req, res) => {
 			message: 'Xóa combo thành công'
 		});
 	} catch (error) {
-		ErrorLogger.logRoute(error, 'DELETE /combos/:id', req);
+		ErrorLogger.logRoute('DELETE /combos/:id', error, req);
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi xóa combo'
@@ -477,7 +482,7 @@ router.get('/:id', authenticateAdmin, async (req, res) => {
 			data: { combo }
 		});
 	} catch (error) {
-		ErrorLogger.logRoute(error, 'GET /combos/:id', req);
+		ErrorLogger.logRoute('GET /combos/:id', error, req);
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi lấy thông tin combo'

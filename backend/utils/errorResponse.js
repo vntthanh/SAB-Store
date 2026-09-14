@@ -96,7 +96,10 @@ class ErrorResponse {
 			}
 		};
 
-		if (error.details && Object.keys(error.details).length > 0) {
+		// `details` can carry internal context meant for logs, not clients — the
+		// CORS handler in server.js attaches { allowedOrigins } to it, for one.
+		// Only forward it outside production, same as the debug block below.
+		if (!isProduction && error.details && Object.keys(error.details).length > 0) {
 			response.error.details = error.details;
 		}
 
@@ -168,7 +171,16 @@ function handleMongooseError(error) {
 		return ErrorResponse.conflictError(`${field} đã tồn tại`, { field });
 	}
 
-	return ErrorResponse.databaseError(error.message, { originalError: error.name });
+	// Fallback: an unrecognised driver/connection error. Its raw `.message` can
+	// contain internal detail (connection strings, index names, field values)
+	// that must never reach a client — log it and answer with the generic
+	// message instead. `undefined` here falls through to ErrorResponse's own
+	// default DATABASE_ERROR message.
+	ErrorLogger.logDatabase('unhandled', error);
+	return ErrorResponse.databaseError(
+		process.env.NODE_ENV === 'production' ? undefined : error.message,
+		{ originalError: error.name }
+	);
 }
 
 module.exports = {

@@ -1,6 +1,6 @@
 const express = require('express');
 const multer = require('multer');
-const path = require('path');
+const crypto = require('crypto');
 const { uploadFile, deleteFile } = require('../lib/minio');
 const { validateImageFile, generateSecureFilename, sanitizeFilename, MAX_FILE_SIZE } = require('../utils/fileValidator');
 const ErrorLogger = require('../utils/errorLogger');
@@ -25,6 +25,30 @@ const upload = multer({
 	},
 	fileFilter: fileFilter
 });
+
+// Errors that are safe to show verbatim: they describe what is wrong with
+// the *file the caller just sent*, not an internal (MinIO, filesystem) detail.
+const isClientFacingUploadError = (message) =>
+	message.includes('File signature') ||
+	message.includes('Invalid') ||
+	message.includes('exceeds') ||
+	message.includes('Filename validation');
+
+// A correlation id lets ops find the full error (with stack) in the server
+// log for a report like "upload failed just now" without ever putting the
+// raw internal message (MinIO connection details, stack fragments, etc.) in
+// the client-facing response.
+function sendUploadServerError(res, routeName, error, req, fallbackMessage) {
+	const correlationId = crypto.randomUUID();
+	ErrorLogger.logRoute(routeName, error, req);
+	console.error(`[UPLOAD ${correlationId}]`, routeName, error);
+
+	res.status(500).json({
+		success: false,
+		message: fallbackMessage,
+		correlationId
+	});
+}
 
 router.post('/product-image', upload.single('image'), async (req, res) => {
 	try {
@@ -51,23 +75,15 @@ router.post('/product-image', upload.single('image'), async (req, res) => {
 			filename: filename
 		});
 	} catch (error) {
-		console.error('Upload error:', error);
-
-		if (error.message.includes('File signature') ||
-			error.message.includes('Invalid') ||
-			error.message.includes('exceeds') ||
-			error.message.includes('Filename validation')) {
+		if (isClientFacingUploadError(error.message)) {
+			ErrorLogger.logRoute('POST /upload/product-image', error, req);
 			return res.status(400).json({
 				success: false,
 				message: error.message
 			});
 		}
 
-		res.status(500).json({
-			success: false,
-			message: 'Lỗi server khi tải ảnh',
-			error: error.message
-		});
+		sendUploadServerError(res, 'POST /upload/product-image', error, req, 'Lỗi server khi tải ảnh');
 	}
 });
 
@@ -104,23 +120,15 @@ router.post('/product-images', upload.array('images', 5), async (req, res) => {
 			images: imageUrls
 		});
 	} catch (error) {
-		ErrorLogger.logRoute(error, 'POST /upload/product-images', req);
-
-		if (error.message.includes('File signature') ||
-			error.message.includes('Invalid') ||
-			error.message.includes('exceeds') ||
-			error.message.includes('Filename validation')) {
+		if (isClientFacingUploadError(error.message)) {
+			ErrorLogger.logRoute('POST /upload/product-images', error, req);
 			return res.status(400).json({
 				success: false,
 				message: error.message
 			});
 		}
 
-		res.status(500).json({
-			success: false,
-			message: 'Lỗi server khi tải ảnh',
-			error: error.message
-		});
+		sendUploadServerError(res, 'POST /upload/product-images', error, req, 'Lỗi server khi tải ảnh');
 	}
 });
 
@@ -136,9 +144,8 @@ router.delete('/product-image/:filename', async (req, res) => {
 			message: 'Xóa ảnh thành công'
 		});
 	} catch (error) {
-		ErrorLogger.logRoute(error, 'DELETE /upload/product-image/:filename', req);
-
 		if (error.message.includes('Invalid filename')) {
+			ErrorLogger.logRoute('DELETE /upload/product-image/:filename', error, req);
 			return res.status(400).json({
 				success: false,
 				message: 'Tên file không hợp lệ'
@@ -146,18 +153,44 @@ router.delete('/product-image/:filename', async (req, res) => {
 		}
 
 		if (error.code === 'NotFound') {
+			ErrorLogger.logRoute('DELETE /upload/product-image/:filename', error, req);
 			return res.status(404).json({
 				success: false,
 				message: 'Không tìm thấy file'
 			});
 		}
 
-		res.status(500).json({
+		sendUploadServerError(res, 'DELETE /upload/product-image/:filename', error, req, 'Lỗi server khi xóa ảnh');
+	}
+});
+
+// Multer throws its own errors (LIMIT_FILE_SIZE, LIMIT_FILE_COUNT, ...) from
+// the upload.single/array middleware itself, before a route handler's own
+// try/catch ever runs — uncaught, those fell through to Express's default
+// handler as a 500. Mounted last so it only sees errors from the routes above.
+router.use((err, req, res, next) => {
+	if (err instanceof multer.MulterError) {
+		const messages = {
+			LIMIT_FILE_SIZE: `Kích thước file vượt quá giới hạn ${MAX_FILE_SIZE / (1024 * 1024)}MB`,
+			LIMIT_FILE_COUNT: 'Vượt quá số lượng file cho phép (tối đa 5 ảnh)',
+			LIMIT_UNEXPECTED_FILE: 'Trường file không hợp lệ'
+		};
+
+		return res.status(400).json({
 			success: false,
-			message: 'Lỗi server khi xóa ảnh',
-			error: error.message
+			message: messages[err.code] || `Lỗi tải file: ${err.code}`
 		});
 	}
+
+	// fileFilter's rejection reaches here as a plain Error, not a MulterError.
+	if (err && err.message && err.message.includes('Chỉ chấp nhận file ảnh')) {
+		return res.status(400).json({
+			success: false,
+			message: err.message
+		});
+	}
+
+	next(err);
 });
 
 module.exports = router;

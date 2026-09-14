@@ -1,6 +1,12 @@
 const { body, validationResult } = require('express-validator');
 const { createPasswordValidationRules } = require('../utils/passwordValidator');
 
+// Field names whose rejected value must never be echoed back in a 400 body —
+// a wrong password would otherwise appear verbatim in the response.
+const SENSITIVE_FIELDS = ['password', 'token', 'secret', 'apikey', 'creditcard'];
+const isSensitiveField = (field) =>
+	SENSITIVE_FIELDS.some((s) => String(field).toLowerCase().includes(s));
+
 /**
  * Handle validation errors
  */
@@ -13,7 +19,7 @@ const handleValidationErrors = (req, res, next) => {
 			errors: errors.array().map(error => ({
 				field: error.path,
 				message: error.msg,
-				value: error.value
+				...(isSensitiveField(error.path) ? {} : { value: error.value })
 			}))
 		});
 	}
@@ -44,7 +50,9 @@ const validateOrder = [
 	body('email')
 		.isEmail()
 		.withMessage('Email không hợp lệ')
-		.normalizeEmail()
+		// No .normalizeEmail(): it mutated the stored value (e.g. lower-cased,
+		// stripped dots for gmail) so the email on the order no longer matched
+		// what the customer typed or what admin search later looks up.
 		.isLength({ max: 100 })
 		.withMessage('Email không được vượt quá 100 ký tự'),
 
@@ -106,31 +114,29 @@ const validateOrderUpdate = [
 ];
 
 // validateSellerLogin removed - now handled by better-auth
+// The old search-parameter validator was removed: it was mounted on 0
+// routes, and read req.body while every caller reads req.query — dead for
+// two independent reasons. Query input is guarded by utils/query-guard.js.
 
 /**
- * Validation rules for search parameters
+ * Validation rules for combo cart items (public /combos/detect, /combos/pricing).
+ * Bounds the array so an anonymous caller cannot force a per-item DB lookup
+ * loop (ComboService) over an unbounded list, and bounds quantity so it
+ * cannot reach Infinity/NaN territory in downstream pricing math.
  */
-const validateSearch = [
-	body('search')
-		.optional()
-		.isLength({ max: 100 })
-		.withMessage('Từ khóa tìm kiếm không được vượt quá 100 ký tự')
-		.trim(),
+const validateComboItems = [
+	body('items')
+		.isArray({ min: 1, max: 100 })
+		.withMessage('Danh sách sản phẩm phải có từ 1 đến 100 mục'),
 
-	body('status')
-		.optional()
-		.isIn(['confirmed', 'paid', 'delivered', 'cancelled'])
-		.withMessage('Trạng thái không hợp lệ'),
+	body('items.*.productId')
+		.isMongoId()
+		.withMessage('ID sản phẩm không hợp lệ'),
 
-	body('page')
-		.optional()
-		.isInt({ min: 1 })
-		.withMessage('Trang phải là số nguyên dương'),
-
-	body('limit')
-		.optional()
-		.isInt({ min: 1, max: 100 })
-		.withMessage('Giới hạn phải từ 1-100'),
+	body('items.*.quantity')
+		.isInt({ min: 1, max: 1000 })
+		.withMessage('Số lượng phải từ 1-1000')
+		.toInt(),
 
 	handleValidationErrors
 ];
@@ -156,7 +162,6 @@ const validateUserRegistration = [
 	body('email')
 		.isEmail()
 		.withMessage('Email không hợp lệ')
-		.normalizeEmail()
 		.isLength({ max: 100 })
 		.withMessage('Email không được vượt quá 100 ký tự'),
 
@@ -200,7 +205,7 @@ const validatePasswordReset = [
 module.exports = {
 	validateOrder,
 	validateOrderUpdate,
-	validateSearch,
+	validateComboItems,
 	validatePasswordChange,
 	validateUserRegistration,
 	validatePasswordReset,

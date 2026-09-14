@@ -1,5 +1,6 @@
 const express = require('express');
 const Product = require('../models/Product');
+const { asString, asEnum, safeSearch } = require('../utils/query-guard');
 const router = express.Router();
 
 /**
@@ -10,27 +11,17 @@ const router = express.Router();
 router.get('/', async (req, res) => {
 	try {
 		const { category, search, available } = req.query;
+		const safeCategory = category !== 'all' ? asString(category, 100) : undefined;
+		const searchMatch = safeSearch(search);
 
-		// Build query
-		let query = {};
-
-		// Filter by availability (default: only available products)
-		if (available !== 'all') {
-			query.available = available === 'false' ? false : true;
-		}
-
-		// Filter by category
-		if (category && category !== 'all') {
-			query.category = category;
-		}
-
-		// Search by name or description
-		if (search) {
-			query.$or = [
-				{ name: { $regex: search, $options: 'i' } },
-				{ description: { $regex: search, $options: 'i' } }
-			];
-		}
+		// Filter by availability. `?available=all` used to bypass this filter
+		// entirely (Q4, plan Phase 00 §B) — removed: every caller that wants
+		// everything can query both values and merge, but nothing does.
+		const query = {
+			available: asEnum(available, ['false']) ? false : true,
+			...(safeCategory && { category: safeCategory }),
+			...(searchMatch && { $or: [{ name: searchMatch }, { description: searchMatch }] })
+		};
 
 		// Get products with sorting
 		const products = await Product.find(query)
@@ -71,24 +62,15 @@ router.get('/', async (req, res) => {
 router.get('/direct-sales', async (req, res) => {
 	try {
 		const { category, search } = req.query;
+		const safeCategory = category !== 'all' ? asString(category, 100) : undefined;
+		const searchMatch = safeSearch(search);
 
 		// Build query - for direct sales, only filter by isActive (not available)
-		let query = {
-			isActive: true  // Only active products can be sold in direct sales
+		const query = {
+			isActive: true,  // Only active products can be sold in direct sales
+			...(safeCategory && { category: safeCategory }),
+			...(searchMatch && { $or: [{ name: searchMatch }, { description: searchMatch }] })
 		};
-
-		// Filter by category
-		if (category && category !== 'all') {
-			query.category = category;
-		}
-
-		// Search by name or description
-		if (search) {
-			query.$or = [
-				{ name: { $regex: search, $options: 'i' } },
-				{ description: { $regex: search, $options: 'i' } }
-			];
-		}
 
 		// Get products with sorting
 		const products = await Product.find(query)
