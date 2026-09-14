@@ -86,8 +86,14 @@ services:
       - backend_uploads:/app/uploads
     # Only the frontend joins multi-domain. The backend is reachable
     # exclusively through the frontend nginx /api/ proxy.
+    #
+    # The alias must be project-unique: `multi-domain` is shared with other
+    # stacks and another project already owns the plain name `backend` there,
+    # so the frontend (which is on both networks) would resolve to it.
     networks:
-      - sabstore_network
+      sabstore_network:
+        aliases:
+          - sabstore-backend
 
   # SAB Lanyard Frontend React App (with Nginx Reverse Proxy)
   frontend:
