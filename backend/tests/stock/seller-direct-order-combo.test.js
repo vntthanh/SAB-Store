@@ -60,6 +60,24 @@ describe('POST /api/seller/orders/direct — ComboService input handling', () =>
 		expect(saved.totalAmount).toBe(15000); // the combo price, not combo(15000) + individual(10000)
 	});
 
+	// The route validates every productId up front before pricing. It compared
+	// the raw client string against a Set built from `p._id.toString()`, which is
+	// always canonical lowercase — so an uppercase id that Mongo had just matched
+	// was reported back as a product that does not exist, rejecting a valid sale.
+	it('accepts an uppercase hex productId on a direct sale', async () => {
+		const product = await makeProduct({ price: 20000, stockQuantity: 5 });
+
+		const res = await request(app)
+			.post('/api/seller/orders/direct')
+			.set('Cookie', cookies)
+			.send({ items: [{ productId: String(product._id).toUpperCase(), quantity: 1 }] });
+
+		expect(res.status).toBe(201);
+
+		const afterProduct = await Product.findById(product._id);
+		expect(afterProduct.stockQuantity).toBe(4);
+	});
+
 });
 
 // F4 — Product.find({_id:{$in:...}}) accepts an uppercase-hex productId

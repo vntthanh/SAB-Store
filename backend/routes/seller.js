@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
@@ -517,7 +518,17 @@ router.post('/orders/direct', async (req, res) => {
 		// silently drops unknown/inactive products from its result instead of
 		// rejecting them, which would otherwise let a stale cart line vanish
 		// from the order without the seller noticing.
-		const productIds = [...new Set(items.map(item => String(item.productId)))];
+		//
+		// Ids are normalised through ObjectId first: Mongo casts uppercase hex
+		// happily, so `$in` finds the product, but `p._id.toString()` is always
+		// canonical lowercase — comparing the raw client string against that set
+		// would report a perfectly valid product as missing and reject the sale.
+		const productIds = [...new Set(
+			items
+				.map(item => item && item.productId)
+				.filter(id => mongoose.Types.ObjectId.isValid(id))
+				.map(id => new mongoose.Types.ObjectId(id).toString())
+		)];
 		const validProducts = await Product.find({ _id: { $in: productIds }, isActive: true, available: true });
 		const validIds = new Set(validProducts.map(p => p._id.toString()));
 		const missingIds = productIds.filter(id => !validIds.has(id));
