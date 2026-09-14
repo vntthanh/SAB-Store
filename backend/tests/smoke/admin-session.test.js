@@ -13,19 +13,10 @@ describe('makeAdminSession', () => {
 		app = buildTestApp();
 	});
 
-	// SKIPPED — harness gap, not a code-under-test failure. lib/auth.js opens
-	// its own MongoClient straight off process.env.MONGODB_URI at require time
-	// (for the better-auth mongodbAdapter); tests/env.js (Phase 00 owned,
-	// read-only here) sets MONGODB_URI to a placeholder that nothing ever
-	// points at the in-memory replica set — only mongoose gets redirected,
-	// via MONGO_TEST_URI in tests/setup.js. Any request that reaches
-	// /api/auth/* — including this one and every Phase 04 role-escalation /
-	// upload-auth test that needs a real session — times out on
-	// ECONNREFUSED 127.0.0.1:27017. Fix belongs in tests/env.js: prefer
-	// MONGO_TEST_URI (already populated by global-setup.js before env.js
-	// runs) over the hardcoded placeholder. Reported in the phase-02 report;
-	// unskip once that lands.
-	it.skip('grants access to an admin-only route', async () => {
+	// Depends on tests/env.js pointing MONGODB_URI at the in-memory replica set,
+	// so better-auth's own MongoClient and mongoose share one database. Without
+	// that, anything reaching /api/auth/* fails on a refused connection.
+	it('grants access to an admin-only route', async () => {
 		const { cookies } = await makeAdminSession(app);
 		await makeCombo();
 
