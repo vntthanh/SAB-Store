@@ -1,100 +1,58 @@
 # Environment Configuration Guide
 
-## Setup Instructions
+## Which file to copy
 
-1. **Copy the example environment file**:
-   ```bash
-   cp .env.example .env
-   ```
+- **Docker Compose (dev or prod)** reads the **root** `.env` — `cp .env.example .env`. This is
+  what `compose.yml`/`prod.compose.yml` inject into every container.
+- **Running the backend directly** (`cd backend && yarn dev`, no Docker) reads
+  `backend/.env` — `cp backend/.env.example backend/.env`. This file is loaded by plain
+  `dotenv`, which does **not** expand `${VAR}` references, so `PUBLIC_URL`/`BASE_URL`/
+  `CORS_ORIGIN` are written out as three literal values there instead of one interpolated
+  source (see the comment at the top of `backend/.env.example`).
+- The frontend needs no `.env` file. It is a static Vite/React bundle that calls the API via
+  the relative path `/api` — no build-time or runtime URL variable exists (`VITE_API_URL` was
+  deleted, not renamed; see AD-3 in the hardening plan).
 
-2. **Update `.env` with your actual values**:
-   - Change default passwords and secrets
-   - Update API URLs for your deployment environment
-   - Configure bank payment information
-   - Set your AppScript URL
+Both `.env.example` files are commented in place with what each variable does and why — that
+comment is the source of truth for the current variable list, not this document. Read it
+before copying.
 
-## Environment Variables
+## Why `PUBLIC_URL` (AD-2)
 
-### MongoDB Configuration
-- `MONGO_INITDB_ROOT_USERNAME`: MongoDB root username (default: `admin`)
-- `MONGO_INITDB_ROOT_PASSWORD`: MongoDB root password (default: `password123`)
-- `MONGO_INITDB_DATABASE`: Initial database name (default: `minipreorder`)
-- `MONGODB_PORT`: MongoDB port mapping (default: `27017`)
+`CORS_ORIGIN` and `BASE_URL` used to be set independently and had drifted to hold copies of
+the same domain. `prod.compose.yml`/`compose.yml` now derive both from one `PUBLIC_URL`
+(`CORS_ORIGIN: ${PUBLIC_URL}`, `BASE_URL: ${PUBLIC_URL}`) — one place to change the domain,
+and `${PUBLIC_URL:?PUBLIC_URL is required}` makes a missing value fail the container at boot
+instead of silently falling back to `localhost`.
 
-### Nginx Configuration
-- `NGINX_PORT`: Nginx reverse proxy external port (default: `80`)
+## What was deliberately NOT merged
 
-### Backend Configuration
-- `NODE_ENV`: Node environment (default: `production`)
-- `BACKEND_PORT`: Backend API internal port (default: `5000`, not exposed externally)
-- `BASE_URL`: Backend base URL (default: `http://localhost` - Nginx handles routing)
-- `MONGODB_URI`: Full MongoDB connection string
-- `JWT_SECRET`: Secret key for JWT tokens [CHANGE THIS]
-- `ADMIN_EMAIL`: Admin user email
-- `ADMIN_USERNAME`: Admin username
-- `ADMIN_PASSWORD`: Admin password [CHANGE THIS]
-- `APPSCRIPT_URL`: Google Apps Script webhook URL
-- `CORS_ORIGIN`: Allowed CORS origin (default: `http://localhost` - matches Nginx URL)
+`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` (the object-storage root account) and
+`MONGO_INITDB_ROOT_PASSWORD` (the Mongo root account) currently double as the application's
+own credentials (`MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`, the password inside `MONGODB_URI`).
+They read as duplicates but are not the same thing — a root credential should not also be the
+app's day-to-day credential. Both `.env.example` files carry a `TODO` at the relevant lines:
+split each into a scoped service account (`mc admin user add` + a bucket-only policy for
+MinIO; `db.createUser()` with `readWrite` on the app database for Mongo) rather than merging
+them further. Not done yet — the account/policy still needs to be created deliberately by an
+operator with server access.
 
-### MinIO Object Storage Configuration
-- `MINIO_ROOT_USER`: MinIO root username (default: `minioadmin`)
-- `MINIO_ROOT_PASSWORD`: MinIO root password (default: `minioadmin123`) [CHANGE THIS]
-- `MINIO_ENDPOINT`: MinIO service endpoint (default: `minio` for Docker, `localhost` for local dev)
-- `MINIO_PORT`: MinIO API port (default: `9000`)
-- `MINIO_BUCKET_NAME`: MinIO bucket name for file storage (default: `sabstore`)
-- `MINIO_USE_SSL`: Enable SSL for MinIO connection (default: `false`)
+## Before deploying
 
-### Frontend Configuration
-- `FRONTEND_PORT`: Frontend internal port (default: `80`, not exposed externally)
-- `REACT_APP_API_URL`: Backend base URL (default: `http://localhost` - code automatically appends `/api`)
-  - **IMPORTANT**: Do NOT include `/api` suffix, the code adds it automatically
-  - With nginx: `http://localhost` → becomes `http://localhost/api`
-  - Direct mode: `http://localhost:5000` → becomes `http://localhost:5000/api`
+1. Every secret is `${VAR:?message}` in `prod.compose.yml` — a missing one refuses to boot the
+   container. See `docs/deployment.md` for the full pre-deploy checklist and the correct order
+   to rotate the Mongo password (rotating it in `.env` alone, without first running
+   `db.changeUserPassword()` against the live database, is a no-op against an existing data
+   volume).
+2. Never commit `.env` (only `.env.example`) to version control.
+3. Use different secrets for production and development.
 
-### System Configuration
-- `TZ`: Timezone (default: `Asia/Ho_Chi_Minh`)
-
-### Payment Settings
-Payment settings (Bank Name, Account Number, Prefix Message) are now managed via the Admin Settings page and stored in the database. Initial values can be set via backend environment variables:
-- `BANK_NAME_ID`: Initial bank identifier (e.g., `MB`, `VCB`)
-- `BANK_ACCOUNT_ID`: Initial bank account number
-- `PREFIX_MESSAGE`: Initial payment prefix message (default: `SAB`)
-
-## Security Notes
-
-[CRITICAL] Before deploying to production:
-1. Change `JWT_SECRET` to a strong random string
-2. Change `ADMIN_PASSWORD` to a secure password
-3. Update `MONGO_INITDB_ROOT_PASSWORD` to a strong password
-4. Never commit `.env` file to version control
-5. Use different credentials for production and development
-
-## Docker Compose Usage
-
-The `compose.yml` file automatically reads variables from `.env`:
+## Docker Compose usage
 
 ```bash
-# Start all services
-docker compose up -d
-
-# Rebuild with new environment variables
-docker compose up -d --build
-
-# View logs
+docker compose up -d          # dev stack (compose.yml)
 docker compose logs -f
-
-# Stop all services
 docker compose down
 ```
 
-## Dockerfile Changes
-
-### Backend Dockerfile
-- Removed all ARG declarations
-- Environment variables are now injected at runtime via compose.yml
-- Cleaner build process without redundant build arguments
-
-### Frontend Dockerfile
-- Kept only REACT_APP_* ARGs (required for build-time injection)
-- React environment variables must be available during build
-- Production optimizations remain unchanged
+Production always uses `-f prod.compose.yml` explicitly — see `docs/deployment.md`.

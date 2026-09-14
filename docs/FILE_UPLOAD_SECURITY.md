@@ -24,7 +24,7 @@ This document describes the comprehensive security validation system implemented
 - Blocks mismatched extensions (e.g., PNG content with .jpg extension)
 
 ### 4. File Size Limits
-- Maximum file size: **10MB** (reduced from 200MB)
+- Maximum file size: **10MB** — `backend/utils/fileValidator.js:37`
 - Prevents Denial of Service (DoS) attacks via large file uploads
 - Configurable via `MAX_FILE_SIZE` constant
 
@@ -50,8 +50,10 @@ Protects against multiple attack vectors:
 - Blocks Windows reserved names: `CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`
 
 ### 6. Secure Filename Generation
-- Generates unique, unpredictable filenames
-- Format: `image-{timestamp}-{random}.{ext}`
+- Generates unique, unpredictable filenames using `crypto.randomBytes(12)` (not `Math.random`,
+  which is not cryptographically secure and is predictable enough to guess) —
+  `backend/utils/fileValidator.js:generateSecureFilename`
+- Format: `image-{timestamp}-{randomHex}.{ext}`
 - Prevents filename conflicts and enumeration attacks
 
 ## Implementation Files
@@ -69,32 +71,17 @@ Updated upload routes with security integration:
 - Multiple file upload: `POST /product-images`
 - File deletion: `DELETE /product-image/:filename`
 
-### `backend/test/test_file_validation.js`
-Comprehensive test suite covering:
-- Valid file acceptance
-- Fake file signature rejection
-- Mismatched extension blocking
-- Invalid MIME type rejection
-- Oversized file blocking
-- Path traversal prevention
-- Dangerous extension filtering
-- Special character sanitization
-- Secure filename generation
+### `backend/tests/validation/upload-file-guards.test.js`
+Jest suite covering the upload path end to end: `MAX_FILE_SIZE` value, oversized-file
+rejection, RIFF-without-WEBP signature rejection, genuine WebP signature acceptance, and that
+500 responses carry a `correlationId` with no raw error leaked.
 
 ## Test Results
 
-All 10 security tests **PASSED**:
-
-1. [OK] Valid JPEG accepted
-2. [OK] Fake JPEG rejected (invalid signature)
-3. [OK] Mismatched extension rejected
-4. [OK] Executable file rejected
-5. [OK] Oversized file rejected
-6. [OK] Path traversal rejected
-7. [OK] All dangerous extensions rejected
-8. [OK] Special characters sanitized
-9. [OK] Valid PNG accepted
-10. [OK] Secure filenames generated
+Run via the backend's own suite (`cd backend && npx jest`), not a standalone script — see
+that command's output for current pass/fail status. There is no
+`backend/test/test_file_validation.js`; if a doc or script elsewhere references that path, it
+does not exist in this repo.
 
 ## Usage Example
 
@@ -144,10 +131,8 @@ The system provides clear, specific error messages:
 Run the test suite:
 
 ```bash
-node backend/test/test_file_validation.js
+cd backend && npx jest tests/validation/upload-file-guards.test.js
 ```
-
-Expected output: All tests pass with 0 failures.
 
 ## Configuration
 
@@ -178,9 +163,3 @@ This implementation follows security standards from:
 - OWASP File Upload Security Guidelines
 - CWE-434: Unrestricted Upload of File with Dangerous Type
 - CWE-22: Improper Limitation of a Pathname to a Restricted Directory
-
----
-
-**Last Updated**: October 31, 2025
-**Version**: 1.0.0
-**Status**: Production Ready

@@ -1,5 +1,10 @@
 # Deployment Update - MinIO Direct Access
 
+> Historical record of one migration (nginx serving `/uploads/` straight from MinIO instead of
+> proxying through the backend). Kept for context; **not** the current deploy procedure — see
+> `docs/deployment.md` for that. One claim below was wrong and has since been reverted for
+> security; corrected inline.
+
 ## Changes Made
 
 ### 1. Architecture Update
@@ -30,102 +35,24 @@ location /uploads/ {
 - MinIO streaming now handled by Nginx
 
 #### `prod.compose.yml`
-- Changed MinIO from `expose` to `ports` to allow Nginx access
-- Exposed ports: 9000 (S3 API), 9001 (Console)
+- **Corrected claim**: this file originally said MinIO was changed from `expose` to `ports`
+  "to allow Nginx access" — that was technically wrong and, as written, described a real
+  security hole (MinIO's console reachable from the public internet, closed by the Phase 00
+  hotfix). Nginx reaches MinIO over the internal Docker network (`sabstore_network`); `expose`
+  is sufficient, `ports` is not needed and is not used. Current `prod.compose.yml` keeps
+  MinIO on `expose: ["9000", "9001"]` only — never published to the host.
 
 #### `backend/lib/minio.js`
 - Policy now applied on every startup (not just creation)
 - Ensures bucket always has public read access
 
-## Deployment Steps
+## Deployment steps, troubleshooting, rollback
 
-### Step 1: Stop Current Services
-```powershell
-docker compose -f prod.compose.yml down
-```
-
-### Step 2: Pull Latest Changes
-```powershell
-git pull origin main
-```
-
-### Step 3: Rebuild and Start Services
-```powershell
-docker compose -f prod.compose.yml --env-file .env.prod up -d --build
-```
-
-### Step 4: Verify MinIO Policy
-```powershell
-# Check MinIO logs
-docker logs sabstore_minio
-
-# Should see: "[MinIO] Public read policy applied to bucket 'sabstore'"
-docker logs sabstore_backend
-```
-
-### Step 5: Test Image Access
-1. Upload a product image via admin panel
-2. Check browser console - should see successful image loads
-3. Verify no 404 errors for `/uploads/products/image-*.png`
-
-## Troubleshooting
-
-### Images still showing 404
-**Solution**: Check MinIO bucket policy
-```powershell
-# Access MinIO console
-# Navigate to http://your-server:9001
-# Login with credentials from .env.prod
-# Check bucket 'sabstore' has public read policy
-```
-
-### Nginx cannot connect to MinIO
-**Check network connectivity**:
-```powershell
-docker exec sabstore_frontend ping minio
-```
-
-### Check Nginx logs
-```powershell
-docker logs sabstore_frontend
-```
-
-## Environment Variables
-
-Ensure these are set in `.env.prod`:
-```env
-MINIO_ROOT_USER=minioadmin
-MINIO_ROOT_PASSWORD=minioadmin123
-MINIO_BUCKET_NAME=sabstore
-MINIO_ENDPOINT=minio
-MINIO_PORT=9000
-MINIO_USE_SSL=false
-```
-
-## Verification Checklist
-
-- [ ] All services are running
-- [ ] MinIO console accessible at port 9001
-- [ ] Backend logs show policy applied
-- [ ] Images load without 404 errors
-- [ ] Upload functionality works
-- [ ] Browser console shows no errors
-
-## Rollback Plan
-
-If issues occur, rollback to previous version:
-```powershell
-git checkout HEAD~1
-docker compose -f prod.compose.yml down
-docker compose -f prod.compose.yml --env-file .env.prod up -d --build
-```
-
-## Performance Expectations
-
-- Image load time: < 100ms (down from ~200ms)
-- Backend CPU usage: Reduced by ~15-20%
-- Nginx handles all static file serving
-- Better caching with 7-day expiry
+Removed from this file — they described `docker compose down` before redeploying (now
+forbidden, see `docs/deployment.md`), a nonexistent `.env.prod` file (the repo uses one root
+`.env`), and told operators to open the MinIO console at `:9001` from a browser, which
+directly contradicts the "Security Notes" below and the Phase 00 hotfix that closed that port
+to the public internet. Use `docs/deployment.md` for the current, correct procedure.
 
 ## Security Notes
 
