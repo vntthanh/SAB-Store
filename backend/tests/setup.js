@@ -29,4 +29,9 @@ afterEach(async () => {
 
 afterAll(async () => {
 	await mongoose.disconnect();
+
+	// better-auth opens its own MongoClient at require time, separate from
+	// mongoose's. Leaving it open keeps a live handle and the run never exits.
+	const { client } = require('../lib/auth');
+	await client.close();
 });
