@@ -1,10 +1,13 @@
 const { computeOrderPricing, PricingError } = require('../../services/pricing');
 
 describe('pricing contract', () => {
-	it('throws NOT_IMPLEMENTED until Phase 05 supplies the implementation', async () => {
-		// The stub must fail loudly. Returning a zero total here would let a
-		// caller wired up early write free orders without anyone noticing.
-		await expect(computeOrderPricing([])).rejects.toThrow('NOT_IMPLEMENTED');
+	it('refuses an empty cart instead of returning a zero total', async () => {
+		// The contract's central guarantee: a zero total is indistinguishable
+		// from a free order, so an empty cart must throw rather than return one.
+		await expect(computeOrderPricing([])).rejects.toMatchObject({
+			code: 'EMPTY_CART',
+			httpStatus: 400,
+		});
 	});
 
 	it('exposes a PricingError that always maps to HTTP 400', () => {
