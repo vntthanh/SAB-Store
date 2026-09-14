@@ -1,11 +1,14 @@
-# SAB Lanyard
+# SAB Store
+
+> Tên gọi trong code/branding hiện tại là **SAB Store** (xem `frontend/index.html`); "SAB Lanyard" là tên cũ, package.json vẫn giữ `minipreorder-*` làm tên npm package (không đổi, không ảnh hưởng vận hành).
 
 ## 🏗️ Kiến trúc hệ thống
 
-- **Backend**: ExpressJS, MongoDB, Better-Auth v2, REST API, gửi email xác nhận, xuất Excel, bảo mật với Helmet, Rate Limit, CORS.
-- **Frontend**: ReactJS, React Router v6, Context API, TailwindCSS, React Toastify, SweetAlert2.
+- **Backend**: ExpressJS, MongoDB, Better-Auth, REST API, gửi email xác nhận, xuất Excel, bảo mật với Helmet, Rate Limit (có nhưng **tắt mặc định**, xem [Cấu hình môi trường](#-cấu-hình-môi-trường)), CORS.
+- **Frontend**: ReactJS (Vite), React Router v6, Context API, TailwindCSS, React Toastify, SweetAlert2. Build tĩnh, gọi API qua path tương đối `/api` — không cần biến môi trường nào lúc runtime hay build.
 - **Authentication**: Better-Auth với username/password, session management, role-based access control, admin plugin.
-- **Triển khai**: Docker Compose với `compose.yml`, hỗ trợ phát triển trên Windows & Linux.
+- **Một cổng vào duy nhất**: chỉ `store.sabies.vn` phục vụ cả frontend lẫn `/api/*`; domain `api.store.sabies.vn` riêng đã bị gỡ.
+- **Triển khai**: Docker Compose — `compose.yml` (dev) / `prod.compose.yml` (production). Quy trình deploy đầy đủ: [`docs/deployment.md`](docs/deployment.md).
 
 ## 🚀 Tính năng
 
@@ -65,49 +68,45 @@
 ```bash
 # Clone repository
 git clone <repository-url>
-cd SAB-Lanyard
+cd SAB-Store
 
-# Cấu hình environment variables
-cp backend/.env.example backend/.env
-# Chỉnh sửa backend/.env theo môi trường của bạn
+# Cấu hình environment variables — Docker Compose đọc file .env ở ROOT, không phải backend/.env
+cp .env.example .env
+# Chỉnh sửa .env theo môi trường của bạn (xem docs/ENV_SETUP.md)
 
-# Khởi động toàn bộ stack
-docker-compose up --build
-
-# Hoặc chạy background
-docker-compose up -d --build
+# Khởi động toàn bộ stack (dev)
+docker compose up -d --build
 ```
 
-### Development Setup (Local)
+### Development Setup (Local, không qua Docker)
 ```bash
 # Backend setup
 cd backend
-npm install
-npm run dev    # Port 5000
+cp .env.example .env   # backend/.env.example, không expand ${VAR} — xem docs/ENV_SETUP.md
+yarn install
+yarn dev       # Port 5000 (nodemon)
 
 # Frontend setup (terminal mới)
 cd frontend
-npm install
-npm start      # Port 3000
+yarn install
+yarn dev       # Port 3000 (Vite), proxy /api → localhost:5000
 ```
 
 ## 🌐 URLs truy cập
 
-### Production URLs
+### Local dev (Docker hoặc chạy trực tiếp)
 - **Trang chủ**: http://localhost:3000
 - **Đăng nhập**: http://localhost:3000/login
 - **Admin Dashboard**: http://localhost:3000/admin/dashboard
 - **Seller Dashboard**: http://localhost:3000/seller/dashboard
+- **API Base**: http://localhost:5000/api (hoặc qua Vite dev proxy: `http://localhost:3000/api`)
 
-### Backend APIs
-- **API Base**: http://localhost:5000/api
-- **Better-Auth**: http://localhost:5000/api/auth/*
-- **Products API**: http://localhost:5000/api/products
-- **Orders API**: http://localhost:5000/api/orders
+### Production
+- Một domain duy nhất: `https://store.sabies.vn` — cả trang web lẫn `/api/*` đều qua đó, không còn domain `api.*` riêng.
 
 ## 📝 Better-Auth Documentation
 
-Better-Auth cung cấp OpenAPI documentation tự động tại:
+Better-Auth cung cấp OpenAPI documentation tự động tại `/api/auth/reference`, nhưng **chỉ khi `NODE_ENV !== production`** (`backend/lib/auth.js`) — plugin `openAPI()` không bật trong production, tránh lộ shape API công khai. Ở local dev (`NODE_ENV=development` mặc định):
 - **API Docs**: http://localhost:5000/api/auth/reference
 - **Admin API Docs**: Endpoints dạng `/api/auth/admin/*`
 
@@ -131,68 +130,49 @@ const { error } = await authClient.admin.createUser({
 
 ## 🔧 Cấu hình môi trường
 
-### Backend Environment (.env)
-```env
-# Database
-MONGODB_URI=mongodb://localhost:27017/sab-lanyard
-DB_NAME=sab_lanyard
+Không biến nào ở trên từng đúng với code hiện tại — `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `DB_NAME`, `EMAIL_*` **không được code đọc ở đâu cả**, và frontend **không có** file `.env`/biến `REACT_APP_API_URL` (SPA gọi API qua path tương đối `/api`, không cần domain nào baked vào bundle — `VITE_API_URL` đã bị xóa hẳn, không phải đổi tên).
 
-# Better-Auth
-BETTER_AUTH_SECRET=your-secret-key-here
-BETTER_AUTH_URL=http://localhost:5000
+Danh sách biến thật, có chú thích tại chỗ giải thích từng biến: [`.env.example`](.env.example) (đọc bởi `docker compose`, ở **root** repo) và [`backend/.env.example`](backend/.env.example) (chỉ dùng khi chạy backend trực tiếp, không qua Docker). Chi tiết + lý do gộp/không gộp: [`docs/ENV_SETUP.md`](docs/ENV_SETUP.md).
 
-# Email (tuỳ chọn)
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-app-password
-
-# Other configs
-PORT=5000
-NODE_ENV=development
-```
-
-### Frontend Environment (.env)
-```env
-REACT_APP_API_URL=http://localhost:5000
-```
+Tóm tắt các biến bắt buộc (production, thiếu 1 biến là container **không boot**): `PUBLIC_URL`, `JWT_SECRET`, `MONGODB_URI`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `APPSCRIPT_URL`. `CORS_ORIGIN`/`BASE_URL` không set riêng — cả hai nội suy từ `PUBLIC_URL`.
 
 ## 🐳 Docker Configuration
 
-Hệ thống sử dụng `compose.yml` (Docker Compose v2) với các services:
+Hệ thống sử dụng `compose.yml` (dev) / `prod.compose.yml` (production) — **đúng 4 services**, không có service `nginx` riêng:
 
 - **mongodb**: Database chính
 - **minio**: Object storage cho hình ảnh sản phẩm
 - **backend**: ExpressJS API server (internal port 5000)
-- **frontend**: React build served by nginx (internal port 80)
-- **nginx**: Reverse proxy chính (external port 80)
+- **frontend**: React (Vite) build, **nginx nằm bên trong image này** (`frontend/Dockerfile` build từ `nginx:alpine`, internal port 80) — không phải service tách biệt
+
+Production chỉ có một cổng vào: `store.sabies.vn` → NPM → container `frontend` (nginx) → `backend:5000` cho `/api/*`, → `minio:9000` trực tiếp cho `/uploads/*` (không qua backend). Domain `api.store.sabies.vn` riêng đã bị gỡ.
 
 ```yaml
-# Kiến trúc Nginx Reverse Proxy
-Client Request (port 80)
+# nginx trong container frontend
+Client Request
         ↓
-    [Nginx]
+  [nginx trong frontend]
         ├─→ /api/*        → backend:5000 (API requests)
-        ├─→ /uploads/*    → backend:5000 (Static images, cached)
-        └─→ /*            → frontend:80 (React app, cached)
+        ├─→ /uploads/*    → minio:9000 (ảnh sản phẩm, đọc trực tiếp từ object storage)
+        └─→ /*             → static build (React app)
 ```
 
 ### Ưu điểm kiến trúc Nginx
 - **Giảm tải NodeJS**: Nginx phục vụ static files, cache responses
 - **Tối ưu performance**: Gzip compression, keepalive connections
-- **Security**: Rate limiting, security headers
+- **Security headers**: `frontend/security-headers.conf` (CSP hiện **report-only**, chưa enforcing — xem `docs/deployment.md`). Rate limiting nằm ở tầng backend (Express), **không** ở nginx, và tắt mặc định.
 - **Caching**: Static assets cached 7 days, API không cache
-- **Load balancing**: Sẵn sàng mở rộng với nhiều backend instances
 
 ## 🧪 Testing & Validation
 
-### Kiểm tra syntax
-```bash
-# Backend
-cd backend && npm run lint
+Không package nào có script `lint` (`backend/package.json`, `frontend/package.json`) — bỏ qua bước đó. Chạy test:
 
-# Frontend  
-cd frontend && npm run lint
+```bash
+# Backend (Jest)
+cd backend && npx jest
+
+# Frontend (Vitest)
+cd frontend && yarn test
 ```
 
 ### Kiểm tra Better-Auth integration
@@ -216,26 +196,26 @@ docker compose logs -f mongodb
 ```
 
 ### Production Monitoring
-- Backend logs tự động ghi vào `logs/` directory
+- Backend log ra `console.*` (`backend/utils/errorLogger.js`) — **không** ghi file, không có thư mục `logs/`. Xem log qua `docker compose logs -f backend`; container giới hạn `max-size: 10m`, `max-file: 3` (json-file driver).
 - Better-Auth session management tự động
-- Database connection status qua health endpoints
+- Database connection status qua health endpoints (`/health`)
 
 ## 🚀 Deployment
 
-### Production với Docker
-```bash
-# Build production images
-docker compose -f compose.prod.yml build
+Quy trình đầy đủ, có kiểm chứng và đúng thứ tự: **[`docs/deployment.md`](docs/deployment.md)**. Tóm tắt:
 
-# Deploy với production config
-docker compose -f compose.prod.yml up -d
+```bash
+# LUÔN dùng -f prod.compose.yml (không phải compose.prod.yml), build từng service:
+docker compose -f prod.compose.yml build backend
+docker compose -f prod.compose.yml build frontend
+docker compose -f prod.compose.yml up -d
 ```
 
 ### Environment Variables cho Production
-- Cập nhật `BETTER_AUTH_URL` với domain thật
-- Sử dụng strong secret key cho `BETTER_AUTH_SECRET`
-- Cấu hình email service cho notifications
-- Enable HTTPS và cập nhật CORS settings
+- Set `PUBLIC_URL=https://store.sabies.vn` — `CORS_ORIGIN`/`BASE_URL` tự nội suy theo, không set riêng
+- Dùng secret dài, ngẫu nhiên cho `JWT_SECRET` (không có `BETTER_AUTH_SECRET` trong code)
+- Mọi secret khác (`MONGODB_URI`, `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_PASSWORD`, `ADMIN_PASSWORD`, `APPSCRIPT_URL`) đều bắt buộc — thiếu 1 là container không boot
+- HTTPS do NPM (Nginx Proxy Manager) đứng trước xử lý, ngoài phạm vi compose file này
 
 ## 🤝 Contributing
 
@@ -248,5 +228,5 @@ docker compose -f compose.prod.yml up -d
 ## 📞 Support
 
 - **Issues**: Tạo GitHub Issues cho bugs/features
-- **Documentation**: Xem Better-Auth docs tại `/api/auth/reference`
-- **API Reference**: OpenAPI spec tự động generate
+- **Documentation**: [`docs/`](docs/) — deploy runbook, env setup, upload security
+- **API Reference**: OpenAPI spec tự động generate tại `/api/auth/reference`, chỉ khi `NODE_ENV !== production`
