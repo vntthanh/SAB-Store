@@ -52,9 +52,14 @@ class ComboService {
 		const breakdown = [];
 		let currentTotal = 0;
 
+		// Load active combos once, outside the loop: the old code called
+		// Combo.findActive() (via findOptimalCombination) on every iteration,
+		// one query per combo application instead of one per pricing pass.
+		const activeCombos = await Combo.findActive();
+
 		// Keep applying combos until no more beneficial combos can be applied
 		while (remainingProducts.length > 0) {
-			const optimalCombos = await Combo.findOptimalCombination(remainingProducts);
+			const optimalCombos = await Combo.findOptimalCombination(remainingProducts, activeCombos);
 
 			if (optimalCombos.length === 0 || optimalCombos[0].totalSavings <= 0) {
 				break; // No more beneficial combos
@@ -197,6 +202,25 @@ class ComboService {
 
 		const comboTotalCost = maxApplications * combo.price;
 		const savings = totalUsedCost - comboTotalCost;
+
+		// Post-condition: this loop must have consumed exactly
+		// Σ(requirement.quantity × maxApplications) items. If it consumed
+		// less (e.g. a category was short and the loop above ran out of
+		// items to pull from), the combo was applied to a cart that could
+		// not actually satisfy it — fail loudly instead of silently billing
+		// the discounted price for fewer real items. getMaxApplications()
+		// fixed above should make this unreachable; this is a defense against
+		// the two methods drifting out of sync in the future.
+		const expectedConsumed = combo.categoryRequirements.reduce(
+			(total, requirement) => total + requirement.quantity * maxApplications,
+			0
+		);
+		const actualConsumed = itemsUsed.reduce((total, item) => total + item.quantity, 0);
+		if (actualConsumed !== expectedConsumed) {
+			throw new Error(
+				`Combo "${combo.name}" tiêu thụ ${actualConsumed} sản phẩm nhưng cần ${expectedConsumed} cho ${maxApplications} lượt áp dụng`
+			);
+		}
 
 		return {
 			applicationsUsed: maxApplications,

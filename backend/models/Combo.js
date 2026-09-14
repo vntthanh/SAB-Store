@@ -98,6 +98,16 @@ comboSchema.methods.calculateSavings = function (products) {
 };
 
 // Method to calculate maximum number of times this combo can be applied
+//
+// Starts the running minimum at Infinity, not 0: the old code seeded it with
+// the first requirement's result, so a requirement met by 0 available items
+// set max=0 but the *next* requirement's Math.min(0, x) === 0 branch was
+// never taken — the `if (maxApplications === 0)` guard treated that 0 as
+// "unset" and overwrote it with the next requirement's count instead of
+// keeping it pinned at 0. A combo needing 1xA + 1xB with 0xA in the cart
+// would then apply as if only B was required. Breaking as soon as a 0 shows
+// up also avoids evaluating requirements that can no longer change the
+// result.
 comboSchema.methods.getMaxApplications = function (products) {
 	const productsByCategory = {};
 
@@ -109,21 +119,18 @@ comboSchema.methods.getMaxApplications = function (products) {
 		productsByCategory[item.product.category] += item.quantity;
 	});
 
-	// Find the limiting factor (minimum ratio)
-	let maxApplications = 0;
+	let maxApplications = Infinity;
 
 	for (const requirement of this.categoryRequirements) {
 		const availableQuantity = productsByCategory[requirement.category] || 0;
 		const possibleApplications = Math.floor(availableQuantity / requirement.quantity);
-
-		if (maxApplications === 0) {
-			maxApplications = possibleApplications;
-		} else {
-			maxApplications = Math.min(maxApplications, possibleApplications);
-		}
+		maxApplications = Math.min(maxApplications, possibleApplications);
+		if (maxApplications === 0) break;
 	}
 
-	return maxApplications;
+	// A combo with no requirements (schema forbids this, but stay defensive)
+	// must not report Infinity applications.
+	return maxApplications === Infinity ? 0 : maxApplications;
 };
 
 // Method to calculate total savings with maximum applications
@@ -164,8 +171,13 @@ comboSchema.methods.calculateMaxSavings = function (products) {
 };
 
 // Static method to find optimal combo combination
-comboSchema.statics.findOptimalCombination = async function (products) {
-	const activeCombos = await this.findActive();
+//
+// Accepts an optional preloaded combo list so a caller applying several
+// combos in a loop (ComboService.calculateOptimalPricing, pricing.js) can
+// query Combo.findActive() once and reuse it, instead of re-querying on
+// every iteration.
+comboSchema.statics.findOptimalCombination = async function (products, preloadedCombos = null) {
+	const activeCombos = preloadedCombos || await this.findActive();
 
 	// Calculate savings for each combo
 	const comboAnalysis = activeCombos.map(combo => ({
