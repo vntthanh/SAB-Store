@@ -12,6 +12,13 @@
  * A single-node replica set, not a standalone: a standalone rejects
  * transactions outright, so any future test that opens a session would fail for
  * reasons unrelated to the code under test.
+ *
+ * MIND THE GAP: this makes the harness MORE capable than production, which runs
+ * a standalone mongod with no replica set (plan AD-4). Transactions therefore
+ * pass every test here and throw at runtime in production. Application code
+ * must not call startSession/withTransaction — services take an optional
+ * `session` so transactions can be adopted later if a replica set is ever
+ * added, without rewriting anything.
  */
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
 
