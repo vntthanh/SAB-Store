@@ -4,7 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const path = require('path');
-const { auth } = require('./lib/auth');
+const { auth, getAllowedOrigins } = require('./lib/auth');
 const { connectDB } = require('./lib/database');
 const { toNodeHandler } = require('better-auth/node');
 const ErrorLogger = require('./utils/errorLogger');
@@ -13,24 +13,18 @@ const { ERROR_CODES, HTTP_STATUS } = require('./constants/errorCodes');
 const { requestLogger, errorRateLimiter, healthCheckEndpoint } = require('./middleware/logger');
 const { setupProcessMonitoring } = require('./utils/performanceMonitor');
 
-// Origins allowed to read responses. Rebuilt per call because CORS_ORIGIN is
-// read from the environment at request time in tests.
-function allowedOriginList() {
-	return [
-		...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(o => o.trim()) : []),
-		'https://store.sab.edu.vn',
-		'https://api.store.sab.edu.vn',
-		'http://localhost:3000',
-		'http://127.0.0.1:3000'
-	];
-}
-
 // Mirror the allowed origin back on a response. Used by the pass-through
-// middleware, the error handler and the 404 handler alike.
+// middleware, the error handler and the 404 handler alike. getAllowedOrigins()
+// (lib/auth.js) is the single source of truth for every allowlist in this
+// process — no domain is hardcoded here, and it reads CORS_ORIGIN fresh on
+// every call so tests can change it at runtime.
 function applyCorsHeaders(req, res) {
 	const origin = req.headers.origin;
-	if (!origin || allowedOriginList().includes(origin)) {
-		res.header('Access-Control-Allow-Origin', origin || '*');
+	// Always vary on Origin, even when no CORS header is set below, so shared
+	// caches never serve one origin's response to another.
+	res.header('Vary', 'Origin');
+	if (origin && getAllowedOrigins().includes(origin)) {
+		res.header('Access-Control-Allow-Origin', origin);
 		res.header('Access-Control-Allow-Credentials', 'true');
 		res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 		res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie, X-Requested-With');
@@ -64,14 +58,17 @@ function createApp() {
 				defaultSrc: ["'self'"],
 				connectSrc: [
 					"'self'",
-					"https://api.store.sab.edu.vn",
-					"https://api.lanyard.sab.edu.vn",
-					"https://store.sab.edu.vn",
+					...getAllowedOrigins(),
 					"https://fonts.googleapis.com",
 					"https://fonts.gstatic.com",
 					"https://cdnjs.cloudflare.com"
 				],
-				scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+				// No inline <script> ships in frontend/index.html (Vite emits only
+				// hashed external bundles) and nothing in frontend/src or its
+				// dependencies calls eval()/new Function(), so neither directive is
+				// needed. If a future dependency needs eval, add 'unsafe-eval' back
+				// deliberately rather than restoring both.
+				scriptSrc: ["'self'"],
 				styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com", "https://cdnjs.cloudflare.com"],
 				fontSrc: ["'self'", "https://fonts.gstatic.com", "https://cdnjs.cloudflare.com"],
 				imgSrc: ["'self'", "data:", "blob:", "https:"],
@@ -92,24 +89,12 @@ function createApp() {
 			// Allow requests with no origin (like mobile apps or curl requests)
 			if (!origin) return callback(null, true);
 
-			// Support multiple origins from environment variable (comma-separated)
-			const allowedOrigins = [
-				...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(o => o.trim()) : []),
-				'http://store.sab.edu.vn',
-				'https://store.sab.edu.vn',
-				'https://api.store.sab.edu.vn',
-				'https://lanyard.sab.edu.vn',
-				'https://api.lanyard.sab.edu.vn',
-				'http://localhost:3000', // Development
-				'http://127.0.0.1:3000'  // Development
-			];
-
-			if (allowedOrigins.includes(origin)) {
+			if (getAllowedOrigins().includes(origin)) {
 				return callback(null, true);
 			}
 
 			console.warn(`[CORS] Blocked origin: ${origin}`);
-			callback(new Error('Not allowed by CORS ${origin}}'));
+			callback(new Error(`Not allowed by CORS: ${origin}`));
 		},
 		credentials: true,
 		methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -121,18 +106,18 @@ function createApp() {
 
 	app.use(cors(corsOptions));
 
-	// Handle preflight OPTIONS requests explicitly
-	app.options('*', (req, res) => {
-		res.header('Access-Control-Allow-Origin', req.headers.origin);
-		res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-		res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie, X-Requested-With');
-		res.header('Access-Control-Allow-Credentials', 'true');
-		res.sendStatus(200);
-	});
+	// Deliberately no explicit wildcard OPTIONS handler here: cors() above
+	// already answers preflight requests (preflightContinue: false). A
+	// hand-rolled one after it would be dead code today, but if these two
+	// lines were ever reordered it would become a second, un-allowlisted CORS
+	// implementation that mirrors any Origin back with credentials — a bypass
+	// of the allowlist above.
 
-	// Body parsing middleware - Must be BEFORE Better Auth handler
-	app.use(express.json({ limit: '100mb' }));
-	app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+	// Body parsing middleware - Must be BEFORE Better Auth handler.
+	// 1mb covers every JSON/form payload the API accepts; uploads go through
+	// multer (routes/upload.js), never through this parser.
+	app.use(express.json({ limit: '1mb' }));
+	app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 	// Request logging middleware
 	app.use(requestLogger);
@@ -142,6 +127,26 @@ function createApp() {
 		applyCorsHeaders(req, res);
 		next();
 	});
+
+	// Rate limiting is OFF by default. `trust proxy` above is set to 2 hops for
+	// production, but that hop count has never been verified against real
+	// traffic (two requests from two different source IPs must resolve to two
+	// different req.ip values). Enabling this with a wrong hop count collapses
+	// every visitor onto one bucket and 429s the entire site. Flip
+	// RATE_LIMIT_ENABLED=true only after that check has been run in prod.
+	if (process.env.RATE_LIMIT_ENABLED === 'true') {
+		const rateLimit = require('express-rate-limit');
+		const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
+		const orderLimiter = rateLimit({ windowMs: 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+		const publicLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false });
+
+		app.use('/api/auth', authLimiter);
+		// Also covers GET /api/orders/:orderCode: a public order-tracking code
+		// has only 9,000 possible values, so the read path needs the same limit
+		// as order creation, not just the write path.
+		app.use('/api/orders', orderLimiter);
+		app.use('/api', publicLimiter);
+	}
 
 	// Better-auth API routes - Must be AFTER body parsing middleware
 	app.all('/api/auth/*', toNodeHandler(auth));
@@ -154,8 +159,14 @@ function createApp() {
 	app.use('/api/products', require('./routes/products'));
 	app.use('/api/orders', require('./routes/orders'));
 	app.use('/api/combos', require('./routes/combos'));
-	app.use('/api/admin', require('./routes/admin'));
+	// /api/admin/settings must be mounted before the broader /api/admin: both
+	// routers call authenticateAdmin at their own top, and admin.js has no
+	// route matching "/settings" — so with the broad mount first, a settings
+	// request runs authenticateAdmin once in admin.js, falls through with no
+	// match, and runs it again in settings.js. Mounting the specific path
+	// first lets settings.js fully handle the request in one auth check.
 	app.use('/api/admin/settings', require('./routes/admin/settings'));
+	app.use('/api/admin', require('./routes/admin'));
 	app.use('/api/seller', require('./routes/seller'));
 
 	// Health check with detailed metrics
@@ -173,7 +184,7 @@ function createApp() {
 			const corsError = ErrorResponse.createError(
 				ERROR_CODES.CORS_ERROR,
 				`CORS policy blocked request from origin: ${origin}`,
-				{ origin, allowedOrigins: allowedOriginList() }
+				{ origin, allowedOrigins: getAllowedOrigins() }
 			);
 			return ErrorResponse.sendErrorResponse(res, corsError, req);
 		}
@@ -244,19 +255,22 @@ async function startServer() {
 		});
 
 		server.on('error', (error) => {
+			// This is a socket-level event with no HTTP request in scope.
+			// logRoute() expects a real Express req — it calls req.get(...) — so
+			// the object literal previously passed here threw inside this handler
+			// and swallowed the real diagnostic (including EADDRINUSE, the most
+			// common cause). logCritical() takes (message, error, context) and
+			// needs no req.
 			if (error.code === 'EADDRINUSE') {
-				ErrorLogger.logRoute('server', error, {
-					message: `Port ${PORT} is already in use`,
-					port: PORT
-				});
+				ErrorLogger.logCritical(`Port ${PORT} is already in use`, error, { port: PORT });
 			} else {
-				ErrorLogger.logRoute('server', error, { port: PORT });
+				ErrorLogger.logCritical('Server socket error', error, { port: PORT });
 			}
 			process.exit(1);
 		});
 
 	} catch (error) {
-		ErrorLogger.logRoute('startServer', error, {
+		ErrorLogger.logCritical('Server failed to start', error, {
 			stage: 'initialization',
 			port: PORT
 		});
@@ -309,14 +323,16 @@ function registerProcessHandlers() {
 	process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 	process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-	// Handle uncaught exceptions
+	// Handle uncaught exceptions. Always shut down: reaching this handler means
+	// the error escaped every try/catch and the Express error middleware, so
+	// the process is in an unknown state regardless of the error's own
+	// isOperational flag. The previous `if (!error.isOperational)` guard was a
+	// near-permanent no-op — AppError (utils/errorResponse.js) defaults
+	// isOperational to true, and only AppError instances set it at all.
 	process.on('uncaughtException', (error) => {
 		ErrorLogger.logUncaughtException(error, 'uncaughtException');
-
-		if (!error.isOperational) {
-			ErrorLogger.logCritical('Non-operational error detected, initiating shutdown', error);
-			gracefulShutdown('uncaughtException');
-		}
+		ErrorLogger.logCritical('Uncaught exception, initiating shutdown', error);
+		gracefulShutdown('uncaughtException');
 	});
 
 	// Handle unhandled promise rejections

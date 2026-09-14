@@ -5,6 +5,8 @@ const { admin, openAPI } = require("better-auth/plugins");
 const { username } = require("better-auth/plugins");
 const { jwt } = require("better-auth/plugins");
 const { customSession } = require("better-auth/plugins");
+const { createAuthMiddleware, APIError } = require("better-auth/api");
+const { COMMON_PASSWORDS } = require("../utils/passwordValidator");
 
 // Get MongoDB URI from environment variables
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -26,26 +28,57 @@ if (/change-this|your-super-secret|secret-key-here|changeme/i.test(JWT_SECRET)) 
 const client = new MongoClient(MONGODB_URI);
 const db = client.db();
 
+// Origins allowed to hold a session cookie against this API. CORS_ORIGIN is
+// the single source of truth (Phase 03 derives it from PUBLIC_URL at the
+// compose layer) — no domain is ever hardcoded here, so this stays correct
+// regardless of which domain currently fronts production. server.js reuses
+// this same function for CORS and CSP so there is exactly one list.
+function getAllowedOrigins() {
+	return [
+		...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim()).filter(Boolean) : []),
+		...(process.env.NODE_ENV !== 'production' ? ['http://localhost:3000', 'http://127.0.0.1:3000'] : []),
+	];
+}
+
 const auth = betterAuth({
 	database: mongodbAdapter(db),
 	baseURL: process.env.BASE_URL || "http://localhost:5000",
 	secret: JWT_SECRET,
-	trustedOrigins: [
-		...(process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim()) : []),
-		'https://store.sab.edu.vn',
-		'https://api.store.sab.edu.vn',
-		'http://localhost:3000',
-		'http://127.0.0.1:3000'
-	],
+	trustedOrigins: getAllowedOrigins(),
 	emailAndPassword: {
 		enabled: true,
-		minPasswordLength: 6,
+		// Raised from the previous 6: at 6, "123456" — the single most common
+		// leaked password — satisfied the length check on its own, ahead of
+		// even reaching the common-password blocklist below. Existing users'
+		// stored password hashes are untouched; this only gates new/changed
+		// passwords (sign-up, reset-password, change-password).
+		minPasswordLength: 8,
 		maxPasswordLength: 128,
 		requireEmailVerification: false,
 		sendEmailVerificationOnSignUp: false,
 	},
+	// Registration bypasses the express-validator blocklist in
+	// utils/passwordValidator.js entirely (better-auth's own HTTP handler is
+	// mounted ahead of any route-level validation middleware), so "123456"
+	// being the first blocklist entry never actually blocked sign-up. Reuse
+	// the same list here so registration gets the same defense.
+	hooks: {
+		before: createAuthMiddleware(async (ctx) => {
+			if (ctx.path !== "/sign-up/email") {
+				return;
+			}
+			const password = ctx.body?.password;
+			if (typeof password === "string" && COMMON_PASSWORDS.includes(password.toLowerCase())) {
+				throw new APIError("BAD_REQUEST", {
+					message: "Mật khẩu này quá phổ biến và không an toàn. Vui lòng chọn mật khẩu khác",
+				});
+			}
+		}),
+	},
 	plugins: [
-		openAPI(),
+		// Exposes the full API schema at /api/auth/reference; no reason to ship
+		// that surface to production.
+		...(process.env.NODE_ENV !== 'production' ? [openAPI()] : []),
 		username({
 			minUsernameLength: 3,
 			maxUsernameLength: 30,
@@ -109,4 +142,8 @@ const auth = betterAuth({
 	},
 });
 
-module.exports = { auth };
+// Exposed so a caller that owns process shutdown (see tests/setup.js /
+// jest.config.js forceExit) can close this connection explicitly — better-auth
+// never exposes it, so nothing else closes this handle in tests, and jest
+// hangs after the last test without --forceExit.
+module.exports = { auth, getAllowedOrigins, client };
