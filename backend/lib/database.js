@@ -61,20 +61,8 @@ async function connectDB() {
 	}
 }
 
-function getDb() {
-	if (!isConnected || !mongoose.connection.db) {
-		const error = new Error('Database not connected. Call connectDB() first.');
-		ErrorLogger.logDatabase('getDb', error, {
-			isConnected,
-			readyState: mongoose.connection.readyState
-		});
-		throw error;
-	}
-	return mongoose.connection.db;
-}
-
 function closeDB() {
 	return mongoose.connection.close();
 }
 
-module.exports = { connectDB, getDb, closeDB };
+module.exports = { connectDB, closeDB };

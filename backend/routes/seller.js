@@ -9,7 +9,13 @@ const { sendOrderToAppScript } = require('../utils/appscript');
 const { generateDirectSalePaymentQR } = require('../utils/paymentHelper');
 const ComboService = require('../services/ComboService');
 const { auth } = require('../lib/auth');
+const { StockError, deductStockForItems, restoreStockForItems, applyStatusTransitionStockEffect } = require('../services/stock');
+const ErrorLogger = require('../utils/errorLogger');
+const { asEnum, asSort, asDate, safeSearch, asPageLimit } = require('../utils/query-guard');
 const router = express.Router();
+
+const ORDER_STATUSES = ['confirmed', 'paid', 'delivered', 'cancelled'];
+const ORDER_SORTABLE_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode', 'orderNumber'];
 
 // Apply seller authentication to all routes
 router.use(authenticateSeller);
@@ -176,51 +182,41 @@ router.get('/dashboard/stats', async (req, res) => {
  */
 router.get('/orders', async (req, res) => {
 	try {
-		const {
-			page = 1,
-			limit = 10,
-			status = '',
-			search = '',
-			startDate = '',
-			endDate = '',
-			sortBy = 'createdAt',
-			sortOrder = 'desc'
-		} = req.query;
+		const { page, limit, status, search, startDate, endDate, sortBy, sortOrder } = req.query;
 
 		// Build filter
-		const filter = {};
+		const statusFilter = asEnum(status, ORDER_STATUSES);
+		const searchMatch = safeSearch(search);
+		const filter = {
+			...(statusFilter && { status: statusFilter }),
+			...(searchMatch && {
+				$or: [
+					{ orderNumber: searchMatch },
+					{ orderCode: searchMatch },
+					{ fullName: searchMatch },
+					{ studentId: searchMatch },
+					{ email: searchMatch }
+				]
+			})
+		};
 
-		if (status) {
-			filter.status = status;
+		const gte = asDate(startDate);
+		const lte = asDate(endDate);
+		if (gte || lte) {
+			filter.createdAt = {
+				...(gte && { $gte: gte }),
+				// endDate is a calendar-day boundary from the caller; extend it
+				// to the end of that day so "search up to endDate" is inclusive.
+				...(lte && { $lte: new Date(lte.getTime() + 24 * 60 * 60 * 1000 - 1) })
+			};
 		}
 
-		if (search) {
-			filter.$or = [
-				{ orderNumber: { $regex: search, $options: 'i' } },
-				{ orderCode: { $regex: search, $options: 'i' } },
-				{ fullName: { $regex: search, $options: 'i' } },
-				{ studentId: { $regex: search, $options: 'i' } },
-				{ email: { $regex: search, $options: 'i' } }
-			];
-		}
-
-		if (startDate || endDate) {
-			filter.createdAt = {};
-			if (startDate) {
-				filter.createdAt.$gte = new Date(startDate);
-			}
-			if (endDate) {
-				filter.createdAt.$lte = new Date(endDate + 'T23:59:59.999Z');
-			}
-		}
-
-		// Build sort
-		const sort = {};
-		sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+		const { page: pageNum, limit: limitNum } = asPageLimit(page, limit);
+		const sort = asSort(sortBy, sortOrder, ORDER_SORTABLE_FIELDS);
 
 		const options = {
-			page: parseInt(page),
-			limit: parseInt(limit),
+			page: pageNum,
+			limit: limitNum,
 			sort,
 			populate: [
 				{
@@ -268,81 +264,124 @@ router.get('/orders', async (req, res) => {
  * @access  Private (Seller)
  */
 router.put('/orders/:id/status', async (req, res) => {
+	const { id } = req.params;
 	try {
-		const { id } = req.params;
 		const { status, transactionCode, cancelReason, note } = req.body;
 
-		// Validate status
-		const validStatuses = ['pending', 'confirmed', 'paid', 'delivered', 'cancelled'];
-		if (!validStatuses.includes(status)) {
+		if (!ORDER_STATUSES.includes(status)) {
 			return res.status(400).json({
 				success: false,
 				message: 'Trạng thái đơn hàng không hợp lệ'
 			});
 		}
 
-		// Build update object
-		const updateData = {
-			status,
-			lastUpdatedBy: req.seller.username
-		};
-
-		// Add transaction code if provided
-		if (transactionCode) {
-			updateData.transactionCode = transactionCode;
-		}
-
-		// Add cancel reason if provided
-		if (cancelReason) {
-			updateData.cancelReason = cancelReason;
-		}
-
-		// Build status history entry
-		const historyEntry = {
-			status,
-			updatedAt: new Date(),
-			updatedBy: req.seller.username
-		};
-
-		// Add transaction code to history if provided
-		if (transactionCode) {
-			historyEntry.transactionCode = transactionCode;
-		}
-
-		// Add cancel reason to history if provided
-		if (cancelReason) {
-			historyEntry.cancelReason = cancelReason;
-		}
-
-		const order = await Order.findByIdAndUpdate(
-			id,
-			{
-				...updateData,
-				$push: {
-					statusHistory: historyEntry
-				}
-			},
-			{ new: true }
-		).populate('items.productId', 'name imageUrl price');
-
-		if (!order) {
+		const existing = await Order.findById(id).lean();
+		if (!existing) {
 			return res.status(404).json({
 				success: false,
 				message: 'Không tìm thấy đơn hàng'
 			});
 		}
 
+		const previousStatus = existing.status;
+
+		// See routes/admin/orders.js PUT /:id for why a same-status transition
+		// is rejected outright instead of falling through to a same-value
+		// conditional update that would trivially match and "succeed" again.
+		if (status === previousStatus) {
+			return res.status(409).json({
+				success: false,
+				message: 'Đơn hàng đã ở trạng thái này'
+			});
+		}
+
+		const historyEntry = {
+			status,
+			updatedAt: new Date(),
+			updatedBy: req.seller.username
+		};
+		const setFields = {
+			status,
+			statusUpdatedAt: new Date(),
+			lastUpdatedBy: req.seller.username
+		};
+		if (transactionCode) {
+			setFields.transactionCode = transactionCode;
+			historyEntry.transactionCode = transactionCode;
+		}
+		if (cancelReason) {
+			setFields.cancelReason = cancelReason;
+			historyEntry.cancelReason = cancelReason;
+		}
+		if (note) {
+			historyEntry.note = note;
+		}
+
+		// Conditional transition (see routes/admin/orders.js PUT /:id for the
+		// full rationale): only the request whose read of previousStatus still
+		// matches at write time wins. This is the seller-facing route the POS
+		// UI (DirectSalesPage) actually calls to cancel a direct sale — this
+		// route never touched stock at all on cancel before, which left the
+		// same asymmetric-accounting bug this phase closes in the admin route,
+		// just reachable from the seller UI instead.
+		const transitioned = await Order.findOneAndUpdate(
+			{ _id: id, status: previousStatus },
+			{ $set: setFields, $push: { statusHistory: historyEntry } },
+			{ new: true, runValidators: true }
+		).populate('items.productId', 'name imageUrl price');
+
+		if (!transitioned) {
+			return res.status(409).json({
+				success: false,
+				message: 'Đơn hàng vừa được người khác cập nhật, vui lòng tải lại và thử lại'
+			});
+		}
+
+		try {
+			const newStockDeducted = await applyStatusTransitionStockEffect({
+				items: transitioned.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+				isDirectSale: transitioned.isDirectSale,
+				stockDeducted: transitioned.stockDeducted,
+				previousStatus,
+				newStatus: status
+			});
+
+			if (newStockDeducted !== null) {
+				await Order.updateOne({ _id: id }, { $set: { stockDeducted: newStockDeducted } });
+				transitioned.stockDeducted = newStockDeducted;
+			}
+		} catch (stockErr) {
+			await Order.updateOne(
+				{ _id: id, status },
+				{ $set: { status: previousStatus, statusUpdatedAt: new Date() }, $pop: { statusHistory: 1 } }
+			);
+
+			if (stockErr instanceof StockError && stockErr.code === 'INSUFFICIENT_STOCK') {
+				return res.status(400).json({
+					success: false,
+					message: 'Không đủ hàng trong kho để khôi phục đơn hàng này',
+					details: stockErr.details
+				});
+			}
+
+			ErrorLogger.logCritical('Cập nhật kho thất bại khi seller đổi trạng thái đơn hàng', stockErr, { orderId: id, previousStatus, status });
+			return res.status(500).json({
+				success: false,
+				message: 'Lỗi khi cập nhật kho hàng'
+			});
+		}
+
 		const appscriptData = {
-			orderCode: order.orderCode,
-			studentId: order.studentId,
-			fullName: order.fullName,
-			email: order.email,
-			additionalNote: order.additionalNote,
-			items: order.items,
-			totalAmount: order.totalAmount,
-			transactionCode: order.transactionCode,
-			cancelReason: order.cancelReason,
-			status: order.status
+			orderCode: transitioned.orderCode,
+			studentId: transitioned.studentId,
+			fullName: transitioned.fullName,
+			email: transitioned.email,
+			additionalNote: transitioned.additionalNote,
+			items: transitioned.items,
+			totalAmount: transitioned.totalAmount,
+			transactionCode: transitioned.transactionCode,
+			cancelReason: transitioned.cancelReason,
+			status: transitioned.status
 		};
 		console.log('Push to AppScript:', appscriptData);
 		setImmediate(() => {
@@ -356,10 +395,10 @@ router.put('/orders/:id/status', async (req, res) => {
 			message: 'Cập nhật trạng thái đơn hàng thành công',
 			data: {
 				order: {
-					...order.toObject(),
-					statusText: getStatusInVietnamese(order.status),
-					formattedDate: formatDate(order.createdAt),
-					formattedTotal: formatCurrency(order.totalAmount)
+					...transitioned.toObject(),
+					statusText: getStatusInVietnamese(transitioned.status),
+					formattedDate: formatDate(transitioned.createdAt),
+					formattedTotal: formatCurrency(transitioned.totalAmount)
 				}
 			}
 		});
@@ -418,10 +457,24 @@ router.get('/orders/:id', async (req, res) => {
  * @route   POST /api/seller/orders/direct
  * @desc    Create direct sale order
  * @access  Private (Seller)
+ *
+ * Pricing is always computed server-side from the DB now. The previous
+ * version had a branch that trusted `optimalPricing.summary.finalTotal` sent
+ * by the client verbatim whenever `useOptimalPricing` was set — the same
+ * class of bug Phase 05 fixed on the public POST /api/orders route, just
+ * reachable here from the seller POS instead. That branch is removed.
+ *
+ * Pricing goes through ComboService.calculateOptimalPricing, not
+ * services/pricing.js's computeOrderPricing — computeOrderPricing applies at
+ * most one combo per order by contract, but the seller POS (DirectSalesPage)
+ * can legitimately ring up a cart that qualifies for more than one different
+ * combo (e.g. two lanyard+tag combos of different kinds in one sale), and
+ * this phase does not silently drop that capability. See the phase report
+ * for the full analysis of why this differs from the public order route.
  */
 router.post('/orders/direct', async (req, res) => {
 	try {
-		const { items, optimalPricing, useOptimalPricing = false } = req.body;
+		const { items } = req.body;
 
 		if (!items || !Array.isArray(items) || items.length === 0) {
 			return res.status(400).json({
@@ -430,224 +483,174 @@ router.post('/orders/direct', async (req, res) => {
 			});
 		}
 
-		let totalAmount;
-		let comboInfo = null;
-		let orderItems = [];
-
-		if (useOptimalPricing && optimalPricing) {
-			console.log('💎 Direct sales using optimal pricing from frontend');
-
-			// Validate products exist
-			const productIds = items.map(item => item.productId);
-			const products = await Product.find({
-				_id: { $in: productIds },
-				isActive: true
-			});
-
-			if (products.length !== productIds.length) {
+		for (const item of items) {
+			if (!item || !item.productId || !Number.isInteger(item.quantity) || item.quantity <= 0) {
 				return res.status(400).json({
 					success: false,
-					message: 'Một hoặc nhiều sản phẩm không khả dụng'
+					message: 'Thông tin sản phẩm không hợp lệ'
 				});
-			}
-
-			// Check stock quantities
-			for (const item of items) {
-				const product = products.find(p => p._id.toString() === item.productId);
-				if (product.stockQuantity < item.quantity) {
-					return res.status(400).json({
-						success: false,
-						message: `Sản phẩm ${product.name} không đủ số lượng trong kho`
-					});
-				}
-			}
-
-			// Use the calculated optimal pricing
-			totalAmount = optimalPricing.summary.finalTotal;
-
-			// Create order items and update stock
-			for (const item of items) {
-				const product = products.find(p => p._id.toString() === item.productId);
-
-				orderItems.push({
-					productId: product._id,
-					productName: product.name,
-					quantity: item.quantity,
-					price: product.price, // Keep original price for reference
-					total: product.price * item.quantity,
-					fromCombo: false
-				});
-
-				// Update stock quantity
-				product.stockQuantity -= item.quantity;
-				await product.save();
-			}
-
-			// Add combo information if savings exist
-			if (optimalPricing.summary.totalSavings > 0) {
-				comboInfo = {
-					savings: optimalPricing.summary.totalSavings,
-					originalTotal: optimalPricing.summary.originalTotal,
-					finalTotal: optimalPricing.summary.finalTotal,
-					combos: optimalPricing.combos || [],
-					breakdown: optimalPricing.breakdown || []
-				};
-			}
-
-		} else {
-			console.log('🔄 Direct sales using traditional combo detection');
-			// Apply combo detection silently for direct sales
-			const comboResult = await ComboService.detectAndApplyBestCombo(items, true);
-			let finalItems = items;
-
-			if (comboResult.success && comboResult.hasCombo) {
-				finalItems = comboResult.finalItems;
-				comboInfo = {
-					comboId: comboResult.combo._id,
-					comboName: comboResult.combo.name,
-					savings: comboResult.savings
-				};
-			}
-
-			// Convert combo items back to individual products for order storage
-			const expandedItems = ComboService.expandComboItems(finalItems);
-
-			// Calculate total amount and validate products
-			for (const item of expandedItems) {
-				if (!item.productId) continue; // Skip combo items without productId
-
-				const product = await Product.findById(item.productId);
-
-				if (!product || !product.isActive) {
-					return res.status(400).json({
-						success: false,
-						message: `Sản phẩm ${item.productName || 'không xác định'} không khả dụng`
-					});
-				}
-
-				if (product.stockQuantity < item.quantity) {
-					return res.status(400).json({
-						success: false,
-						message: `Sản phẩm ${product.name} không đủ số lượng trong kho`
-					});
-				}
-
-				const itemTotal = product.price * item.quantity;
-
-				orderItems.push({
-					productId: product._id,
-					productName: product.name,
-					quantity: item.quantity,
-					price: product.price,
-					total: itemTotal,
-					fromCombo: item.fromCombo || false,
-					comboId: item.comboId || null,
-					comboName: item.comboName || null
-				});
-
-				// Update stock quantity
-				product.stockQuantity -= item.quantity;
-				await product.save();
-			}
-
-			// Calculate total with combo pricing if applicable
-			if (comboInfo && finalItems.some(item => item.isCombo)) {
-				totalAmount = finalItems.reduce((total, item) => {
-					return total + (item.price * item.quantity);
-				}, 0);
-			} else {
-				totalAmount = orderItems.reduce((total, item) => total + item.total, 0);
 			}
 		}
 
-		// Generate order number for direct sales
-		// Find the highest existing orderNumber to avoid duplicates
-		let orderNumber;
-		let orderNumberUnique = false;
-		let orderNumberAttempts = 0;
-		const MAX_ORDER_NUMBER_ATTEMPTS = 100;
-
-		while (!orderNumberUnique && orderNumberAttempts < MAX_ORDER_NUMBER_ATTEMPTS) {
-			const lastOrder = await Order.findOne(
-				{ orderNumber: { $regex: /^SAB\d{6}$/ } },
-				{ orderNumber: 1 }
-			).sort({ orderNumber: -1 }).lean();
-
-			let nextNumber = 1;
-			if (lastOrder && lastOrder.orderNumber) {
-				const currentNumber = parseInt(lastOrder.orderNumber.replace('SAB', ''));
-				nextNumber = currentNumber + 1;
-			}
-
-			orderNumber = `SAB${String(nextNumber).padStart(6, '0')}`;
-
-			// Check if orderNumber already exists
-			const existingOrderNumber = await Order.findOne({ orderNumber });
-			if (!existingOrderNumber) {
-				orderNumberUnique = true;
-			} else {
-				orderNumberAttempts++;
-			}
-		}
-
-		if (!orderNumberUnique) {
-			return res.status(500).json({
+		// Validate every product up front: ComboService.calculateOptimalPricing
+		// silently drops unknown/inactive products from its result instead of
+		// rejecting them, which would otherwise let a stale cart line vanish
+		// from the order without the seller noticing.
+		const productIds = [...new Set(items.map(item => String(item.productId)))];
+		const validProducts = await Product.find({ _id: { $in: productIds }, isActive: true, available: true });
+		const validIds = new Set(validProducts.map(p => p._id.toString()));
+		const missingIds = productIds.filter(id => !validIds.has(id));
+		if (missingIds.length > 0) {
+			return res.status(400).json({
 				success: false,
-				message: 'Không thể tạo số đơn hàng duy nhất sau nhiều lần thử'
+				message: 'Một hoặc nhiều sản phẩm không tồn tại hoặc không khả dụng',
+				details: { missingIds }
 			});
 		}
 
-		// Generate unique order code (different from orderNumber to avoid conflicts)
-		let orderCode;
-		let isUnique = false;
+		const pricing = await ComboService.calculateOptimalPricing(items);
+
+		const orderItems = [];
+		for (const applied of pricing.appliedCombos) {
+			for (const used of applied.itemsUsed) {
+				orderItems.push({
+					productId: used.productId,
+					productName: used.productName,
+					quantity: used.quantity,
+					price: used.price,
+					fromCombo: true,
+					comboId: applied.combo._id,
+					comboName: applied.combo.name
+				});
+			}
+		}
+		for (const item of pricing.remainingItems) {
+			orderItems.push({
+				productId: item.productId,
+				productName: item.product.name,
+				quantity: item.quantity,
+				price: item.product.price,
+				fromCombo: false
+			});
+		}
+
+		if (orderItems.length === 0) {
+			return res.status(400).json({
+				success: false,
+				message: 'Danh sách sản phẩm không hợp lệ'
+			});
+		}
+
+		const totalAmount = pricing.finalTotal;
+		const comboInfo = pricing.appliedCombos.length > 0 ? {
+			savings: pricing.totalSavings,
+			originalTotal: pricing.originalTotal,
+			finalTotal: pricing.finalTotal,
+			combos: pricing.appliedCombos.map(c => ({
+				comboId: c.combo._id,
+				comboName: c.combo.name,
+				applications: c.applications,
+				savings: c.savings
+			})),
+			breakdown: pricing.breakdown
+		} : null;
+
+		const stockLines = orderItems.map(item => ({ productId: item.productId, quantity: item.quantity }));
+
+		// Deduct stock atomically before persisting the order. A mid-loop
+		// failure (a later line short on stock) compensates every line
+		// already deducted, so a rejected direct sale never leaves stock
+		// short — this replaces the old read-modify-write
+		// `product.stockQuantity -= qty; await product.save()`, which two
+		// sellers racing the last unit could both pass unharmed.
+		try {
+			await deductStockForItems(stockLines);
+		} catch (stockErr) {
+			if (stockErr instanceof StockError && stockErr.code === 'INSUFFICIENT_STOCK') {
+				return res.status(400).json({
+					success: false,
+					message: 'Một hoặc nhiều sản phẩm không đủ số lượng trong kho',
+					details: stockErr.details
+				});
+			}
+			throw stockErr;
+		}
+
+		// orderNumber's base comes from a single pre-read; orderCode is
+		// re-randomized every attempt. Either colliding on save() (E11000)
+		// retries with a fresh pair — the pre-read only narrows the race, the
+		// actual uniqueness guarantee is the retry loop below.
+		const lastOrder = await Order.findOne(
+			{ orderNumber: { $regex: /^SAB\d{6}$/ } },
+			{ orderNumber: 1 }
+		).sort({ orderNumber: -1 }).lean();
+		const baseOrderNumber = lastOrder && lastOrder.orderNumber
+			? parseInt(lastOrder.orderNumber.replace('SAB', ''), 10) + 1
+			: 1;
+
+		let order;
 		let attempts = 0;
-
-		while (!isUnique && attempts < 10) {
-			orderCode = `D${String(Math.floor(Math.random() * 9000) + 1000)}`; // D1000-D9999 format for direct sales
-			const existingOrder = await Order.findOne({ orderCode });
-			if (!existingOrder) {
-				isUnique = true;
-			}
-			attempts++;
-		}
-
-		if (!isUnique) {
-			return res.status(500).json({
-				success: false,
-				message: 'Không thể tạo mã đơn hàng duy nhất'
-			});
-		}
-
-		// Create order
-		const order = new Order({
-			orderNumber,
-			orderCode,  // Use generated unique code, not orderNumber
-			// For direct sales, don't include customer data fields
-			fullName: `NB: ${req.seller.username}`,
-			items: orderItems,
-			totalAmount,
-			status: 'confirmed',
-			isDirectSale: true,
-			createdBy: req.seller?.id || null,
-			lastUpdatedBy: req.seller?.username || req?.admin?.username || 'unknown',
-			comboInfo: comboInfo, // Store combo information
-			statusHistory: [
-				{
-					status: 'confirmed',
-					updatedBy: req.seller?.username || req?.admin?.username || 'unknown',
-					updatedAt: new Date(),
+		const maxAttempts = 10;
+		try {
+			while (!order) {
+				attempts++;
+				if (attempts > maxAttempts) {
+					throw Object.assign(new Error('ORDER_CODE_EXHAUSTED'), { code: 'ORDER_CODE_EXHAUSTED' });
 				}
-			]
-		});
 
-		await order.save();
+				const orderNumber = `SAB${String(baseOrderNumber + attempts - 1).padStart(6, '0')}`;
+				// D100000-D999999 (900,000 values). Widened from the old
+				// D1000-D9999 (9,000 values) format, which a handful of direct
+				// sales a day could exhaust the practical collision-free space
+				// of; old D#### codes already on real orders remain valid.
+				const orderCode = `D${String(Math.floor(Math.random() * 900000) + 100000)}`;
+
+				try {
+					order = await new Order({
+						orderNumber,
+						orderCode,
+						// For direct sales, don't include customer data fields
+						fullName: `NB: ${req.seller.username}`,
+						items: orderItems,
+						totalAmount,
+						status: 'confirmed',
+						isDirectSale: true,
+						stockDeducted: true,
+						createdBy: req.seller?.id || null,
+						lastUpdatedBy: req.seller?.username || 'unknown',
+						comboInfo,
+						statusHistory: [{
+							status: 'confirmed',
+							updatedBy: req.seller?.username || 'unknown',
+							updatedAt: new Date()
+						}]
+					}).save();
+				} catch (saveError) {
+					if (saveError.code === 11000) continue; // orderNumber/orderCode collision, retry
+					throw saveError;
+				}
+			}
+		} catch (orderCreationError) {
+			// Order never persisted — compensate the stock deducted above so a
+			// failed direct sale never leaves stock permanently short.
+			await restoreStockForItems(stockLines).catch(compensationError => {
+				ErrorLogger.logCritical('Bù kho thất bại sau khi tạo đơn bán trực tiếp (seller) thất bại', compensationError, { stockLines });
+			});
+
+			if (orderCreationError.code === 'ORDER_CODE_EXHAUSTED') {
+				return res.status(500).json({
+					success: false,
+					message: 'Không thể tạo mã đơn hàng duy nhất sau nhiều lần thử'
+				});
+			}
+			throw orderCreationError;
+		}
 
 		// Generate payment QR URL for direct sales
 		let qrUrl = null;
 		try {
 			const username = req.seller?.username || 'seller';
-			qrUrl = await generateDirectSalePaymentQR(totalAmount, orderCode, username);
-			console.log('✅ Direct sale QR URL generated:', qrUrl);
+			qrUrl = await generateDirectSalePaymentQR(totalAmount, order.orderCode, username);
 		} catch (qrError) {
 			console.error('❌ Failed to generate direct sale QR URL:', qrError.message);
 		}
@@ -662,8 +665,8 @@ router.post('/orders/direct', async (req, res) => {
 			message: 'Tạo đơn hàng bán trực tiếp thành công',
 			data: {
 				...populatedOrder,
-				comboInfo: comboInfo,
-				qrUrl: qrUrl,
+				comboInfo,
+				qrUrl,
 				statusText: getStatusInVietnamese(populatedOrder.status),
 				formattedTotal: formatCurrency(populatedOrder.totalAmount)
 			}
