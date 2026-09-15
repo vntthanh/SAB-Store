@@ -32,11 +32,24 @@ services:
 
   # SAB Lanyard MinIO Object Storage
   minio:
-    # Pinned (P2-27): `:latest` + pull_policy: always let the version change
-    # underfoot on every `up -d`. minio/minio was archived upstream in 2026
-    # (RELEASE.2025-10-15T17-29-55Z is the final published image) so this tag
-    # will not move; bumping it later requires a deliberate image swap.
-    image: minio/minio:RELEASE.2025-10-15T17-29-55Z
+    # Pinned by DIGEST, not tag, and deliberately so.
+    #
+    # The minio/minio repository has been REMOVED from Docker Hub — the
+    # registry returns 404 for the repository itself, not merely for a tag, so
+    # no MinIO image can be pulled from there any more. A tag pin therefore
+    # sends `up -d` looking for something that cannot be fetched, and MinIO
+    # fails to start. This digest is the image already present on the
+    # production host (`minio/minio:latest` as resolved on 2025-09-07), so the
+    # daemon uses the local copy and never reaches out.
+    #
+    # Consequences to keep in mind:
+    #   - This image predates RELEASE.2025-10-15T17-29-55Z and so is missing
+    #     that release's privilege-escalation fix. It cannot be obtained; the
+    #     mitigation is that MinIO is not exposed to the internet (expose:
+    #     only, reachable solely through the frontend nginx `/uploads/` path).
+    #   - The image is now IRREPLACEABLE. `docker image prune -a` on this host
+    #     would destroy it permanently. Keep a `docker save` archive.
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     restart: unless-stopped
     command: server /data --console-address ":9001"
     mem_limit: 256m
