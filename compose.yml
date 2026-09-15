@@ -33,12 +33,10 @@ services:
   # SAB Lanyard MinIO Object Storage
   minio:
     # Pinned (P2-27) - see prod.compose.yml for rationale.
-    # Pinned by digest: minio/minio has been removed from Docker Hub, so a tag
-    # pin cannot be resolved any more (see prod.compose.yml for the detail).
-    # This digest is a different, older build from the one production runs —
-    # the two environments cannot converge until the image is pushed to a
-    # registry we control, because neither image can be re-pulled.
-    image: minio/minio@sha256:ac591851803a79aee64bc37f66d77c56b0a4b6e12d9e5356380f4105510f2332
+    # Community fork (see prod.compose.yml): minio/minio no longer exists on
+    # Docker Hub and its last build gets no further security fixes. Drop-in
+    # replacement, pinned by digest.
+    image: pgsty/minio@sha256:2b36182f3479c58b5cba920f20479738ee85ce218de0596a244f9a1368268db9
     container_name: sabstore_minio
     restart: unless-stopped
     command: server /data --console-address ":9001"
