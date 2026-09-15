@@ -4,9 +4,14 @@ import { usernameClient } from "better-auth/client/plugins";
 import { customSessionClient } from "better-auth/client/plugins";
 
 export const authClient = createAuthClient({
-	// Same-origin relative path: frontend nginx proxies /api/ to the backend
-	// (AD-3) - no VITE_API_URL needed.
-	baseURL: "/api/auth",
+	// Same origin: the frontend nginx proxies /api/ to the backend, so no
+	// build-time domain variable is needed (AD-3).
+	//
+	// It must still be an ABSOLUTE url. better-auth's client validates this and
+	// throws "Invalid base URL" on a relative path, which happens at import
+	// time and takes the whole SPA down with a blank page. Deriving it from
+	// window.location keeps the domain out of the bundle.
+	baseURL: `${window.location.origin}/api/auth`,
 	plugins: [
 		usernameClient(),
 		adminClient(),
