@@ -1,0 +1,176 @@
+# Coolify-native variant of prod.compose.yml.
+#
+#   * The `backend` service is renamed `sabstore-backend`. Coolify registers the
+#     compose SERVICE name as the network alias, and frontend/nginx.conf proxies to
+#     `sabstore-backend:5000`. Renaming the service preserves that name without
+#     editing app config or rebuilding the frontend image. The old explicit alias
+#     existed because `multi-domain` was shared and another stack already owned the
+#     plain name `backend`; with one network per resource that clash cannot happen.
+#   * No `networks:` blocks, no `container_name:` — Coolify owns both.
+#   * Named volumes replaced by absolute binds under /srv/appdata/vol/. Coolify
+#     rewrites compose-declared volume names, which would have detached MongoDB,
+#     MinIO and the upload store from their data.
+services:
+  # SAB Lanyard MongoDB Database
+  mongodb:
+    image: mongo:6.0
+    restart: unless-stopped
+    # Default WiredTiger cache is 50% x (RAM - 1GB) ~= 4.3GB on this box,
+    # which is shared with ~40 containers from other projects.
+    command: ["--wiredTigerCacheSizeGB", "0.25"]
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME is required}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required}
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE:-minipreorder}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    expose:
+      - "27017"
+    volumes:
+      - /srv/appdata/vol/sab-store_mongodb_data:/data/db
+    healthcheck:
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # SAB Lanyard MinIO Object Storage
+  minio:
+    # Community fork, pinned by digest.
+    #
+    # minio/minio is gone: Docker Hub returns 404 for the repository itself,
+    # and the final official build (RELEASE.2025-09-07) will never receive
+    # another security fix. A tag pin against it now resolves to nothing, so
+    # `up -d` would fail to start MinIO at all.
+    #
+    # pgsty/minio packages that same last-known-good source, applies CVE
+    # patches and keeps publishing (AGPLv3). It is a drop-in: same env vars,
+    # same `server /data` command, same on-disk format, so the existing
+    # volume is read as-is.
+    #
+    # Pinned by digest rather than tag so the image cannot move underfoot.
+    # amd64 digest for RELEASE.2026-08-04T00-00-00Z; the host is x86_64.
+    image: pgsty/minio@sha256:2b36182f3479c58b5cba920f20479738ee85ce218de0596a244f9a1368268db9
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    # Never published to the host: MinIO is reached only from inside
+    # sabstore_network (backend SDK, and the frontend nginx /uploads/ proxy).
+    expose:
+      - "9000"
+      - "9001"
+    volumes:
+      - /srv/appdata/vol/sab-store_minio_data:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # SAB Lanyard Backend API
+  sabstore-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    pull_policy: always
+    restart: unless-stopped
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${BACKEND_PORT:-5000}
+      # PUBLIC_URL is the single source for the public origin (AD-2):
+      # BASE_URL and CORS_ORIGIN both derive from it instead of carrying
+      # their own copies that can drift apart.
+      PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL is required}
+      BASE_URL: ${PUBLIC_URL}
+      MONGODB_URI: ${MONGODB_URI:?MONGODB_URI is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      APPSCRIPT_URL: ${APPSCRIPT_URL:?APPSCRIPT_URL is required}
+      CORS_ORIGIN: ${PUBLIC_URL}
+      # MinIO service account TODO: backend currently authenticates with the
+      # MinIO root credential. Intentionally NOT merged with
+      # MINIO_ROOT_USER/PASSWORD above (AD-2) - split into a bucket-scoped
+      # `sabstore` service account via `mc admin user add` + policy; out of
+      # scope for this phase, tracked separately.
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
+      MINIO_PORT: ${MINIO_PORT:-9000}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-sabstore}
+      MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    expose:
+      - "5000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+        restart: true
+      minio:
+        condition: service_healthy
+        restart: true
+    volumes:
+      - /srv/appdata/vol/sab-store_backend_uploads:/app/uploads
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5000/health" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # Only the frontend joins multi-domain. The backend is reachable
+    # exclusively through the frontend nginx /api/ proxy.
+    #
+    # The alias must be project-unique: `multi-domain` is shared with other
+    # stacks and another project already owns the plain name `backend` there,
+    # so the frontend (which is on both networks) would resolve to it.
+
+  # SAB Lanyard Frontend React App (with Nginx Reverse Proxy)
+  frontend:
+    # No VITE_API_URL build arg/env: the SPA calls the API via the relative
+    # path /api (AD-3), so nothing domain-specific is baked into the bundle.
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    pull_policy: always
+    restart: unless-stopped
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    expose:
+      - 80
+    depends_on:
+      sabstore-backend:
+        condition: service_started
+        restart: true
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost/health" ]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
