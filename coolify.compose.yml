@@ -10,6 +10,12 @@
 #   * Named volumes replaced by absolute binds under /srv/appdata/vol/. Coolify
 #     rewrites compose-declared volume names, which would have detached MongoDB,
 #     MinIO and the upload store from their data.
+# NOTE: backend and frontend run PRE-BUILT production images served from the local
+# registry on 127.0.0.1:5000. A fresh source build fails today with `vite: not found`
+# even though the same commit built cleanly six days ago - dependency drift, not a
+# change in this repo. The deployment platform runs `compose pull` before `up`, hence
+# the registry rather than a bare local tag. Restoring a working source build is
+# follow-up work.
 services:
   # SAB Lanyard MongoDB Database
   mongodb:
@@ -85,9 +91,7 @@ services:
 
   # SAB Lanyard Backend API
   sabstore-backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: 127.0.0.1:5000/sab-store-backend:migrated-260921
     pull_policy: always
     restart: unless-stopped
     mem_limit: 256m
@@ -151,9 +155,7 @@ services:
   frontend:
     # No VITE_API_URL build arg/env: the SPA calls the API via the relative
     # path /api (AD-3), so nothing domain-specific is baked into the bundle.
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: 127.0.0.1:5000/sab-store-frontend:migrated-260921
     pull_policy: always
     restart: unless-stopped
     mem_limit: 128m
