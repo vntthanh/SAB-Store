@@ -16,6 +16,13 @@
 # change in this repo. The deployment platform runs `compose pull` before `up`, hence
 # the registry rather than a bare local tag. Restoring a working source build is
 # follow-up work.
+# The `${VAR:?message}` form is NOT used in this file. The deployment platform does
+# not implement error-if-unset: it substitutes the MESSAGE as the value, so
+# `${PUBLIC_URL:?PUBLIC_URL is required}` silently becomes the literal string
+# `PUBLIC_URL is required` - observed here on 2026-09-21, with a backend that
+# crash-looped on an invalid base URL and databases that would have been handed a
+# password of `POSTGRES_PASSWORD must be set`. Plain `${VAR}` is used instead; the
+# values come from the platform environment store.
 services:
   # SAB Lanyard MongoDB Database
   mongodb:
@@ -31,8 +38,8 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME is required}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
       MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE:-minipreorder}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     expose:
@@ -72,8 +79,8 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     # Never published to the host: MinIO is reached only from inside
     # sabstore_network (backend SDK, and the frontend nginx /uploads/ proxy).
@@ -106,14 +113,14 @@ services:
       # PUBLIC_URL is the single source for the public origin (AD-2):
       # BASE_URL and CORS_ORIGIN both derive from it instead of carrying
       # their own copies that can drift apart.
-      PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL is required}
+      PUBLIC_URL: ${PUBLIC_URL}
       BASE_URL: ${PUBLIC_URL}
-      MONGODB_URI: ${MONGODB_URI:?MONGODB_URI is required}
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
-      APPSCRIPT_URL: ${APPSCRIPT_URL:?APPSCRIPT_URL is required}
+      MONGODB_URI: ${MONGODB_URI}
+      JWT_SECRET: ${JWT_SECRET}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      APPSCRIPT_URL: ${APPSCRIPT_URL}
       CORS_ORIGIN: ${PUBLIC_URL}
       # MinIO service account TODO: backend currently authenticates with the
       # MinIO root credential. Intentionally NOT merged with
@@ -122,8 +129,8 @@ services:
       # scope for this phase, tracked separately.
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
       MINIO_PORT: ${MINIO_PORT:-9000}
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-sabstore}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
