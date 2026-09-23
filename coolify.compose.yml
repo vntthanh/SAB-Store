@@ -27,6 +27,7 @@ services:
   # SAB Lanyard MongoDB Database
   mongodb:
     image: mongo:6.0
+    cpus: 2
     restart: unless-stopped
     # Default WiredTiger cache is 50% x (RAM - 1GB) ~= 4.3GB on this box,
     # which is shared with ~40 containers from other projects.
@@ -70,6 +71,7 @@ services:
     # Pinned by digest rather than tag so the image cannot move underfoot.
     # amd64 digest for RELEASE.2026-08-04T00-00-00Z; the host is x86_64.
     image: pgsty/minio@sha256:2b36182f3479c58b5cba920f20479738ee85ce218de0596a244f9a1368268db9
+    cpus: 2
     restart: unless-stopped
     command: server /data --console-address ":9001"
     mem_limit: 256m
@@ -99,6 +101,7 @@ services:
   # SAB Lanyard Backend API
   sabstore-backend:
     image: 127.0.0.1:5000/sab-store-backend:migrated-260921
+    cpus: 2
     pull_policy: always
     restart: unless-stopped
     mem_limit: 256m
@@ -163,6 +166,7 @@ services:
     # No VITE_API_URL build arg/env: the SPA calls the API via the relative
     # path /api (AD-3), so nothing domain-specific is baked into the bundle.
     image: 127.0.0.1:5000/sab-store-frontend:migrated-260921
+    cpus: 2
     pull_policy: always
     restart: unless-stopped
     mem_limit: 128m
