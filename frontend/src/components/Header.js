@@ -1,12 +1,56 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
+import { settingsService, DEFAULT_STORE_TITLE } from '../services/api';
 import Logo from './Logo';
+
+const STORE_TITLE_CACHE_KEY = 'storeTitle';
+
+// Storage can throw (private mode, blocked site data); the title is cosmetic,
+// so a failure just means no cached value.
+const readCachedTitle = () => {
+  try {
+    return localStorage.getItem(STORE_TITLE_CACHE_KEY) || '';
+  } catch {
+    return '';
+  }
+};
+
+const writeCachedTitle = (title) => {
+  try {
+    localStorage.setItem(STORE_TITLE_CACHE_KEY, title);
+  } catch {
+    // Not cached; the next load fetches it again.
+  }
+};
 
 const Header = () => {
   const { getCartItemCount, formatCurrency, getCartTotal } = useCart();
   const itemCount = getCartItemCount();
   const total = getCartTotal();
+  // Start from the last title this browser saw, so a renamed store does not
+  // flash the default on every page load. Empty until the first fetch settles.
+  const [storeTitle, setStoreTitle] = useState(readCachedTitle);
+
+  useEffect(() => {
+    let active = true;
+    settingsService.getPublicSettings()
+      .then((settings) => {
+        if (active && settings?.storeTitle) {
+          setStoreTitle(settings.storeTitle);
+          writeCachedTitle(settings.storeTitle);
+        }
+      })
+      // A missing title is not worth an error toast; fall back quietly.
+      .catch(() => {
+        if (active) {
+          setStoreTitle((current) => current || DEFAULT_STORE_TITLE);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Scroll to cart-sidebar when cart summary is clicked
   const handleCartSummaryClick = () => {
@@ -26,7 +70,7 @@ const Header = () => {
           >
             <Logo size="lg" />
             <span className="text-blue-800 hidden sm:inline">
-              <span className="text-yellow-500">|</span> Lanyard Order
+              <span className="text-yellow-500">|</span> {storeTitle}
             </span>
           </Link>
 

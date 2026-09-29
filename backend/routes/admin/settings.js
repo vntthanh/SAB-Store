@@ -1,15 +1,24 @@
 const express = require('express');
 const Settings = require('../../models/Settings');
+
+const { SETTINGS_KEY, STORE_TITLE_MAX_LENGTH } = Settings;
 const { authenticateAdmin } = require('../../middleware/better-auth');
 const router = express.Router();
 
-const SETTINGS_KEY = 'payment_config';
+const toResponse = (settings) => ({
+	bankNameId: settings.bankNameId,
+	bankAccountId: settings.bankAccountId,
+	prefixMessage: settings.prefixMessage,
+	storeTitle: settings.storeTitle,
+	updatedAt: settings.updatedAt,
+	updatedBy: settings.updatedBy
+});
 
 router.use(authenticateAdmin);
 
 /**
  * @route   GET /api/admin/settings
- * @desc    Get payment settings
+ * @desc    Get store and payment settings
  * @access  Private (Admin only)
  */
 router.get('/', async (req, res) => {
@@ -19,19 +28,13 @@ router.get('/', async (req, res) => {
 		if (!settings) {
 			return res.status(404).json({
 				success: false,
-				message: 'Chưa có cấu hình thanh toán'
+				message: 'Chưa có cấu hình cửa hàng'
 			});
 		}
 
 		res.json({
 			success: true,
-			data: {
-				bankNameId: settings.bankNameId,
-				bankAccountId: settings.bankAccountId,
-				prefixMessage: settings.prefixMessage,
-				updatedAt: settings.updatedAt,
-				updatedBy: settings.updatedBy
-			}
+			data: toResponse(settings)
 		});
 
 	} catch (error) {
@@ -45,12 +48,12 @@ router.get('/', async (req, res) => {
 
 /**
  * @route   PUT /api/admin/settings
- * @desc    Update payment settings
+ * @desc    Update store and payment settings
  * @access  Private (Admin only)
  */
 router.put('/', async (req, res) => {
 	try {
-		const { bankNameId, bankAccountId, prefixMessage } = req.body;
+		const { bankNameId, bankAccountId, prefixMessage, storeTitle } = req.body;
 
 		if (!bankNameId || !bankAccountId || !prefixMessage) {
 			return res.status(400).json({
@@ -66,6 +69,19 @@ router.put('/', async (req, res) => {
 			updatedBy: req.admin?.username || 'admin'
 		};
 
+		// Optional: omitting it keeps the stored title. A non-string is rejected
+		// here rather than cast, so an operator object can never reach the update.
+		if (storeTitle !== undefined) {
+			const title = typeof storeTitle === 'string' ? storeTitle.trim() : '';
+			if (!title || title.length > STORE_TITLE_MAX_LENGTH) {
+				return res.status(400).json({
+					success: false,
+					message: `Tiêu đề cửa hàng phải từ 1 đến ${STORE_TITLE_MAX_LENGTH} ký tự`
+				});
+			}
+			updateData.storeTitle = title;
+		}
+
 		const settings = await Settings.findOneAndUpdate(
 			{ key: SETTINGS_KEY },
 			updateData,
@@ -78,14 +94,8 @@ router.put('/', async (req, res) => {
 
 		res.json({
 			success: true,
-			message: 'Cập nhật cấu hình thanh toán thành công',
-			data: {
-				bankNameId: settings.bankNameId,
-				bankAccountId: settings.bankAccountId,
-				prefixMessage: settings.prefixMessage,
-				updatedAt: settings.updatedAt,
-				updatedBy: settings.updatedBy
-			}
+			message: 'Cập nhật cấu hình thành công',
+			data: toResponse(settings)
 		});
 
 	} catch (error) {

@@ -7,7 +7,7 @@ const Settings = require('./models/Settings');
 const crypto = require('crypto');
 require('dotenv').config();
 
-const SETTINGS_KEY = 'payment_config';
+const { SETTINGS_KEY } = Settings;
 
 async function initDatabase() {
 	try {

@@ -1,6 +1,6 @@
 const Settings = require('../models/Settings');
 
-const SETTINGS_KEY = 'payment_config';
+const { SETTINGS_KEY } = Settings;
 
 /**
  * Convert Vietnamese text to ASCII

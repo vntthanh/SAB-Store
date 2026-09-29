@@ -1,69 +1,21 @@
-# Suggested Commands - SAB Lanyard
+# Suggested Commands — SAB-Store (macOS / zsh; Windows dùng Git Bash)
 
-## Development Commands
+Package manager: **yarn** (cả backend và frontend). Không `npm install`.
 
-### Backend
-```powershell
-cd backend
-npm install              # Install dependencies
-npm run dev             # Start dev server with nodemon (port 5000)
-npm start               # Start production server
-npm run init-db         # Initialize database
-npm test                # Run tests
-```
+## Backend (`cd backend`)
+- `yarn dev` — nodemon server
+- `yarn test <pattern>` — Jest, chạy hẹp (pattern truyền thẳng, không cần `--`)
+- `yarn test` — full suite (mongodb-memory-server replica set, tốn CPU)
+- `node check-env.js` — kiểm env bắt buộc, không in giá trị
+- `node scripts/audit-combo-pricing.js` (read-only), `node scripts/backfill-stock-deducted.js` (dry-run mặc định)
 
-### Frontend
-```powershell
-cd frontend
-npm install             # Install dependencies
-npm start               # Start dev server (port 3000)
-npm run build           # Build for production
-npm test                # Run tests
-```
+## Frontend (`cd frontend`)
+- `yarn dev` (Vite) · `yarn build` · `yarn test` (Vitest)
 
-### Docker
-```powershell
-docker-compose up --build        # Build and start all services
-docker-compose up -d --build     # Background mode
-docker-compose down              # Stop all services
-docker-compose logs -f           # Follow logs
-docker-compose restart           # Restart services
-```
+## Docker
+- Dev: `docker compose up -d --build` (file `compose.yml`, env ở `.env` ROOT)
+- Production chạy trên Coolify từ `coolify.compose.yml` — không deploy tay.
+- `prod.compose.yml` + `docs/deployment.md`: đường rollback cho host không Coolify.
 
-## Windows System Commands
-```powershell
-ls                      # List directory (PowerShell alias for Get-ChildItem)
-cd <path>               # Change directory
-pwd                     # Print working directory (PowerShell alias for Get-Location)
-cat <file>              # View file content (PowerShell alias for Get-Content)
-Select-String "pattern" <file>  # Grep equivalent
-Get-ChildItem -Recurse -Filter "*.js"  # Find files
-```
-
-## Git Commands
-```powershell
-git status
-git add .
-git commit -m "message"
-git push
-git pull
-git diff
-git log --oneline
-```
-
-## Testing & Validation
-```powershell
-# Backend validation
-cd backend
-npm test
-
-# Frontend validation
-cd frontend
-npm test
-npm run build  # Ensure build succeeds
-```
-
-## Database
-MongoDB runs on port 27017 (configured in Docker Compose)
-- Database name: minipreorder_db
-- Connection: mongodb://localhost:27017/minipreorder_db
+## Git
+- Làm trên `dev`; `main` = production (Coolify deploy).
