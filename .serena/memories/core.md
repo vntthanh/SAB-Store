@@ -13,8 +13,9 @@ Tên project trong Serena là "SAB-Lanyard" (tên lịch sử), repo là SAB-Sto
 
 ## Nhánh & môi trường
 - `main` = production: Coolify (docker.noboroto.id.vn, app `sab-store`, domain store.sabies.vn) build
-  kiểu Compose từ `coolify.compose.yml` trên nhánh `main`. Push `main` = deploy.
-- `dev` = nhánh làm việc. Chỉ merge vào `main` khi user yêu cầu.
+  kiểu Compose từ `coolify.compose.yml` trên nhánh `main` (backend/frontend build từ source). Đưa `main` lên = deploy.
+- `dev` = nhánh làm việc. Lên production: merge `dev` → `main` bằng merge commit (`--no-ff`), **giữ** `dev`
+  (không xoá branch), chỉ khi user yêu cầu.
 
 ## Lệnh thường dùng
 `mem:suggested_commands`. Checklist khi xong việc: `mem:task_completion_checklist`.

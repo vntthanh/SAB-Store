@@ -10,12 +10,15 @@
 #   * Named volumes replaced by absolute binds under /srv/appdata/vol/. Coolify
 #     rewrites compose-declared volume names, which would have detached MongoDB,
 #     MinIO and the upload store from their data.
-# NOTE: backend and frontend run PRE-BUILT production images served from the local
-# registry on 127.0.0.1:5000. A fresh source build fails today with `vite: not found`
-# even though the same commit built cleanly six days ago - dependency drift, not a
-# change in this repo. The deployment platform runs `compose pull` before `up`, hence
-# the registry rather than a bare local tag. Restoring a working source build is
-# follow-up work.
+# Backend and frontend are built from source on every deploy (`pull_policy: build`:
+# never pulled, always built). Until 2026-09-29 they ran pre-built images from the
+# host registry because the first source build (2026-09-21) failed with
+# `vite: not found`; that failure could not be reproduced afterwards, locally or with
+# the platform's build args. Rollback (both services together, never one): git-revert
+# this change, i.e. restore `image: 127.0.0.1:5000/sab-store-{backend,frontend}:migrated-260921`
+# with `pull_policy: always` AND delete the `build:` blocks - keeping `build:` next to
+# `image:` would rebuild from source under the old tag instead of rolling back. Those
+# two tags stay in the host registry for that purpose.
 # The `${VAR:?message}` form is NOT used in this file. The deployment platform does
 # not implement error-if-unset: it substitutes the MESSAGE as the value, so
 # `${PUBLIC_URL:?PUBLIC_URL is required}` silently becomes the literal string
@@ -100,9 +103,11 @@ services:
 
   # SAB Lanyard Backend API
   sabstore-backend:
-    image: 127.0.0.1:5000/sab-store-backend:migrated-260921
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     cpus: 2
-    pull_policy: always
+    pull_policy: build
     restart: unless-stopped
     mem_limit: 256m
     logging:
@@ -165,9 +170,11 @@ services:
   frontend:
     # No VITE_API_URL build arg/env: the SPA calls the API via the relative
     # path /api (AD-3), so nothing domain-specific is baked into the bundle.
-    image: 127.0.0.1:5000/sab-store-frontend:migrated-260921
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     cpus: 2
-    pull_policy: always
+    pull_policy: build
     restart: unless-stopped
     mem_limit: 128m
     logging:
