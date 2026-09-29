@@ -12,10 +12,18 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
 - Từ 2026-09-29 backend/frontend **build từ source** (`build:` + `pull_policy: build`). Coolify chạy
   `docker compose build --pull --build-arg <MỌI biến env, kể cả secret>` trong helper container, rồi `up`.
   Build lỗi → deploy fail trước khi thay container (không sập site).
-- Lỗi build `vite: not found` ngày 2026-09-21 (deploy id 17 trong `coolify-db`, bảng
-  `application_deployment_queues`): `yarn install` đã cài devDependencies, `yarn build` vẫn không thấy vite.
-  KHÔNG tái hiện được (2026-09-29): build amd64 ở máy, có/không `--build-arg NODE_ENV=production`, đều OK;
-  context Coolify chỉ gồm file git track. Nguyên nhân chưa rõ — nếu tái diễn, đọc log ở bảng trên trước khi sửa.
+- **Coolify tự CHÈN `ARG <tên>` cho MỌI biến build-time vào MỌI stage của Dockerfile** (log: "Added 56 ARG
+  declarations to Dockerfile for service frontend (multi-stage build, added to 2 stages)"), rồi build với
+  `--build-arg`. Vì vậy `NODE_ENV=production` có mặt khi `RUN yarn install` → yarn classic bỏ devDependencies →
+  `vite: not found` (deploy id 17 ngày 21/09 và id 63 ngày 29/09). Chứng minh 29/09: Dockerfile + `ARG NODE_ENV` +
+  `--build-arg NODE_ENV=production` → lỗi; thêm `--production=false` → OK. Build ở máy KHÔNG có dòng ARG nên
+  không tái hiện — muốn mô phỏng Coolify phải tự chèn `ARG` sau `FROM`.
+  → Mọi lệnh cài dependency trong Dockerfile phải ghi rõ `--production=true|false`, không dựa vào NODE_ENV.
+  → Secret cũng bị chèn thành ARG ở mọi stage (ghi vào `docker history`, lộ cho install script lúc build).
+  Đã tắt build-time (29/09) cho `JWT_SECRET`, `MONGODB_URI`, `MONGO_INITDB_ROOT_{USERNAME,PASSWORD}`,
+  `MINIO_ROOT_{USER,PASSWORD}`, `ADMIN_PASSWORD` — cột `environment_variables.is_buildtime` trong `coolify-db`
+  (UI Coolify tự động hoá không ổn định; sửa bằng UPDATE có transaction + kiểm số dòng). Secret mới thêm: tắt
+  "Available during build" ngay khi tạo.
 - Rollback: git revert về `image: 127.0.0.1:5000/sab-store-{backend,frontend}:migrated-260921` +
   `pull_policy: always` và XOÁ khối `build:` (giữ `build:` cạnh `image:` sẽ build lại dưới tag cũ). Hai tag
   này còn trong registry host (kiểm 2026-09-29: `curl 127.0.0.1:5000/v2/<repo>/tags/list`).

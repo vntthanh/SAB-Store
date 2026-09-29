@@ -104,6 +104,9 @@ Version và tên image nằm ở `package.json`, `yarn.lock`, `Dockerfile`, các
 - **Repo chưa có git hook** → không có cổng tự động. Trước khi commit code: tự chạy test hẹp cho phần đã đụng, và build frontend nếu đụng frontend.
 - **Test xanh không phải bằng chứng hành vi đúng** — test phải assert hợp đồng thật, không assert vào mock của chính nó.
 - **Việc nặng là khe CPU độc quyền trên cả máy** (nhiều phiên Claude chạy chung): một lượt test/build tại một thời điểm; agent song song chỉ an toàn khi thuần đọc/sửa file. Sau khi chạy xong, dọn tiến trình jest/vitest mồ côi do chính mình tạo.
+  - **Khoá máy dùng chung** (test, `docker build`, commit có hook chạy suite): acquire `until mkdir /tmp/cc-heavy.lock 2>/dev/null; do sleep 30; done`, rồi `OWNER="SAB-Store <job> $(date +%s)"; echo "$OWNER" > /tmp/cc-heavy.lock/owner` (giữ nguyên chuỗi `$OWNER` cho lúc release; Bash tool không giữ biến giữa các lần gọi → ghi lại literal); release **chỉ** khi `grep -qxF "$OWNER" /tmp/cc-heavy.lock/owner && rm -rf /tmp/cc-heavy.lock`. Đang chờ thì dựng cờ `/tmp/cc-heavy.sab-wants`, xong thì xoá; nhường khi thấy cờ `*-wants` của phiên khác. Coi khoá là stale chỉ sau 45 phút **và** đã nhắn chủ khoá.
+  - **Cổng host**: tra/ghi `/tmp/cc-ports.registry` (`<port> <repo> <mục đích>`) trước khi publish cổng; chỉ sửa dòng của SAB-Store, xoá dòng khi dừng stack. Stack kiểm thử production-like của SAB-Store dùng `127.0.0.1:8088`.
+  - Script chạy lệnh có mảng đối số: dùng `bash`, không dựa vào word-splitting của zsh (`$C args` trong zsh không tách từ).
 - **Đừng chép số đo vào file này.**
 
 ### Soi comment TRƯỚC KHI commit (bắt buộc)
