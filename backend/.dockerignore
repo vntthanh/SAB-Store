@@ -1,11 +1,18 @@
-node_modules
+# `**/` so nested copies are excluded too: a host install leaking into COPY would
+# overwrite the clean in-image node_modules with host-specific binaries.
+**/node_modules
+.git
+.claude
 .env
 .env.*
 !.env.example
-.git
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.DS_Store
+**/*.log
+**/.DS_Store
 coverage
+# Not needed at runtime: tests and their config, docs.
+tests
+jest.config.js
+docs
+*.md
+Dockerfile
+.dockerignore

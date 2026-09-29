@@ -1,12 +1,16 @@
-node_modules
+# `**/` so nested copies are excluded too: a host install or build leaking into
+# COPY would overwrite the clean in-image install or ship a stale bundle.
+**/node_modules
+**/build
+**/dist
+**/coverage
+.git
+.claude
 .env
 .env.*
 !.env.example
-.git
-build
-dist
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.DS_Store
+**/*.log
+**/.DS_Store
+*.md
+Dockerfile
+.dockerignore
