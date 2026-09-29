@@ -1,0 +1,13 @@
+# Meta's link-preview crawlers (Messenger, Facebook, Instagram, WhatsApp) get
+# their own explicit allow, listed before the wildcard. Relying on the wildcard
+# alone has produced a bare-domain preview card on a sibling site.
+User-agent: facebookexternalhit
+Allow: /
+
+User-agent: Facebot
+Allow: /
+
+User-agent: *
+Disallow: /admin
+Disallow: /seller
+Disallow: /api/
