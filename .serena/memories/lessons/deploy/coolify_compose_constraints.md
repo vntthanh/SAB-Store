@@ -5,7 +5,7 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
 - `${VAR:?message}` KHÔNG được Coolify hỗ trợ: nó thay biến bằng chính chuỗi message thay vì fail
   (đo 2026-09-21: backend crash-loop vì base URL không hợp lệ; DB suýt nhận password là chuỗi lỗi).
   → chỉ dùng `${VAR}` trơn; giá trị nằm trong kho env của Coolify.
-- Coolify đổi tên mọi named volume khai trong compose → tách DB/MinIO/upload khỏi dữ liệu.
+- Coolify đổi tên mọi named volume khai trong compose → tách DB/storage/upload khỏi dữ liệu.
   → bind tuyệt đối dưới /srv/appdata/vol/.
 - Coolify đăng ký TÊN SERVICE làm network alias; nginx của frontend proxy tới `sabstore-backend:5000`
   → service backend tên `sabstore-backend`. Không `networks:`, không `container_name:`.
@@ -28,6 +28,14 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
   `pull_policy: always` và XOÁ khối `build:` (giữ `build:` cạnh `image:` sẽ build lại dưới tag cũ). Hai tag
   này còn trong registry host (kiểm 2026-09-29: `curl 127.0.0.1:5000/v2/<repo>/tags/list`).
 - `cpus: 2` chỉ giới hạn container đang chạy, KHÔNG giới hạn bước build.
+- Auto-deploy = GitHub webhook → `webhooks/source/github/events/manual` (log `webhook.deployment.queued` trong
+  `/var/www/html/storage/logs/laravel.log` của container `coolify`). Ngày 29/09 GitHub KHÔNG gửi webhook cho một
+  lần push (không có dòng log nào) dù lần trước chạy bình thường — nguyên nhân chỉ chủ repo xem được (Recent Deliveries).
+  Kích hoạt tay khi UI không dùng được: trên host, lấy secret đã giải mã bằng
+  `docker exec coolify php artisan tinker --execute="echo \App\Models\Application::where('uuid','<uuid>')->first()->manual_webhook_secret_github;"`
+  (cột trong DB bị mã hoá — ký bằng giá trị thô sẽ ra "Invalid signature"), ký HMAC-SHA256 payload push
+  (`ref`, `repository.full_name`, `commits[].modified`) và POST kèm `X-GitHub-Event: push`. Không in secret.
+- Sau deploy: kiểm `docker history --no-trunc <image> | grep -c '<SECRET_NAME>='` = 0.
 - Đọc log deploy: `ssh -p 24700 david0403@ssh.noboroto.id.vn` rồi
   `docker exec coolify-db psql -U coolify -d coolify -At -c "select logs from application_deployment_queues where id=<id>"`;
   log chứa lệnh build với tên build-arg (giá trị secret nằm ở file, không in ra) — vẫn lọc/redact khi đọc.

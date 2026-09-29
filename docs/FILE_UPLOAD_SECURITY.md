@@ -124,7 +124,23 @@ The system provides clear, specific error messages:
 4. **Use strict whitelists** - Don't rely on blacklists
 5. **Generate unique filenames** - Prevent overwriting and enumeration
 6. **Limit file sizes** - Prevent resource exhaustion
-7. **Store files outside web root** - Use object storage (MinIO)
+7. **Store files outside web root** - Use object storage (SeaweedFS)
+
+## Serving uploads (`/uploads/` proxy)
+
+Images are read by browsers straight from object storage through the frontend nginx
+(`location ^~ /uploads/` in `frontend/nginx.conf`). The bucket is anonymous-read, so the
+proxy must expose object reads and nothing else:
+
+- **GET/HEAD only** — PUT/DELETE/POST are refused at nginx, whatever the bucket policy says.
+  Writes go through the authenticated backend API only.
+- **Query string dropped** before proxying, so `?policy`, `?acl`, `?tagging`,
+  `?list-type=2`, `?uploads` cannot turn an object read into an S3 sub-resource call.
+- **`/uploads/` (no object name) returns 404**; otherwise it maps to the bucket root and
+  would list it.
+- **Traversal returns 400** for `..`, `%2e`, `\` and `%5c` in the request URI.
+- **`Authorization` and `X-Amz-Copy-Source` are cleared**, so a client cannot inject a
+  signature or copy source; every proxied request is anonymous.
 
 ## Testing
 

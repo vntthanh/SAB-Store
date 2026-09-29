@@ -52,24 +52,24 @@ async function initializeDatabase() {
 	});
 }
 
-async function waitForMinIO() {
-	console.log('Waiting for MinIO to be ready...');
+async function waitForStorage() {
+	console.log('Waiting for object storage to be ready...');
 	const maxRetries = 30;
 	let retries = 0;
 
 	while (retries < maxRetries) {
 		try {
 			await initializeBucket();
-			console.log('[OK] MinIO is ready and bucket initialized');
+			console.log('[OK] Object storage is ready and bucket initialized');
 			return true;
 		} catch (error) {
 			retries++;
-			console.log(`MinIO not ready, retrying... (${retries}/${maxRetries})`);
+			console.log(`Object storage not ready, retrying... (${retries}/${maxRetries})`);
 			await new Promise(resolve => setTimeout(resolve, 2000));
 		}
 	}
 
-	throw new Error('MinIO failed to become ready within timeout');
+	throw new Error('Object storage failed to become ready within timeout');
 }
 
 async function startServer() {
@@ -145,7 +145,7 @@ process.on('warning', (warning) => {
 async function main() {
 	try {
 		await waitForMongoDB();
-		await waitForMinIO();
+		await waitForStorage();
 		await initializeDatabase();
 		await startServer();
 	} catch (error) {

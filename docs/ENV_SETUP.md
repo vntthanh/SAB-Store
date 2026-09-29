@@ -27,15 +27,41 @@ instead of silently falling back to `localhost`.
 
 ## What was deliberately NOT merged
 
-`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` (the object-storage root account) and
-`MONGO_INITDB_ROOT_PASSWORD` (the Mongo root account) currently double as the application's
-own credentials (`MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`, the password inside `MONGODB_URI`).
-They read as duplicates but are not the same thing — a root credential should not also be the
-app's day-to-day credential. Both `.env.example` files carry a `TODO` at the relevant lines:
-split each into a scoped service account (`mc admin user add` + a bucket-only policy for
-MinIO; `db.createUser()` with `readWrite` on the app database for Mongo) rather than merging
-them further. Not done yet — the account/policy still needs to be created deliberately by an
-operator with server access.
+`MONGO_INITDB_ROOT_PASSWORD` (the Mongo root account) currently doubles as the application's
+own credential (the password inside `MONGODB_URI`). They read as duplicates but are not the
+same thing — a root credential should not also be the app's day-to-day credential. The root
+`.env.example` carries a `TODO` at the relevant lines: split it into a scoped user
+(`db.createUser()` with `readWrite` on the app database) rather than merging further. Not
+done yet — the user still needs to be created deliberately by an operator with server access.
+
+## Object storage (SeaweedFS)
+
+The storage service is SeaweedFS (S3 API). The backend talks to it with the `minio` SDK, so
+the variables keep the `MINIO_*` names — the names describe the client, not the server.
+
+- `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` become the one S3 identity, which has rights on
+  the `MINIO_BUCKET_NAME` bucket only. The backend uses the same pair as
+  `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`.
+- Both must be at least 16 characters, must not be `minioadmin`, and must not contain `"` or
+  `\`. Otherwise the storage container exits at start-up with the reason in its log (values
+  are never printed). This is deliberate: the platform turns an unset variable into an empty
+  string, and a storage service started without an identity would accept anonymous writes.
+- `MINIO_ENDPOINT` is fixed to the storage service name in the compose files; a stale value
+  left in the platform's environment is ignored.
+
+## `INIT_EMPTY_DATABASE`
+
+In production the backend refuses to initialise a database that has no users, and never
+seeds sample products or placeholder bank accounts. The refusal protects against a
+`MONGODB_URI` that points at a wrong or empty database. For the first production deploy on
+a genuinely empty database, set `INIT_EMPTY_DATABASE` to that database's name (e.g.
+`INIT_EMPTY_DATABASE=sabstore`), then remove it. The value must match the database the
+backend connects to, so a leftover flag never unlocks a different, mistyped one; the backend
+logs a warning while the flag is set on a database that already has users.
+
+Bank account, bank and payment prefix are not environment variables: the admin sets them in
+**Settings**. Until then production accepts orders without a payment QR code, so configure
+Settings before opening the store.
 
 ## Before deploying
 

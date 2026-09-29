@@ -3,7 +3,9 @@
 > Historical record of one migration (nginx serving `/uploads/` straight from MinIO instead of
 > proxying through the backend). Kept for context; **not** the current deploy procedure — see
 > `docs/deployment.md` for that. One claim below was wrong and has since been reverted for
-> security; corrected inline.
+> security; corrected inline. The storage service has since moved from MinIO to SeaweedFS
+> (service `sabstore-seaweedfs`, see `docs/FILE_UPLOAD_SECURITY.md` for the current
+> `/uploads/` proxy); MinIO names below describe the setup at the time.
 
 ## Changes Made
 

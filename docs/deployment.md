@@ -6,13 +6,99 @@ migration, kept for context, not a deploy guide).
 
 A human runs every step below. Nothing here is automated.
 
+## Current production: Coolify (read this first)
+
+Since 2026-09-21 production runs on Coolify from `coolify.compose.yml`; the rest of this runbook
+covers `prod.compose.yml` on a host without Coolify and is kept as the fallback path.
+
+- **Deploy** = merge `dev` into `main` with a merge commit (keep `dev`). A GitHub webhook makes
+  Coolify build both images from source and replace the containers. A failed build leaves the
+  running containers untouched.
+- **No deployment appeared after a push**: the webhook was not delivered (it happened on
+  2026-09-29). Check the repo's Settings → Webhooks → Recent Deliveries and redeliver, or press
+  Deploy in the Coolify UI.
+- **Build-time variables**: Coolify injects every variable marked "Available during build" as an
+  `ARG` into every Dockerfile stage. Keep secrets NOT available during build; the Dockerfiles
+  pass `--production` explicitly so an injected `NODE_ENV` cannot change what gets installed.
+- **Rollback** (both services together): revert the change that introduced `build:` in
+  `coolify.compose.yml`, i.e. restore
+  `image: 127.0.0.1:5000/sab-store-{backend,frontend}:migrated-260921` with
+  `pull_policy: always` and delete the `build:` blocks, then deploy. Keeping `build:` next to
+  `image:` would rebuild the new code under the old tag instead of rolling back. Data written by
+  newer code (e.g. `Settings.storeTitle`) is ignored by the older images.
+- **Object storage**: service `sabstore-seaweedfs` (SeaweedFS, S3 API on 9000; on Coolify the
+  service name is the network alias, so it is fixed in the compose file and in nginx). Data is
+  the bind `/srv/appdata/vol/sab-store_seaweedfs_data`. Its start-up script refuses to run when
+  `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` are empty, `minioadmin`, shorter than 16 characters,
+  or contain `"`/`\` — a container that will not start after deploy means fix those values. The
+  backend's `MINIO_ENDPOINT` is hardcoded in the compose file, so delete any old
+  `MINIO_ENDPOINT` from the Coolify environment. Only a first deploy on an empty database also
+  needs `INIT_EMPTY_DATABASE=<database name>` (see `docs/ENV_SETUP.md`).
+- **Storage vacuum**: deleted images free space only after a vacuum. Inside the storage
+  container run `weed shell`, then `volume.vacuum -garbageThreshold 0.1`.
+- **Rollback of the storage change** (independent of the two-image rollback above): `git revert`
+  the compose and nginx change and deploy. The old MinIO bind directory is deliberately left in
+  place, so the previous service starts on its old data. Images uploaded while SeaweedFS was
+  live are NOT in the MinIO data; copy them across by hand (e.g. with `mc`/`weed`) before
+  rolling back, or they are lost.
+
+### Copying the database under a new name
+
+The production database is `sabstore` (it was `sablanyard` until 2026-09-29; that copy is kept
+read-only for a while as the rollback). To copy a database under a new name again, on the
+server, inside `tmux`, with the backend stopped:
+
+1. Pick containers by Coolify labels, never by a name pattern (the host runs many projects):
+   `docker ps --filter label=com.docker.compose.service=<service> --filter label=<coolify project label>`.
+   Stop exactly the one backend container and confirm `db.currentOp()` shows nothing from it.
+2. Save the helper below as `db-rename.sh`. It authenticates with the mongo container's own
+   `MONGO_INITDB_ROOT_*` variables, so no password appears in argv, `ps` or shell history; the
+   dump/restore credentials live in a 0600 temp file removed on exit.
+3. `snapshot FROM TO` (read-only; aborts if TO exists) → `copy FROM TO` → `compare FROM TO`
+   (document counts and index keys per collection must print `MATCH`). On `MISMATCH`:
+   `drop-target FROM TO`, restart the backend on the old URI, stop.
+4. Change the path of `MONGODB_URI` (and `MONGO_INITDB_DATABASE`) in the Coolify environment,
+   then deploy. The backend refuses to start on a database without users, so a typo in the
+   name fails loudly; mongoose still creates empty collections for indexes there — drop that
+   stray database afterwards.
+5. Rollback is only safe while the store is still closed: point `MONGODB_URI` back. Once new
+   orders land in the new database, fix forward instead of copying back.
+
+```bash
+#!/bin/bash
+# Usage: db-rename.sh <mongo-container> <snapshot|copy|compare|drop-target> FROM TO
+set -euo pipefail
+M=$1; ACTION=$2; FROM=$3; TO=$4
+msh() { docker exec -i -e FROM="$FROM" -e TO="$TO" "$M" mongosh --nodb --quiet --file /dev/stdin; }
+AUTH='const conn = new Mongo("mongodb://localhost:27017"); const admin = conn.getDB("admin"); admin.auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD);'
+SNAP='function snap(name){ const d = conn.getDB(name); const out = {}; d.getCollectionNames().sort().forEach(c => { out[c] = { count: d.getCollection(c).countDocuments({}), indexes: d.getCollection(c).getIndexes().map(i => JSON.stringify(i.key) + (i.unique ? "!u" : "")).sort() }; }); return out; }'
+case "$ACTION" in
+  snapshot) echo "$AUTH $SNAP
+    const names = admin.adminCommand({listDatabases:1}).databases.map(d => d.name);
+    if (names.includes(process.env.TO)) { print('ABORT: target ' + process.env.TO + ' already exists'); quit(2); }
+    print(JSON.stringify(snap(process.env.FROM)));" | msh ;;
+  copy) docker exec -i -e FROM="$FROM" -e TO="$TO" "$M" bash -c 'set -euo pipefail
+    umask 077; CFG=$(mktemp)
+    trap "rm -f $CFG" EXIT
+    printf "uri: mongodb://%s:%s@localhost:27017/?authSource=admin\n" "$MONGO_INITDB_ROOT_USERNAME" "$MONGO_INITDB_ROOT_PASSWORD" > "$CFG"
+    mongodump --config="$CFG" --db="$FROM" --archive --quiet \
+      | mongorestore --config="$CFG" --archive --nsFrom="$FROM.*" --nsTo="$TO.*" --quiet
+    echo "copy done"' ;;
+  compare) echo "$AUTH $SNAP
+    const a = JSON.stringify(snap(process.env.FROM)), b = JSON.stringify(snap(process.env.TO));
+    print(a === b ? 'MATCH ' + Object.keys(snap(process.env.TO)).length + ' collections' : 'MISMATCH\n' + a + '\n' + b);
+    if (a !== b) quit(3);" | msh ;;
+  drop-target) echo "$AUTH conn.getDB(process.env.TO).dropDatabase(); print('dropped ' + process.env.TO);" | msh ;;
+esac
+```
+
 ## Architecture in one paragraph
 
 Single ingress: `store.sabies.vn` → NPM → `frontend` container (nginx, built from
 `frontend/Dockerfile`) → `/api/*` proxied to `backend:5000`, `/uploads/*` proxied directly to
-`minio:9000` (internal Docker network, never the public internet). There is no separate
+`sabstore-seaweedfs:9000` (internal Docker network, never the public internet). There is no separate
 `nginx` service and no `api.store.sabies.vn` route — see `prod.compose.yml` (4 services:
-`mongodb`, `minio`, `backend`, `frontend`). `backend/server.js:48` sets
+`mongodb`, `sabstore-seaweedfs`, `backend`, `frontend`). `backend/server.js:48` sets
 `trust proxy` to `2` (NPM → frontend nginx → backend).
 
 ## 0. Prerequisites — read before touching the server
@@ -50,10 +136,10 @@ cp .env .env.bak-$(date +%Y%m%d-%H%M)
 git log --oneline -1
 docker compose -f prod.compose.yml exec -T mongodb mongosh -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval '
   ["orders","products","combos","accounts"]
-    .forEach(c=>print(c+": "+db.getSiblingDB("sablanyard")[c].countDocuments()))' | tee /tmp/baseline.txt
+    .forEach(c=>print(c+": "+db.getSiblingDB("sabstore")[c].countDocuments()))' | tee /tmp/baseline.txt
 ```
 
-Verify the DB name is the real one (`sablanyard`), not the seed database (`minipreorder`) —
+Verify the DB name is the real one (`sabstore`), not the seed database (`minipreorder`) —
 see `plans/reports/correction-260914-1515-database-thuc-te-va-ket-qua-hotfix.md` for why that
 distinction matters here.
 
@@ -118,7 +204,7 @@ Points that matter:
 | 1 | New code is live | `git log --oneline -1` on server matches what was pushed |
 | 2 | Containers recreated | `docker ps` shows `Up X seconds`, not `Up N days` |
 | 3 | Data untouched | re-run the count query from step 2, matches `/tmp/baseline.txt` |
-| 4 | MinIO closed | `curl http://<server-ip>:9001/` from an external machine → refused |
+| 4 | Storage closed | `curl http://<server-ip>:9000/` and `:9001/` from an external machine → refused |
 | 5 | Old API domain gone | `curl https://api.store.sabies.vn/api/products` → does not resolve / NPM 404 |
 | 6 | Anonymous upload blocked | `POST /api/upload/product-image` with no cookie → 401/403 |
 | 7 | Role escalation closed | sign up with `role:"admin"` in the body → stored role is `user` |
@@ -215,11 +301,10 @@ docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
   covers `products`/`combos`/`orders` only. For a full-system backup including
   credentials/sessions, use `mongodump` against the `mongodb` container directly; there is no
   HTTP path for that anymore, by design.
-- **MinIO patching now requires self-building the image.** The upstream `minio/minio`
-  repository was archived 2026-04-25 and Docker Hub stopped receiving free pre-built images
-  in Oct 2025. `prod.compose.yml` pins `minio/minio:RELEASE.2025-10-15T17-29-55Z`, the last
-  published release. Any future MinIO CVE fix will need to be built from MinIO's source per
-  their own current guidance — there is no next tag to pull.
+- **Storage is SeaweedFS, not MinIO.** The upstream `minio/minio` repository was archived
+  2026-04-25 and stopped shipping free images, so it no longer receives fixes. The compose
+  files pin `chrislusf/seaweedfs` by digest; updating it means choosing a new tag and digest
+  deliberately.
 - Production runs **no replica set** (AD-4 in `plan.md`). Do not add `session`/transactions
   to any Mongo write path — `services/stock.js` and the DB import path both accept an
   optional `session` for a future replica set, but neither uses one today, and a
