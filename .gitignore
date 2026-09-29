@@ -119,3 +119,4 @@ temp/
 .env.prod
 /.copilot_temp
 /plans
+/.playwright-mcp
