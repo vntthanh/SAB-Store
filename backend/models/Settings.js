@@ -1,6 +1,10 @@
 const mongoose = require('mongoose');
 
 const SETTINGS_KEY = 'payment_config';
+// frontend/src/services/api.js repeats both store-title constants for the
+// header fallback and the admin form's input limit; keep them in sync.
+const DEFAULT_STORE_TITLE = 'SAB Merch';
+const STORE_TITLE_MAX_LENGTH = 60;
 
 const settingsSchema = new mongoose.Schema({
 	key: {
@@ -28,6 +32,14 @@ const settingsSchema = new mongoose.Schema({
 		default: 'SAB',
 		description: 'Prefix for payment messages'
 	},
+	storeTitle: {
+		type: String,
+		trim: true,
+		minlength: 1,
+		maxlength: STORE_TITLE_MAX_LENGTH,
+		default: DEFAULT_STORE_TITLE,
+		description: 'Store name shown in the public site header'
+	},
 	updatedAt: {
 		type: Date,
 		default: Date.now
@@ -48,3 +60,6 @@ settingsSchema.pre('save', function (next) {
 const Settings = mongoose.model('Settings', settingsSchema);
 
 module.exports = Settings;
+module.exports.SETTINGS_KEY = SETTINGS_KEY;
+module.exports.DEFAULT_STORE_TITLE = DEFAULT_STORE_TITLE;
+module.exports.STORE_TITLE_MAX_LENGTH = STORE_TITLE_MAX_LENGTH;

@@ -159,6 +159,7 @@ function createApp() {
 	app.use('/api/products', require('./routes/products'));
 	app.use('/api/orders', require('./routes/orders'));
 	app.use('/api/combos', require('./routes/combos'));
+	app.use('/api/settings', require('./routes/settings'));
 	// /api/admin/settings must be mounted before the broader /api/admin: both
 	// routers call authenticateAdmin at their own top, and admin.js has no
 	// route matching "/settings" — so with the broad mount first, a settings

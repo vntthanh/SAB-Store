@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
-import api from '../../services/api';
+import api, { settingsService, DEFAULT_STORE_TITLE, STORE_TITLE_MAX_LENGTH } from '../../services/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
 
 const SettingsManagement = () => {
@@ -9,7 +9,8 @@ const SettingsManagement = () => {
 	const [settings, setSettings] = useState({
 		bankNameId: '',
 		bankAccountId: '',
-		prefixMessage: 'SAB'
+		prefixMessage: 'SAB',
+		storeTitle: DEFAULT_STORE_TITLE
 	});
 	const [originalSettings, setOriginalSettings] = useState(null);
 
@@ -62,18 +63,25 @@ const SettingsManagement = () => {
 			return;
 		}
 
+		if (!settings.storeTitle.trim()) {
+			toast.error('Vui lòng nhập tiêu đề cửa hàng');
+			return;
+		}
+
 		setSaving(true);
 		try {
 			const response = await api.put('/admin/settings', {
 				bankNameId: settings.bankNameId.trim(),
 				bankAccountId: settings.bankAccountId.trim(),
-				prefixMessage: settings.prefixMessage.trim()
+				prefixMessage: settings.prefixMessage.trim(),
+				storeTitle: settings.storeTitle.trim()
 			});
 
 			if (response.data.success) {
 				toast.success('Cập nhật cấu hình thành công');
 				setSettings(response.data.data);
 				setOriginalSettings(response.data.data);
+				settingsService.clearPublicSettingsCache();
 			}
 		} catch (error) {
 			toast.error(error.response?.data?.message || 'Lỗi khi cập nhật cấu hình');
@@ -93,7 +101,8 @@ const SettingsManagement = () => {
 		return (
 			settings.bankNameId !== originalSettings.bankNameId ||
 			settings.bankAccountId !== originalSettings.bankAccountId ||
-			settings.prefixMessage !== originalSettings.prefixMessage
+			settings.prefixMessage !== originalSettings.prefixMessage ||
+			settings.storeTitle !== originalSettings.storeTitle
 		);
 	};
 
@@ -105,9 +114,31 @@ const SettingsManagement = () => {
 		<div className="container mx-auto px-4 py-8">
 			<div className="max-w-3xl mx-auto">
 				<div className="bg-white rounded-lg shadow-md p-6">
-					<h1 className="text-2xl font-bold mb-6">Cấu hình thanh toán</h1>
+					<h1 className="text-2xl font-bold mb-6">Cấu hình cửa hàng</h1>
 
 					<form onSubmit={handleSubmit} className="space-y-6">
+						<div>
+							<label htmlFor="storeTitle" className="block text-sm font-medium text-gray-700 mb-2">
+								Tiêu đề cửa hàng <span className="text-red-500">*</span>
+							</label>
+							<input
+								type="text"
+								id="storeTitle"
+								name="storeTitle"
+								value={settings.storeTitle}
+								onChange={handleChange}
+								placeholder={`VD: ${DEFAULT_STORE_TITLE}`}
+								maxLength={STORE_TITLE_MAX_LENGTH}
+								className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+								required
+							/>
+							<p className="mt-1 text-sm text-gray-500">
+								Hiển thị trên thanh tiêu đề của trang bán hàng
+							</p>
+						</div>
+
+						<h2 className="text-lg font-semibold text-gray-800 pt-2">Thanh toán VietQR</h2>
+
 						<div>
 							<label htmlFor="bankNameId" className="block text-sm font-medium text-gray-700 mb-2">
 								Bank ID <span className="text-red-500">*</span>
