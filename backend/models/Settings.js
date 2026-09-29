@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const SETTINGS_KEY = 'payment_config';
 // frontend/src/services/api.js repeats both store-title constants for the
 // header fallback and the admin form's input limit; keep them in sync.
-const DEFAULT_STORE_TITLE = 'SAB Merch';
+const DEFAULT_STORE_TITLE = 'SAB Store';
 const STORE_TITLE_MAX_LENGTH = 60;
 
 const settingsSchema = new mongoose.Schema({

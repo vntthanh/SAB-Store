@@ -592,7 +592,7 @@ export const comboService = {
 
 // Both mirror backend/models/Settings.js; the server is the authority.
 // The default is used only when the title cannot be fetched and none was seen before.
-export const DEFAULT_STORE_TITLE = 'SAB Merch';
+export const DEFAULT_STORE_TITLE = 'SAB Store';
 export const STORE_TITLE_MAX_LENGTH = 60;
 
 // One request per page load: the header mounts on every route, and the title

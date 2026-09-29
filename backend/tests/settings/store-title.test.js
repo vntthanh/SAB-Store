@@ -17,7 +17,7 @@ describe('store title setting', () => {
 			const res = await request(app).get('/api/settings');
 
 			expect(res.status).toBe(200);
-			expect(res.body.data).toEqual({ storeTitle: 'SAB Merch' });
+			expect(res.body.data).toEqual({ storeTitle: 'SAB Store' });
 		});
 
 		it('returns the default title for a document saved before the field existed', async () => {
@@ -25,7 +25,7 @@ describe('store title setting', () => {
 
 			const res = await request(app).get('/api/settings');
 
-			expect(res.body.data).toEqual({ storeTitle: 'SAB Merch' });
+			expect(res.body.data).toEqual({ storeTitle: 'SAB Store' });
 		});
 
 		it('exposes only the store title, never payment details', async () => {
@@ -46,7 +46,7 @@ describe('store title setting', () => {
 			const res = await request(app).get('/api/admin/settings').set('Cookie', cookies);
 
 			expect(res.status).toBe(200);
-			expect(res.body.data).toMatchObject({ ...PAYMENT_FIELDS, storeTitle: 'SAB Merch' });
+			expect(res.body.data).toMatchObject({ ...PAYMENT_FIELDS, storeTitle: 'SAB Store' });
 		});
 	});
 
@@ -65,13 +65,13 @@ describe('store title setting', () => {
 			const put = await request(app)
 				.put('/api/admin/settings')
 				.set('Cookie', cookies)
-				.send({ ...PAYMENT_FIELDS, storeTitle: '  SAB Merch 2026  ' });
+				.send({ ...PAYMENT_FIELDS, storeTitle: '  Cửa hàng SAB 2026  ' });
 
 			expect(put.status).toBe(200);
-			expect(put.body.data.storeTitle).toBe('SAB Merch 2026');
+			expect(put.body.data.storeTitle).toBe('Cửa hàng SAB 2026');
 
 			const get = await request(app).get('/api/settings');
-			expect(get.body.data.storeTitle).toBe('SAB Merch 2026');
+			expect(get.body.data.storeTitle).toBe('Cửa hàng SAB 2026');
 		});
 
 		it('keeps the current title when the field is omitted', async () => {
