@@ -104,7 +104,27 @@ Version và tên image nằm ở `package.json`, `yarn.lock`, `Dockerfile`, các
 - **Repo chưa có git hook** → không có cổng tự động. Trước khi commit code: tự chạy test hẹp cho phần đã đụng, và build frontend nếu đụng frontend.
 - **Test xanh không phải bằng chứng hành vi đúng** — test phải assert hợp đồng thật, không assert vào mock của chính nó.
 - **Việc nặng là khe CPU độc quyền trên cả máy** (nhiều phiên Claude chạy chung): một lượt test/build tại một thời điểm; agent song song chỉ an toàn khi thuần đọc/sửa file. Sau khi chạy xong, dọn tiến trình jest/vitest mồ côi do chính mình tạo.
-  - **Khoá máy dùng chung** (test, `docker build`, commit có hook chạy suite): acquire `until mkdir /tmp/cc-heavy.lock 2>/dev/null; do sleep 30; done`, rồi `OWNER="SAB-Store <job> $(date +%s)"; echo "$OWNER" > /tmp/cc-heavy.lock/owner` (giữ nguyên chuỗi `$OWNER` cho lúc release; Bash tool không giữ biến giữa các lần gọi → ghi lại literal); release **chỉ** khi `grep -qxF "$OWNER" /tmp/cc-heavy.lock/owner && rm -rf /tmp/cc-heavy.lock`. Đang chờ thì dựng cờ `/tmp/cc-heavy.sab-wants`, xong thì xoá; nhường khi thấy cờ `*-wants` của phiên khác. Coi khoá là stale chỉ sau 45 phút **và** đã nhắn chủ khoá.
+  - **Khoá máy dùng chung** (test, `docker build`, commit có hook chạy suite) — quy ước chung với các phiên JudgeHub/Leaderboard/ComparableTransaction:
+    ```bash
+    MYEPOCH=$(date +%s)   # re-queueing after an interrupted wait: reuse the old epoch to keep your place
+    OWNER="SAB-Store <job> $MYEPOCH"; F=/tmp/cc-heavy.sab-wants; echo "$OWNER" > "$F"
+    older_live() {  # yield ONLY to live (<5 min) flags of other repos with an OLDER epoch - yielding
+                    # to every live flag deadlocks two waiters (observed 2026-09-29)
+      local f e
+      for f in /tmp/cc-heavy.*-wants; do
+        [ -e "$f" ] && [ "$f" != "$F" ] || continue
+        [ -n "$(find "$f" -mmin -5)" ] || continue
+        e=$(awk '{print $3}' "$f"); [[ "$e" =~ ^[0-9]+$ ]] && [ "$e" -lt "$MYEPOCH" ] && return 0
+      done; return 1
+    }
+    until ! older_live && mkdir /tmp/cc-heavy.lock 2>/dev/null; do touch "$F"; sleep 30; done
+    echo "$OWNER" > /tmp/cc-heavy.lock/owner; rm -f "$F"
+    # ... job ...
+    grep -qxF "$OWNER" /tmp/cc-heavy.lock/owner && rm -rf /tmp/cc-heavy.lock
+    ```
+    - Cờ `*-wants` chỉ tồn tại khi đang ở trong vòng chờ; `touch` mỗi nhịp (heartbeat). Cờ có mtime > 5 phút là chết: bỏ qua, **không xoá** (chỉ chủ xoá); > 30 phút thì nhắn chủ. Xếp hàng mà chưa chờ → nhắn tin, không dựng cờ.
+    - Tôn trọng mọi cờ còn sống của repo khác; hoà nhau thì epoch cũ hơn đi trước. Quyền ưu tiên chỉ do **user** cấp, có giờ kết thúc, báo cho mọi phiên.
+    - Bash tool không giữ biến giữa các lần gọi → ghi lại literal `$OWNER` để release.
   - **Cổng host**: tra/ghi `/tmp/cc-ports.registry` (`<port> <repo> <mục đích>`) trước khi publish cổng; chỉ sửa dòng của SAB-Store, xoá dòng khi dừng stack. Stack kiểm thử production-like của SAB-Store dùng `127.0.0.1:8088`.
   - Script chạy lệnh có mảng đối số: dùng `bash`, không dựa vào word-splitting của zsh (`$C args` trong zsh không tách từ).
 - **Đừng chép số đo vào file này.**
