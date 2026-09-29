@@ -6,6 +6,27 @@ migration, kept for context, not a deploy guide).
 
 A human runs every step below. Nothing here is automated.
 
+## Current production: Coolify (read this first)
+
+Since 2026-09-21 production runs on Coolify from `coolify.compose.yml`; the rest of this runbook
+covers `prod.compose.yml` on a host without Coolify and is kept as the fallback path.
+
+- **Deploy** = merge `dev` into `main` with a merge commit (keep `dev`). A GitHub webhook makes
+  Coolify build both images from source and replace the containers. A failed build leaves the
+  running containers untouched.
+- **No deployment appeared after a push**: the webhook was not delivered (it happened on
+  2026-09-29). Check the repo's Settings → Webhooks → Recent Deliveries and redeliver, or press
+  Deploy in the Coolify UI.
+- **Build-time variables**: Coolify injects every variable marked "Available during build" as an
+  `ARG` into every Dockerfile stage. Keep secrets NOT available during build; the Dockerfiles
+  pass `--production` explicitly so an injected `NODE_ENV` cannot change what gets installed.
+- **Rollback** (both services together): revert the change that introduced `build:` in
+  `coolify.compose.yml`, i.e. restore
+  `image: 127.0.0.1:5000/sab-store-{backend,frontend}:migrated-260921` with
+  `pull_policy: always` and delete the `build:` blocks, then deploy. Keeping `build:` next to
+  `image:` would rebuild the new code under the old tag instead of rolling back. Data written by
+  newer code (e.g. `Settings.storeTitle`) is ignored by the older images.
+
 ## Architecture in one paragraph
 
 Single ingress: `store.sabies.vn` → NPM → `frontend` container (nginx, built from
