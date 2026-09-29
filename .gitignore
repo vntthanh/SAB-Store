@@ -97,9 +97,10 @@ Thumbs.db
 *.swo
 *~
 
-# Database
-data/
-mongodb_data/
+# Database dumps at the repo root only. Unanchored `data/` also swallowed any
+# nested folder named data (e.g. a Serena memory topic), silently untracking it.
+/data/
+/mongodb_data/
 
 # Uploads
 uploads/
@@ -118,5 +119,14 @@ temp/
 *.xls
 .env.prod
 /.copilot_temp
+
+# Agent working files: plans, reports and research notes are stateful scratch,
+# not product docs (durable decisions go to docs/). Browser-automation output
+# and local secrets never belong in the repo.
 /plans
+/researchs
+/ref
+/secrets
+/.playwright
 /.playwright-mcp
+/.code-review-graph
