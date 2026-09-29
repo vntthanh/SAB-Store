@@ -16,6 +16,10 @@ const REQUIRED = [
 	'ADMIN_USERNAME',
 	'ADMIN_PASSWORD',
 	'CORS_ORIGIN',
+	// The storage container refuses default or short keys, so there is no
+	// working fallback for these.
+	'MINIO_ACCESS_KEY',
+	'MINIO_SECRET_KEY',
 ];
 
 // Absent values fall back to a working default, so they are reported but not fatal.
@@ -24,10 +28,9 @@ const OPTIONAL = [
 	'PORT',
 	'BASE_URL',
 	'APPSCRIPT_URL',
+	'INIT_EMPTY_DATABASE',
 	'MINIO_ENDPOINT',
 	'MINIO_PORT',
-	'MINIO_ACCESS_KEY',
-	'MINIO_SECRET_KEY',
 	'MINIO_BUCKET_NAME',
 	'MINIO_USE_SSL',
 	'TZ',

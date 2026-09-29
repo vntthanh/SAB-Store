@@ -9,7 +9,7 @@
 #   * No `networks:` blocks, no `container_name:` — Coolify owns both.
 #   * Named volumes replaced by absolute binds under /srv/appdata/vol/. Coolify
 #     rewrites compose-declared volume names, which would have detached MongoDB,
-#     MinIO and the upload store from their data.
+#     SeaweedFS and the upload store from their data.
 # Backend and frontend are built from source on every deploy (`pull_policy: build`:
 # never pulled, always built). Until 2026-09-29 they ran pre-built images from the
 # host registry because the first source build (2026-09-21) failed with
@@ -19,6 +19,13 @@
 # with `pull_policy: always` AND delete the `build:` blocks - keeping `build:` next to
 # `image:` would rebuild from source under the old tag instead of rolling back. Those
 # two tags stay in the host registry for that purpose.
+# Object storage is SeaweedFS (`sabstore-seaweedfs`), configured by an inline script in
+# its `command:`. It refuses to start on an empty, default (`minioadmin`) or short key,
+# because a missing identity file would leave S3 open to anonymous writes. Its gRPC
+# ports are reachable inside the project network; the filer signing key generated at
+# start makes the IAM gRPC reject unsigned callers. Rollback of storage: restore the
+# `minio` service and its /srv/appdata/vol/sab-store_minio_data bind from git, and
+# point MINIO_ENDPOINT back at it; that bind is left untouched by SeaweedFS.
 # The `${VAR:?message}` form is NOT used in this file. The deployment platform does
 # not implement error-if-unset: it substitutes the MESSAGE as the value, so
 # `${PUBLIC_URL:?PUBLIC_URL is required}` silently becomes the literal string
@@ -27,7 +34,7 @@
 # password of `POSTGRES_PASSWORD must be set`. Plain `${VAR}` is used instead; the
 # values come from the platform environment store.
 services:
-  # SAB Lanyard MongoDB Database
+  # SAB Store MongoDB Database
   mongodb:
     image: mongo:6.0
     cpus: 2
@@ -57,51 +64,78 @@ services:
       retries: 5
       start_period: 30s
 
-  # SAB Lanyard MinIO Object Storage
-  minio:
-    # Community fork, pinned by digest.
-    #
-    # minio/minio is gone: Docker Hub returns 404 for the repository itself,
-    # and the final official build (RELEASE.2025-09-07) will never receive
-    # another security fix. A tag pin against it now resolves to nothing, so
-    # `up -d` would fail to start MinIO at all.
-    #
-    # pgsty/minio packages that same last-known-good source, applies CVE
-    # patches and keeps publishing (AGPLv3). It is a drop-in: same env vars,
-    # same `server /data` command, same on-disk format, so the existing
-    # volume is read as-is.
-    #
-    # Pinned by digest rather than tag so the image cannot move underfoot.
-    # amd64 digest for RELEASE.2026-08-04T00-00-00Z; the host is x86_64.
-    image: pgsty/minio@sha256:2b36182f3479c58b5cba920f20479738ee85ce218de0596a244f9a1368268db9
+  # SAB Store object storage (SeaweedFS, S3 API on :9000)
+  sabstore-seaweedfs:
+    # Replaces MinIO, whose upstream repository is archived. Pinned by digest;
+    # 4.47 contains the fixes for the published path-traversal CVEs.
+    image: chrislusf/seaweedfs:4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882
     cpus: 2
     restart: unless-stopped
-    command: server /data --console-address ":9001"
-    mem_limit: 256m
+    # Written inline so the identity and signing key are generated from the
+    # platform environment at every start. Every `$` is doubled: compose would
+    # otherwise interpolate it before the shell sees it.
+    #
+    # Fail-closed on purpose: a missing identity file makes SeaweedFS accept
+    # anonymous S3 writes, and the platform turns an unset variable into an empty
+    # string instead of failing, so `set -u` alone would not catch it.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        fail() { echo "$$1" >&2; exit 1; }
+        check_key() {
+          [ -n "$$2" ] || fail "$$1 is empty"
+          [ "$$2" != minioadmin ] || fail "$$1 must not be the default minioadmin"
+          [ "$${#2}" -ge 16 ] || fail "$$1 must be at least 16 characters"
+          case "$$2" in *'"'* | *'\'*) fail "$$1 must not contain a quote or backslash" ;; esac
+        }
+        check_key MINIO_ROOT_USER "$${S3_ACCESS_KEY:-}"
+        check_key MINIO_ROOT_PASSWORD "$${S3_SECRET_KEY:-}"
+        case "$${S3_BUCKET:-}" in
+          '' | *[!a-z0-9-]*) fail "MINIO_BUCKET_NAME must be non-empty and use only a-z, 0-9 and -" ;;
+        esac
+        umask 077
+        printf '{"identities":[{"name":"sabstore-backend","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":["Admin:%s","Read:%s","Write:%s","List:%s","Tagging:%s"]}]}\n' \
+          "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" "$$S3_BUCKET" "$$S3_BUCKET" "$$S3_BUCKET" "$$S3_BUCKET" "$$S3_BUCKET" > /tmp/s3.json
+        # Without a filer signing key the internal gRPC IAM cache accepts
+        # unauthenticated callers, who could mint themselves an admin identity.
+        mkdir -p /etc/seaweedfs
+        printf '[jwt.filer_signing]\nkey = "%s"\n' "$$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" > /etc/seaweedfs/security.toml
+        # The image entrypoint drops to the `seaweed` user. Root-owned 0600 files
+        # are then unreadable and SeaweedFS silently starts with no identities and
+        # no signing key, i.e. wide open.
+        chown seaweed:seaweed /tmp/s3.json /etc/seaweedfs/security.toml
+        exec /entrypoint.sh server -ip=127.0.0.1 -ip.bind=127.0.0.1 -s3 -s3.ip.bind=0.0.0.0 -s3.port=9000 -s3.port.iceberg=0 -s3.port.lance=0 -s3.config=/tmp/s3.json
+    mem_limit: 768m
+    security_opt:
+      - "no-new-privileges:true"
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${MINIO_BUCKET_NAME:-sabstore}
+      # Go's heap is otherwise uncapped (~600 MiB observed) and would hit mem_limit.
+      GOMEMLIMIT: 384MiB
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
-    # Never published to the host: MinIO is reached only from inside
-    # sabstore_network (backend SDK, and the frontend nginx /uploads/ proxy).
+    # Never published to the host. Master/volume/filer listen on loopback inside
+    # the container; only the S3 port is reachable, from sabstore_network (backend
+    # SDK and the frontend nginx /uploads/ proxy).
     expose:
       - "9000"
-      - "9001"
     volumes:
-      - /srv/appdata/vol/sab-store_minio_data:/data
+      - /srv/appdata/vol/sab-store_seaweedfs_data:/data
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      test: [ "CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/healthz" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
-  # SAB Lanyard Backend API
+  # SAB Store Backend API
   sabstore-backend:
     build:
       context: ./backend
@@ -117,6 +151,9 @@ services:
         max-file: "3"
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      # Only for the very first deploy on an empty database; the backend refuses
+      # to initialise an empty production DB otherwise (catches a wrong DB name).
+      INIT_EMPTY_DATABASE: ${INIT_EMPTY_DATABASE:-}
       PORT: ${BACKEND_PORT:-5000}
       # PUBLIC_URL is the single source for the public origin (AD-2):
       # BASE_URL and CORS_ORIGIN both derive from it instead of carrying
@@ -130,12 +167,10 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       APPSCRIPT_URL: ${APPSCRIPT_URL}
       CORS_ORIGIN: ${PUBLIC_URL}
-      # MinIO service account TODO: backend currently authenticates with the
-      # MinIO root credential. Intentionally NOT merged with
-      # MINIO_ROOT_USER/PASSWORD above (AD-2) - split into a bucket-scoped
-      # `sabstore` service account via `mc admin user add` + policy; out of
-      # scope for this phase, tracked separately.
-      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
+      # The MINIO_* names are kept for the minio SDK; the server behind them is
+      # SeaweedFS. The endpoint is fixed because the platform environment store
+      # may still carry the old MinIO hostname, which would silently win.
+      MINIO_ENDPOINT: sabstore-seaweedfs
       MINIO_PORT: ${MINIO_PORT:-9000}
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
@@ -148,7 +183,7 @@ services:
       mongodb:
         condition: service_healthy
         restart: true
-      minio:
+      sabstore-seaweedfs:
         condition: service_healthy
         restart: true
     volumes:
@@ -166,7 +201,7 @@ services:
     # stacks and another project already owns the plain name `backend` there,
     # so the frontend (which is on both networks) would resolve to it.
 
-  # SAB Lanyard Frontend React App (with Nginx Reverse Proxy)
+  # SAB Store Frontend React App (with Nginx Reverse Proxy)
   frontend:
     # No VITE_API_URL build arg/env: the SPA calls the API via the relative
     # path /api (AD-3), so nothing domain-specific is baked into the bundle.
