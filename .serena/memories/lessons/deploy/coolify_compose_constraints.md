@@ -5,7 +5,7 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
 - `${VAR:?message}` KHÔNG được Coolify hỗ trợ: nó thay biến bằng chính chuỗi message thay vì fail
   (đo 2026-09-21: backend crash-loop vì base URL không hợp lệ; DB suýt nhận password là chuỗi lỗi).
   → chỉ dùng `${VAR}` trơn; giá trị nằm trong kho env của Coolify.
-- Coolify đổi tên mọi named volume khai trong compose → tách DB/MinIO/upload khỏi dữ liệu.
+- Coolify đổi tên mọi named volume khai trong compose → tách DB/storage/upload khỏi dữ liệu.
   → bind tuyệt đối dưới /srv/appdata/vol/.
 - Coolify đăng ký TÊN SERVICE làm network alias; nginx của frontend proxy tới `sabstore-backend:5000`
   → service backend tên `sabstore-backend`. Không `networks:`, không `container_name:`.

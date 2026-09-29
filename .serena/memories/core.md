@@ -1,7 +1,7 @@
 # SAB-Store — Core (điểm vào cấp cao nhất)
 
 Cửa hàng lanyard/merch cho SAB: khách đặt hàng online, admin/seller quản lý + bán trực tiếp (POS).
-Tên project trong Serena là "SAB-Lanyard" (tên lịch sử), repo là SAB-Store.
+Object storage: SeaweedFS (S3 API), backend dùng SDK `minio` nên biến vẫn tên `MINIO_*`.
 
 **Nguồn sự thật ngoài memory** (memory chỉ tóm tắt, KHÔNG thay thế): `AGENTS.md` (luật cứng) ·
 `README.md` · `docs/deployment.md` (runbook cho `prod.compose.yml`, host không Coolify) ·

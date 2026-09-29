@@ -1,6 +1,6 @@
 # SAB Store
 
-> Tên gọi trong code/branding hiện tại là **SAB Store** (xem `frontend/index.html`); "SAB Lanyard" là tên cũ, package.json vẫn giữ `minipreorder-*` làm tên npm package (không đổi, không ảnh hưởng vận hành).
+> Tên gọi: **SAB Store**. `package.json` vẫn giữ `minipreorder-*` làm tên npm package (không đổi, không ảnh hưởng vận hành).
 
 ## 🏗️ Kiến trúc hệ thống
 
@@ -134,18 +134,18 @@ Không biến nào ở trên từng đúng với code hiện tại — `BETTER_A
 
 Danh sách biến thật, có chú thích tại chỗ giải thích từng biến: [`.env.example`](.env.example) (đọc bởi `docker compose`, ở **root** repo) và [`backend/.env.example`](backend/.env.example) (chỉ dùng khi chạy backend trực tiếp, không qua Docker). Chi tiết + lý do gộp/không gộp: [`docs/ENV_SETUP.md`](docs/ENV_SETUP.md).
 
-Tóm tắt các biến bắt buộc (production, thiếu 1 biến là container **không boot**): `PUBLIC_URL`, `JWT_SECRET`, `MONGODB_URI`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `APPSCRIPT_URL`. `CORS_ORIGIN`/`BASE_URL` không set riêng — cả hai nội suy từ `PUBLIC_URL`.
+Tóm tắt các biến bắt buộc (production, thiếu 1 biến là container **không boot**): `PUBLIC_URL`, `JWT_SECRET`, `MONGODB_URI`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` (tên `MINIO_*` giữ nguyên vì backend dùng SDK `minio`; giá trị là credential của SeaweedFS, ≥ 16 ký tự, không phải `minioadmin`), `ADMIN_EMAIL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `APPSCRIPT_URL`. `CORS_ORIGIN`/`BASE_URL` không set riêng — cả hai nội suy từ `PUBLIC_URL`.
 
 ## 🐳 Docker Configuration
 
 Hệ thống sử dụng `compose.yml` (dev) / `prod.compose.yml` (production) — **đúng 4 services**, không có service `nginx` riêng:
 
 - **mongodb**: Database chính
-- **minio**: Object storage cho hình ảnh sản phẩm
+- **sabstore-seaweedfs**: Object storage (SeaweedFS, S3 API) cho hình ảnh sản phẩm
 - **backend**: ExpressJS API server (internal port 5000)
 - **frontend**: React (Vite) build, **nginx nằm bên trong image này** (`frontend/Dockerfile` build từ `nginx:alpine`, internal port 80) — không phải service tách biệt
 
-Production chỉ có một cổng vào: `store.sabies.vn` → NPM → container `frontend` (nginx) → `backend:5000` cho `/api/*`, → `minio:9000` trực tiếp cho `/uploads/*` (không qua backend). Domain `api.store.sabies.vn` riêng đã bị gỡ.
+Production chỉ có một cổng vào: `store.sabies.vn` → NPM → container `frontend` (nginx) → `backend:5000` cho `/api/*`, → `sabstore-seaweedfs:9000` trực tiếp cho `/uploads/*` (không qua backend). Domain `api.store.sabies.vn` riêng đã bị gỡ.
 
 ```yaml
 # nginx trong container frontend
@@ -153,7 +153,7 @@ Client Request
         ↓
   [nginx trong frontend]
         ├─→ /api/*        → backend:5000 (API requests)
-        ├─→ /uploads/*    → minio:9000 (ảnh sản phẩm, đọc trực tiếp từ object storage)
+        ├─→ /uploads/*    → sabstore-seaweedfs:9000 (ảnh sản phẩm, đọc trực tiếp từ object storage)
         └─→ /*             → static build (React app)
 ```
 

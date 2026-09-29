@@ -6,7 +6,7 @@ thanh toán chuyển khoản VietQR; email xác nhận qua AppScript.
 
 Stack (version: đọc `package.json` / Dockerfile / compose, không ghi ở đây):
 - `backend/`: Express + Mongoose (MongoDB), Better Auth (username/password, session, role admin/seller),
-  MinIO cho file, Jest + mongodb-memory-server.
+  object storage SeaweedFS (S3 API, SDK `minio`, biến `MINIO_*`) cho file, Jest + mongodb-memory-server.
 - `frontend/`: React + Vite + React Router + Tailwind, Vitest; nginx trong container phục vụ SPA và proxy `/api`.
 - Deploy: `coolify.compose.yml` trên Coolify (nhánh `main`); `compose.yml` dev; `prod.compose.yml` rollback.
 
