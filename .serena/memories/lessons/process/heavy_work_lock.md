@@ -20,10 +20,10 @@ Bối cảnh sự cố (máy crash 30/09/2026): `mem:lessons/machine/shared_mac_
 - Ưu tiên giữa repo chỉ khi user cấp, có giờ kết thúc (thông báo qua phiên được cấp).
 - Git hook tự lấy khoá: shell đang giữ khoá phải `export CC_HEAVY_OWNER='<owner line chính xác>'` trong CÙNG lệnh với `git commit`/`git push`, nếu không hook chờ mãi chính khoá của mình.
 
-## Khoá trong git hook (mẫu JudgeHub/Leaderboard — áp khi SAB có hook)
+## Khoá trong git hook (SAB dùng husky từ 03/10/2026, cùng mẫu JudgeHub/Leaderboard)
 - Hook pre-commit/pre-push tự lấy khoá qua `.husky/lib/heavy-lock.sh` (bản chép nguyên văn từ Leaderboard); commit/push chỉ `.md` bỏ qua khoá.
 - Ctrl-C/TERM/HUP nhả khoá chỉ khi owner line vẫn là của mình. Sau SIGKILL khoá kẹt lại: kiểm owner line trước khi xoá tay.
 - Hook cũng chờ `memory_pressure` free ≥ 35% → commit có thể đứng lâu; đọc dòng "heavy-lock: waiting".
-- Có hook chạy test thì KHÔNG chạy test/lint "kiểm tra lần cuối" ngay trước commit — gấp đôi thời gian cho cùng kết quả. (SAB hiện chưa có hook: vẫn tự chạy test hẹp trước commit, xem AGENTS.md §4.)
+- Có hook chạy test thì KHÔNG chạy test/lint "kiểm tra lần cuối" ngay trước commit — gấp đôi thời gian cho cùng kết quả. Chi tiết hook của SAB: AGENTS.md §4.
 
 **How to apply:** snippet chuẩn nằm ở AGENTS.md §4 ("Khoá máy dùng chung"); sửa snippet thì giữ khớp memory này.

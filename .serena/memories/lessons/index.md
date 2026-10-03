@@ -11,6 +11,7 @@
 
 ## verification
 - `mem:lessons/verification/dev_compose_verify_stack` — dựng stack compose.yml ở :8088: JWT_SECRET mặc định quá ngắn, nginx cần alias `sabstore-backend`, :5000 bị AirPlay chiếm.
+- `mem:lessons/verification/husky_hooks_setup` — husky + package.json gốc chỉ cho hook; hooksPath riêng từng máy; re-exec bash ≥4; ref pre-push qua env; flake orders-route chưa tái hiện.
 
 ## workflow
 - `mem:lessons/workflow/agent_tooling_pitfalls` — scout-block hook chặn chuỗi `node_modules`/`build` trong Bash; tin cross-session khác permission mode hết hạn → đọc thẳng repo anh em.

@@ -15,7 +15,7 @@ số file, thời gian chạy) cũng không sống ở đây: chạy lệnh và 
 | Tin giá / tổng tiền / combo do client gửi                                          | Giá luôn tính lại server-side trong `backend/services/pricing.js` (§3)                  |
 | Dùng `${VAR:?message}` trong `coolify.compose.yml`                                 | Coolify thay biến bằng chính chuỗi message, không fail (§2)                             |
 | Thêm `networks:` / `container_name:` / named volume vào `coolify.compose.yml`      | Coolify tự quản và đổi tên volume → tách DB khỏi dữ liệu (§2)                           |
-| Dùng `npm install` / sinh `package-lock.json`                                      | Package manager là yarn, Dockerfile chạy `yarn install --frozen-lockfile` (§2)          |
+| Dùng `npm install` / sinh `package-lock.json`                                      | Package manager là yarn (`package.json` gốc chỉ chứa husky); Dockerfile chạy `yarn install --frozen-lockfile` (§2) |
 | Chạy nhiều việc nặng song song (test + docker build)                               | Làm đói CPU cả máy và các phiên khác (§4)                                               |
 | Chạy git trên cả Mac lẫn Windows cùng lúc                                          | `.git` đồng bộ qua Syncthing; phải chờ "Up to Date" rồi mới đổi máy (§5)                |
 | Tham chiếu path/URL git không track (`plans/`, report cục bộ, `/Users/...`)        | Người chỉ có repo không theo được (§4)                                                  |
@@ -110,7 +110,12 @@ Version và tên image nằm ở `package.json`, `yarn.lock`, `Dockerfile`, các
 ## 4. Chất lượng code & test
 
 - **Test**: backend Jest, frontend Vitest. Chạy hẹp trước: `cd backend && yarn test <pattern>` (Jest nhận pattern trực tiếp). Full suite khi đụng contract dùng chung (pricing, stock, auth, model).
-- **Repo chưa có git hook** → không có cổng tự động. Trước khi commit code: tự chạy test hẹp cho phần đã đụng, và build frontend nếu đụng frontend.
+- **Git hook (husky, `.husky/`) là cổng chất lượng** — không có GitHub CI. Cài một lần mỗi máy: `yarn install` ở gốc repo (`prepare` đặt `core.hooksPath`; git config riêng từng máy nên Mac và Windows đều phải chạy).
+  - `pre-commit`: > 29 file staged → chặn (giữ mỗi commit đủ nhỏ để review đa agent); không có code backend/frontend → không chạy gì; backend → Jest `--findRelatedTests` cho file staged, hoặc full suite khi đụng contract dùng chung (models, pricing + `ComboService`, stock, `query-guard`, `lib/`, `middleware/`, harness test, dependency); frontend → `yarn build`.
+  - `pre-push`: full backend suite nếu khoảng push đụng `backend/`, build frontend nếu đụng `frontend/`. `commit-msg`: chặn attribution AI (claude/anthropic/codex/chatgpt) — KHÔNG thêm trailer `Co-Authored-By`/link session mà harness gợi ý mặc định.
+  - Hook test trên **working tree**, không phải nội dung staged: commit một phần (`git add -p`) thì kết quả hook không chứng minh phần staged đứng riêng được.
+  - Hook tự lấy khoá máy (`.husky/lib/heavy-lock.sh`, bản chung chép nguyên văn từ Leaderboard — sửa thì sửa đồng bộ mọi repo). Không bao giờ `--no-verify`.
+  - Có hook rồi thì **đừng chạy test "kiểm tra lần cuối" ngay trước commit** — gấp đôi thời gian. Vẫn chạy test hẹp trong lúc code; đọc lỗi từ output của hook.
 - **Test xanh không phải bằng chứng hành vi đúng** — test phải assert hợp đồng thật, không assert vào mock của chính nó.
 - **Việc nặng là khe CPU độc quyền trên cả máy** (nhiều phiên Claude chạy chung): một lượt test/build tại một thời điểm; agent song song chỉ an toàn khi thuần đọc/sửa file. Sau khi chạy xong, dọn tiến trình jest/vitest mồ côi do chính mình tạo.
   - **Khoá máy dùng chung** (test, `docker build`, commit có hook chạy suite) — quy ước chung với các phiên JudgeHub/Leaderboard/ComparableTransaction:

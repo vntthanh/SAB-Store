@@ -1,0 +1,16 @@
+# Owner rule shared across repos: commit messages carry no AI attribution.
+# References to the CLAUDE.md file name are allowed; the token is stripped
+# rather than the line, so "Co-Authored-By: Claude (see CLAUDE.md)" still fails.
+. "$(dirname "$0")/lib/require-bash.sh"
+set -euo pipefail
+
+# git stripspace drops the "#" lines git adds (staged paths, `commit -v` diff),
+# which would otherwise trip the check on a clean message.
+STRIPPED=$(git stripspace --strip-comments <"$1" | sed -E 's/CLAUDE\.md//Ig')
+
+for word in claude anthropic codex chatgpt; do
+	if grep -iq "$word" <<<"$STRIPPED"; then
+		echo "commit-msg: the message mentions '$word'; remove AI attribution before committing." >&2
+		exit 1
+	fi
+done

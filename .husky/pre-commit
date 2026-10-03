@@ -1,0 +1,73 @@
+# Pre-commit gate, scoped to what is staged:
+# - more than MAX_STAGED files: refused, split the commit by module (keeps each
+#   commit small enough for the multi-agent review before it);
+# - backend: Jest on the staged files' related tests, or the full suite when a
+#   shared contract (models, pricing, stock, auth, middleware, query guard, test
+#   harness, dependencies) changed;
+# - frontend: the production bundle must build (no frontend tests are checked in);
+# - anything else (Markdown, hooks, compose files): nothing to run.
+# Tests and the build run under the machine-wide heavy lock (lib/heavy-lock.sh),
+# which is only taken when there is work to do.
+. "$(dirname "$0")/lib/require-bash.sh"
+set -Eeuo pipefail
+
+MAX_STAGED=29
+ROOT="$(git rev-parse --show-toplevel)"
+
+# --no-renames: a rename is listed as delete + add, so moving a shared file away
+# still triggers the full suite through the deleted path.
+mapfile -t STAGED < <(git diff --cached --name-status --no-renames)
+
+# A merge commit cannot be split, so the size cap applies to ordinary commits only.
+if ((${#STAGED[@]} > MAX_STAGED)) && ! git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+	echo "pre-commit: ${#STAGED[@]} files staged, the limit is $MAX_STAGED. Split the commit by module." >&2
+	exit 1
+fi
+
+backend_full=false
+backend_files=()
+frontend_changed=false
+for entry in "${STAGED[@]}"; do
+	status="${entry%%$'\t'*}"
+	f="${entry#*$'\t'}"
+	case "$f" in
+		*.md) ;;
+		backend/package.json | backend/yarn.lock | backend/jest.config.js | \
+			backend/tests/helpers/* | backend/tests/global-setup.js | backend/tests/global-teardown.js | \
+			backend/tests/setup.js | backend/tests/env.js | \
+			backend/models/* | backend/services/pricing.js | backend/services/ComboService.js | \
+			backend/services/stock.js | backend/utils/query-guard.js | \
+			backend/lib/* | backend/middleware/*)
+			backend_full=true ;;
+		backend/tests/*)
+			if [[ "$status" != D ]]; then backend_files+=("${f#backend/}"); fi ;;
+		backend/*.js)
+			# A deleted module cannot seed --findRelatedTests, and whatever still
+			# imports it is unknown here: run everything.
+			if [[ "$status" == D ]]; then backend_full=true; else backend_files+=("${f#backend/}"); fi ;;
+		frontend/*)
+			frontend_changed=true ;;
+	esac
+done
+
+if [[ "$backend_full" == false && ${#backend_files[@]} -eq 0 && "$frontend_changed" == false ]]; then
+	echo "pre-commit: no backend or frontend code staged, nothing to run"
+	exit 0
+fi
+
+# shellcheck source=lib/heavy-lock.sh
+source "$ROOT/.husky/lib/heavy-lock.sh"
+heavy_lock_hook SAB-Store pre-commit "$0" "$@"
+
+if [[ "$backend_full" == true ]]; then
+	echo "pre-commit: shared backend contract changed, running the full backend suite"
+	(cd "$ROOT/backend" && yarn --silent test)
+elif ((${#backend_files[@]} > 0)); then
+	echo "pre-commit: backend tests related to ${#backend_files[@]} staged file(s)"
+	(cd "$ROOT/backend" && yarn --silent test --findRelatedTests --passWithNoTests "${backend_files[@]}")
+fi
+
+if [[ "$frontend_changed" == true ]]; then
+	echo "pre-commit: frontend changed, building the production bundle"
+	(cd "$ROOT/frontend" && yarn --silent build >/dev/null)
+fi
