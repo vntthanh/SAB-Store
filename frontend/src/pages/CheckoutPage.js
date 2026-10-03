@@ -4,8 +4,11 @@ import { toast } from 'react-toastify';
 import { useCart } from '../context/CartContext';
 import { orderService } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
+import MarkdownContent from '../components/MarkdownContent';
+import usePublicSettings from '../hooks/usePublicSettings';
 
 const CheckoutPage = () => {
+	const settings = usePublicSettings();
 	const navigate = useNavigate();
 	const { cart, getCartTotal, formatCurrency, clearCart, getPricingBreakdown } = useCart();
 
@@ -393,18 +396,17 @@ const CheckoutPage = () => {
 								</div>
 
 								{/* Important Notes */}
-								<div className="mt-6 p-4 bg-warning-50 border border-warning-200 rounded-lg">
-									<h4 className="font-semibold text-warning-800 mb-2">
-										<i className="fas fa-info-circle mr-1"></i>
-										Lưu ý quan trọng:
-									</h4>
-									<ul className="text-warning-700 text-sm space-y-1 list-disc ml-4">
-										<li>Vui lòng kiểm tra kỹ thông tin trước khi xác nhận</li>
-										<li>Sau khi xác nhận, bạn vui lòng quét mã chuyển khoản trong vòng 1 giờ</li>
-										<li>SAB sẽ gửi thông tin xác nhận thanh toán <b>trong vòng 7 ngày</b></li>
-										<li>Thời gian nhận hàng dự kiến từ ngày T4 08/10/2025 đến ngày 19/10/2025 tại <b>Cơ sở 1 - 227 Nguyễn Văn Cừ, Phường Chợ Quán</b></li>
-									</ul>
-								</div>
+								{settings?.checkoutNotice && (
+									<div className="mt-6 p-4 bg-warning-50 border border-warning-200 rounded-lg">
+										<h4 className="font-semibold text-warning-800 mb-2">
+											<i className="fas fa-info-circle mr-1"></i>
+											Lưu ý quan trọng:
+										</h4>
+										<MarkdownContent className="text-warning-700 text-sm">
+											{settings.checkoutNotice}
+										</MarkdownContent>
+									</div>
+								)}
 
 								{/* Submit Button */}
 								<div className="mt-6">

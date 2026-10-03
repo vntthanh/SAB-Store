@@ -1,8 +1,11 @@
 import React, { useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { formatCurrency } from '../services/api';
+import MarkdownContent from '../components/MarkdownContent';
+import usePublicSettings from '../hooks/usePublicSettings';
 
 const OrderSuccessPage = () => {
+	const settings = usePublicSettings();
 	const location = useLocation();
 	const navigate = useNavigate();
 	const orderData = location.state;
@@ -95,9 +98,11 @@ const OrderSuccessPage = () => {
 									<i className="fas fa-exclamation-triangle mr-2"></i>
 									Thanh toán đơn đặt hàng.
 								</h3>
-								<p className="text-red-600 text-sm">
-									Để được xử lý nhanh nhất, bạn vui lòng thanh toán trong vòng 1 giờ
-								</p>
+								{settings?.paymentNotice && (
+									<MarkdownContent className="text-red-600 text-sm">
+										{settings.paymentNotice}
+									</MarkdownContent>
+								)}
 							</div>
 
 							{/* QR Code */}

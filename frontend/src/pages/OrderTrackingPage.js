@@ -3,8 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { orderService, formatCurrency, formatDate, getStatusText, getStatusColor } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
+import MarkdownContent from '../components/MarkdownContent';
+import usePublicSettings from '../hooks/usePublicSettings';
 
 const OrderTrackingPage = () => {
+	const settings = usePublicSettings();
 	const [searchParams, setSearchParams] = useSearchParams();
 	const [orderCode, setOrderCode] = useState('');
 	const [order, setOrder] = useState(null);
@@ -296,9 +299,11 @@ const OrderTrackingPage = () => {
 												<i className="fas fa-exclamation-triangle mr-2"></i>
 												Chờ xác nhận từ người bán
 											</h3>
-											<p className="text-red-600 text-sm">
-												Để được xử lý nhanh nhất, bạn vui lòng thanh toán trong vòng 1 giờ
-											</p>
+											{settings?.paymentNotice && (
+												<MarkdownContent className="text-red-600 text-sm">
+													{settings.paymentNotice}
+												</MarkdownContent>
+											)}
 										</div>
 
 										{/* QR Code */}

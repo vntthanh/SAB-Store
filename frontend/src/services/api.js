@@ -590,13 +590,14 @@ export const comboService = {
 	}
 };
 
-// Both mirror backend/models/Settings.js; the server is the authority.
+// These mirror backend/models/Settings.js; the server is the authority.
 // The default is used only when the title cannot be fetched and none was seen before.
 export const DEFAULT_STORE_TITLE = 'SAB Store';
 export const STORE_TITLE_MAX_LENGTH = 60;
+export const NOTICE_MAX_LENGTH = 5000;
 
-// One request per page load: the header mounts on every route, and the title
-// only changes when an admin edits it.
+// One request per page load: the header mounts on every route, and these
+// settings only change when an admin edits them.
 let publicSettingsRequest = null;
 
 export const settingsService = {
@@ -612,7 +613,7 @@ export const settingsService = {
 		return publicSettingsRequest;
 	},
 
-	// Called after an admin saves, so the header shows the new title without a reload.
+	// Called after an admin saves, so pages rendered afterwards get the new settings without a reload.
 	clearPublicSettingsCache: () => {
 		publicSettingsRequest = null;
 	}

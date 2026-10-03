@@ -17,7 +17,7 @@ describe('store title setting', () => {
 			const res = await request(app).get('/api/settings');
 
 			expect(res.status).toBe(200);
-			expect(res.body.data).toEqual({ storeTitle: 'SAB Store' });
+			expect(res.body.data.storeTitle).toBe('SAB Store');
 		});
 
 		it('returns the default title for a document saved before the field existed', async () => {
@@ -25,15 +25,17 @@ describe('store title setting', () => {
 
 			const res = await request(app).get('/api/settings');
 
-			expect(res.body.data).toEqual({ storeTitle: 'SAB Store' });
+			expect(res.body.data.storeTitle).toBe('SAB Store');
 		});
 
-		it('exposes only the store title, never payment details', async () => {
+		it('exposes only storefront fields, never payment details', async () => {
 			await Settings.create({ ...PAYMENT_FIELDS, storeTitle: 'Shop' });
 
 			const res = await request(app).get('/api/settings');
 
-			expect(Object.keys(res.body.data)).toEqual(['storeTitle']);
+			expect(Object.keys(res.body.data).sort()).toEqual(
+				['checkoutNotice', 'eventNotice', 'paymentNotice', 'storeTitle']
+			);
 			expect(res.body.data.storeTitle).toBe('Shop');
 		});
 	});

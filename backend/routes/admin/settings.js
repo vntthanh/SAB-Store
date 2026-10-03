@@ -1,7 +1,7 @@
 const express = require('express');
 const Settings = require('../../models/Settings');
 
-const { SETTINGS_KEY, STORE_TITLE_MAX_LENGTH } = Settings;
+const { SETTINGS_KEY, STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH, NOTICE_FIELDS } = Settings;
 const { authenticateAdmin } = require('../../middleware/better-auth');
 const router = express.Router();
 
@@ -10,6 +10,7 @@ const toResponse = (settings) => ({
 	bankAccountId: settings.bankAccountId,
 	prefixMessage: settings.prefixMessage,
 	storeTitle: settings.storeTitle,
+	...Object.fromEntries(NOTICE_FIELDS.map((field) => [field, settings[field]])),
 	updatedAt: settings.updatedAt,
 	updatedBy: settings.updatedBy
 });
@@ -80,6 +81,20 @@ router.put('/', async (req, res) => {
 				});
 			}
 			updateData.storeTitle = title;
+		}
+
+		// Each notice is optional like the title; an empty string is kept so the
+		// admin can hide that reminder.
+		for (const field of NOTICE_FIELDS) {
+			const value = req.body[field];
+			if (value === undefined) continue;
+			if (typeof value !== 'string' || value.length > NOTICE_MAX_LENGTH) {
+				return res.status(400).json({
+					success: false,
+					message: `Lời nhắc phải là văn bản tối đa ${NOTICE_MAX_LENGTH} ký tự`
+				});
+			}
+			updateData[field] = value.trim();
 		}
 
 		const settings = await Settings.findOneAndUpdate(

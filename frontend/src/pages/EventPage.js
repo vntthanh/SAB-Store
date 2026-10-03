@@ -3,8 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { productService, orderService, formatCurrency } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
+import MarkdownContent from '../components/MarkdownContent';
+import usePublicSettings from '../hooks/usePublicSettings';
 
 const EventPage = () => {
+	const settings = usePublicSettings();
 	const navigate = useNavigate();
 	const [product, setProduct] = useState(null);
 	const [loading, setLoading] = useState(true);
@@ -459,16 +462,17 @@ const EventPage = () => {
 				</div>
 
 				{/* Important Notes */}
-				<div className="mt-6 p-4 bg-warning-50 border border-warning-200 rounded-lg">
-					<h4 className="font-semibold text-warning-800 mb-2">
-						<i className="fas fa-info-circle mr-1"></i>
-						Lưu ý quan trọng:
-					</h4>
-					<ul className="text-warning-700 text-sm space-y-1 list-disc ml-4">
-						<li>Vui lòng kiểm tra kỹ thông tin trước khi xác nhận.</li>
-						<li>Sau khi xác nhận, bạn vui lòng quét mã chuyển khoản trong vòng 1 giờ.</li>
-					</ul>
-				</div>
+				{settings?.eventNotice && (
+					<div className="mt-6 p-4 bg-warning-50 border border-warning-200 rounded-lg">
+						<h4 className="font-semibold text-warning-800 mb-2">
+							<i className="fas fa-info-circle mr-1"></i>
+							Lưu ý quan trọng:
+						</h4>
+						<MarkdownContent className="text-warning-700 text-sm">
+							{settings.eventNotice}
+						</MarkdownContent>
+					</div>
+				)}
 
 				{/* Submit Button */}
 				<div className="mt-6">
