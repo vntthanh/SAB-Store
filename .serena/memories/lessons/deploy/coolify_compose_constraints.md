@@ -35,6 +35,17 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
   `docker exec coolify php artisan tinker --execute="echo \App\Models\Application::where('uuid','<uuid>')->first()->manual_webhook_secret_github;"`
   (cột trong DB bị mã hoá — ký bằng giá trị thô sẽ ra "Invalid signature"), ký HMAC-SHA256 payload push
   (`ref`, `repository.full_name`, `commits[].modified`) và POST kèm `X-GitHub-Event: push`. Không in secret.
+  Push `main` lúc 23:43 ngày 29/09 (commit 02798d6) → deployment tạo trong < 10 s: webhook hoạt động lại.
+- `command:` nhiều dòng dạng list một phần tử `- |` với `$$` được Coolify giữ đúng (đo 29/09 trên SeaweedFS:
+  `docker inspect` Cmd còn `$S3_…`, không `$$`). `docker compose config` in lại `$$` → khi trích command để chạy
+  thử phải đổi `$$`→`$`.
+- Sửa env của app (id 12) không qua UI: `php artisan tinker` với `\App\Models\EnvironmentVariable`
+  (`resourceable_type='App\Models\Application'`, `resourceable_id=12`, `is_preview=false`); `value` tự
+  giải mã/mã hoá qua Eloquent — không UPDATE thẳng SQL cột `value`. Chỉ in path/độ dài, không in giá trị.
+  Tinker echo lại dòng lệnh với tiền tố `> `: lọc output theo marker riêng, đừng `grep '^R'`.
+- Chọn container của app trên host (nhiều project): label `com.docker.compose.project=xy4efknzf2uepknbnsktconc`
+  + `com.docker.compose.service=<service>`. Đổi tên service → Coolify tự xoá container service cũ (đo 29/09:
+  `minio` biến mất khi thay bằng `sabstore-seaweedfs`), bind cũ còn nguyên.
 - Sau deploy: kiểm `docker history --no-trunc <image> | grep -c '<SECRET_NAME>='` = 0.
 - Đọc log deploy: `ssh -p 24700 david0403@ssh.noboroto.id.vn` rồi
   `docker exec coolify-db psql -U coolify -d coolify -At -c "select logs from application_deployment_queues where id=<id>"`;

@@ -6,6 +6,9 @@ node_modules/
 # Testing
 coverage/
 
+# Monaco bundle copied by scripts/copy-monaco.mjs
+public/monaco/
+
 # Production build
 build/
 dist/

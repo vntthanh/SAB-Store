@@ -1,7 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
-import api, { settingsService, DEFAULT_STORE_TITLE, STORE_TITLE_MAX_LENGTH } from '../../services/api';
+import api, { settingsService, DEFAULT_STORE_TITLE, STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH } from '../../services/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import MarkdownEditor from '../../components/admin/MarkdownEditor';
+
+// Where each customer reminder appears; the preview reuses that box's text colour.
+const NOTICES = [
+	{ field: 'checkoutNotice', label: 'Lưu ý ở trang thanh toán (giỏ hàng)', previewClassName: 'text-warning-700' },
+	{ field: 'eventNotice', label: 'Lưu ý ở trang đặt hàng sự kiện', previewClassName: 'text-warning-700' },
+	{ field: 'paymentNotice', label: 'Lời nhắc phía trên mã QR thanh toán', previewClassName: 'text-red-600' }
+];
+const NOTICE_FIELDS = NOTICES.map(({ field }) => field);
 
 const SettingsManagement = () => {
 	const [loading, setLoading] = useState(false);
@@ -10,7 +19,10 @@ const SettingsManagement = () => {
 		bankNameId: '',
 		bankAccountId: '',
 		prefixMessage: 'SAB',
-		storeTitle: DEFAULT_STORE_TITLE
+		storeTitle: DEFAULT_STORE_TITLE,
+		checkoutNotice: '',
+		eventNotice: '',
+		paymentNotice: ''
 	});
 	const [originalSettings, setOriginalSettings] = useState(null);
 
@@ -28,7 +40,17 @@ const SettingsManagement = () => {
 			}
 		} catch (error) {
 			if (error.response?.status === 404) {
-				console.log('No settings found, using defaults');
+				// No document yet: start the notices from the server's defaults, which
+				// is what customers currently see, instead of blank (= hidden).
+				const publicSettings = await settingsService.getPublicSettings().catch(() => null);
+				if (!publicSettings) {
+					toast.warn('Không tải được lời nhắc mặc định; lưu lúc này sẽ ẩn các lời nhắc đang để trống');
+				} else {
+					setSettings(prev => ({
+						...prev,
+						...Object.fromEntries(NOTICE_FIELDS.map(field => [field, publicSettings[field] ?? '']))
+					}));
+				}
 			} else {
 				toast.error(error.response?.data?.message || 'Lỗi khi tải cấu hình');
 			}
@@ -43,6 +65,10 @@ const SettingsManagement = () => {
 			...prev,
 			[name]: value
 		}));
+	};
+
+	const handleNoticeChange = (field) => (value) => {
+		setSettings(prev => ({ ...prev, [field]: value }));
 	};
 
 	const handleSubmit = async (e) => {
@@ -68,13 +94,19 @@ const SettingsManagement = () => {
 			return;
 		}
 
+		if (NOTICE_FIELDS.some(field => settings[field].length > NOTICE_MAX_LENGTH)) {
+			toast.error(`Mỗi lời nhắc tối đa ${NOTICE_MAX_LENGTH} ký tự`);
+			return;
+		}
+
 		setSaving(true);
 		try {
 			const response = await api.put('/admin/settings', {
 				bankNameId: settings.bankNameId.trim(),
 				bankAccountId: settings.bankAccountId.trim(),
 				prefixMessage: settings.prefixMessage.trim(),
-				storeTitle: settings.storeTitle.trim()
+				storeTitle: settings.storeTitle.trim(),
+				...Object.fromEntries(NOTICE_FIELDS.map(field => [field, settings[field]]))
 			});
 
 			if (response.data.success) {
@@ -102,7 +134,8 @@ const SettingsManagement = () => {
 			settings.bankNameId !== originalSettings.bankNameId ||
 			settings.bankAccountId !== originalSettings.bankAccountId ||
 			settings.prefixMessage !== originalSettings.prefixMessage ||
-			settings.storeTitle !== originalSettings.storeTitle
+			settings.storeTitle !== originalSettings.storeTitle ||
+			NOTICE_FIELDS.some(field => settings[field] !== originalSettings[field])
 		);
 	};
 
@@ -112,7 +145,7 @@ const SettingsManagement = () => {
 
 	return (
 		<div className="container mx-auto px-4 py-8">
-			<div className="max-w-3xl mx-auto">
+			<div className="max-w-5xl mx-auto">
 				<div className="bg-white rounded-lg shadow-md p-6">
 					<h1 className="text-2xl font-bold mb-6">Cấu hình cửa hàng</h1>
 
@@ -195,6 +228,24 @@ const SettingsManagement = () => {
 								Tiền tố cho nội dung chuyển khoản (thường là tên tổ chức)
 							</p>
 						</div>
+
+						<h2 className="text-lg font-semibold text-gray-800 pt-2">Lời nhắc cho khách hàng</h2>
+						<p className="text-sm text-gray-500 -mt-4">
+							Soạn bằng Markdown (<code>- </code> cho danh sách, <code>**đậm**</code>, <code>[liên kết](https://...)</code>). Để trống để ẩn lời nhắc.
+						</p>
+
+						{NOTICES.map(({ field, label, previewClassName }) => (
+							<div key={field}>
+								<p className="block text-sm font-medium text-gray-700 mb-2">{label}</p>
+								<MarkdownEditor
+									ariaLabel={label}
+									value={settings[field]}
+									onChange={handleNoticeChange(field)}
+									maxLength={NOTICE_MAX_LENGTH}
+									previewClassName={previewClassName}
+								/>
+							</div>
+						))}
 
 						{originalSettings && (
 							<div className="bg-gray-50 p-4 rounded-md">

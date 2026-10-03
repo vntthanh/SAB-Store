@@ -15,12 +15,16 @@ số file, thời gian chạy) cũng không sống ở đây: chạy lệnh và 
 | Tin giá / tổng tiền / combo do client gửi                                          | Giá luôn tính lại server-side trong `backend/services/pricing.js` (§3)                  |
 | Dùng `${VAR:?message}` trong `coolify.compose.yml`                                 | Coolify thay biến bằng chính chuỗi message, không fail (§2)                             |
 | Thêm `networks:` / `container_name:` / named volume vào `coolify.compose.yml`      | Coolify tự quản và đổi tên volume → tách DB khỏi dữ liệu (§2)                           |
-| Dùng `npm install` / sinh `package-lock.json`                                      | Package manager là yarn, Dockerfile chạy `yarn install --frozen-lockfile` (§2)          |
+| Dùng `npm install` / sinh `package-lock.json`                                      | Package manager là yarn (`package.json` gốc chỉ chứa husky); Dockerfile chạy `yarn install --frozen-lockfile` (§2) |
 | Chạy nhiều việc nặng song song (test + docker build)                               | Làm đói CPU cả máy và các phiên khác (§4)                                               |
 | Chạy git trên cả Mac lẫn Windows cùng lúc                                          | `.git` đồng bộ qua Syncthing; phải chờ "Up to Date" rồi mới đổi máy (§5)                |
 | Tham chiếu path/URL git không track (`plans/`, report cục bộ, `/Users/...`)        | Người chỉ có repo không theo được (§4)                                                  |
 | Commit code chưa qua ≥2 agent review                                               | Một góc nhìn bỏ sót cả lớp lỗi; test xanh không thay được review (§6)                   |
 | Chạy lệnh dài trên server ngoài `tmux`                                             | SSH rớt là chết giữa chừng, để lại container nửa vời (§2)                               |
+| Spawn subagent không truyền `model: "sonnet"`; dùng `fable` cho subagent           | Thừa hưởng opus, đốt quota owner; opus chỉ cho kongming/leo thang, tối đa 1 (§6)        |
+| Tạo git worktree (`isolation: "worktree"`, `git worktree add`)                     | Nhân đôi CPU/RAM; máy crash 30/09/2026 (§4)                                             |
+| `git commit/push --no-verify`; commit > 29 file                                    | Hook là cổng chất lượng; commit lớn mất điểm quay lui (§5)                              |
+| In secret, file credential, config compose/env đã render                           | Dùng `[redacted]`; fixture token giả khai trong `.gitguardian.yaml` (§3)                |
 
 ## 1. Tool policy — MCP trước, built-in sau
 
@@ -31,7 +35,9 @@ subagent phải nhắc lại luật này.
 **Serena memory là nơi tra bài học đầu tiên.** Trước khi tự suy luận lại một hành vi, hoặc kết
 luận "cái này chắc là…", đọc `mem:core` rồi `mem:lessons/index` — sự thật đã **đo được** của dự
 án nằm ở đó. Có bài học mới đã đo được thì `write_memory` đúng chủ đề (`lessons/<topic>/…`) rồi
-thêm một dòng vào index. Memory sai/cũ thì sửa hoặc xoá, đừng để nằm đó.
+thêm một dòng vào index. Memory sai/cũ thì sửa hoặc xoá, đừng để nằm đó. Văn phong, ngưỡng
+thêm/sửa và cấu trúc đồ thị memory: `mem:memory_maintenance`. Trước khi kết thúc một việc, tự hỏi
+"phiên này đã đo được gì mà phiên sau sẽ phải dò lại?" — có thì ghi ngay, đừng để user nhắc.
 
 **Điều hướng & sửa code — `serena`**
 
@@ -43,6 +49,7 @@ thêm một dòng vào index. Memory sai/cũ thì sửa hoặc xoá, đừng đ�
 | Sửa thân một symbol                   | `Edit` kèm khối context lớn | `replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol` |
 | Đổi tên / thay chuỗi toàn repo        | `Grep` + N lần `Edit`       | `rename_symbol`, `replace_in_files`, `replace_content`               |
 | Xoá symbol kèm dọn tham chiếu         | `Edit` tay từng chỗ         | `safe_delete_symbol`                                                 |
+| Xem lỗi/chẩn đoán của 1 file          | build cả package            | `get_diagnostics_for_file`                                           |
 | Ghi nhớ kiến thức repo giữa các phiên | file rác trong repo         | `write_memory` / `read_memory` / `list_memories`                     |
 
 **Kiến trúc & review — `code-review-graph`**
@@ -69,7 +76,9 @@ trí nhớ; repo GitHub ngoài → `deepwiki`; tìm web → `exa` / `tavily` / `
 - Index rỗng/cũ **không phải** lý do quay về `Grep`: chạy `build_or_update_graph_tool` rồi query lại. Dựng graph không tính là ghi repo.
 - `get_impact_radius_tool` trên node trung tâm có thể vượt trần token → thu hẹp depth.
 - Tool bị _deferred_ → nạp bằng **một** lần `ToolSearch` cho cả cụm (`select:` nhận danh sách phẩy).
-- Câu hỏi về cách JudgeHub/Leaderboard đã giải một việc tương tự (hook, compose, Syncthing): hỏi phiên Claude cùng tên qua `SendMessage` (tìm bằng `ListAgents`), **chỉ hỏi đọc**.
+- Câu hỏi về cách JudgeHub/Leaderboard đã giải một việc tương tự (hook, compose, Syncthing): hỏi phiên Claude cùng tên qua `SendMessage` (tìm bằng `ListAgents`), **chỉ hỏi đọc**. Tin bị giữ/hết hạn (hai phiên khác permission mode) thì đừng chờ, đừng gửi lại: đọc thẳng repo anh em (chỉ đọc), vd `AGENTS.md`, `.husky/`, `.serena/memories/` của JudgeHub.
+- Hook `scout-block` của máy chặn lệnh Bash chứa chuỗi `node_modules`/`build` → viết file bằng Write rồi chạy, không sửa `.ckignore` khi user chưa yêu cầu (`mem:lessons/workflow/agent_tooling_pitfalls`).
+- MCP xác thực tương tác (`claude-in-chrome`) có thể vắng trong phiên headless/cron — đừng phụ thuộc trong luồng tự động. `harvest`, Google Drive không phục vụ dự án này.
 
 ## 2. Stack & deploy — luật, không phải bảng số
 
@@ -101,7 +110,12 @@ Version và tên image nằm ở `package.json`, `yarn.lock`, `Dockerfile`, các
 ## 4. Chất lượng code & test
 
 - **Test**: backend Jest, frontend Vitest. Chạy hẹp trước: `cd backend && yarn test <pattern>` (Jest nhận pattern trực tiếp). Full suite khi đụng contract dùng chung (pricing, stock, auth, model).
-- **Repo chưa có git hook** → không có cổng tự động. Trước khi commit code: tự chạy test hẹp cho phần đã đụng, và build frontend nếu đụng frontend.
+- **Git hook (husky, `.husky/`) là cổng chất lượng** — không có GitHub CI. Cài một lần mỗi máy: `yarn install` ở gốc repo (`prepare` đặt `core.hooksPath`; git config riêng từng máy nên Mac và Windows đều phải chạy).
+  - `pre-commit`: > 29 file staged → chặn (giữ mỗi commit đủ nhỏ để review đa agent); không có code backend/frontend → không chạy gì; backend → Jest `--findRelatedTests` cho file staged, hoặc full suite khi đụng contract dùng chung (models, pricing + `ComboService`, stock, `query-guard`, `lib/`, `middleware/`, harness test, dependency); frontend → `yarn build`.
+  - `pre-push`: full backend suite nếu khoảng push đụng `backend/`, build frontend nếu đụng `frontend/`. `commit-msg`: chặn attribution AI (claude/anthropic/codex/chatgpt) — KHÔNG thêm trailer `Co-Authored-By`/link session mà harness gợi ý mặc định.
+  - Hook test trên **working tree**, không phải nội dung staged: commit một phần (`git add -p`) thì kết quả hook không chứng minh phần staged đứng riêng được.
+  - Hook tự lấy khoá máy (`.husky/lib/heavy-lock.sh`, bản chung chép nguyên văn từ Leaderboard — sửa thì sửa đồng bộ mọi repo). Không bao giờ `--no-verify`.
+  - Có hook rồi thì **đừng chạy test "kiểm tra lần cuối" ngay trước commit** — gấp đôi thời gian. Vẫn chạy test hẹp trong lúc code; đọc lỗi từ output của hook.
 - **Test xanh không phải bằng chứng hành vi đúng** — test phải assert hợp đồng thật, không assert vào mock của chính nó.
 - **Việc nặng là khe CPU độc quyền trên cả máy** (nhiều phiên Claude chạy chung): một lượt test/build tại một thời điểm; agent song song chỉ an toàn khi thuần đọc/sửa file. Sau khi chạy xong, dọn tiến trình jest/vitest mồ côi do chính mình tạo.
   - **Khoá máy dùng chung** (test, `docker build`, commit có hook chạy suite) — quy ước chung với các phiên JudgeHub/Leaderboard/ComparableTransaction:
@@ -114,17 +128,21 @@ Version và tên image nằm ở `package.json`, `yarn.lock`, `Dockerfile`, các
       for f in /tmp/cc-heavy.*-wants; do
         [ -e "$f" ] && [ "$f" != "$F" ] || continue
         [ -n "$(find "$f" -mmin -5)" ] || continue
-        e=$(awk '{print $3}' "$f"); [[ "$e" =~ ^[0-9]+$ ]] && [ "$e" -lt "$MYEPOCH" ] && return 0
+        e=$(awk '{print $3}' "$f" 2>/dev/null)
+        [[ "$e" =~ ^[0-9]+$ ]] || return 0   # live but empty/unreadable counts as older: yield
+        [ "$e" -lt "$MYEPOCH" ] && return 0
       done; return 1
     }
-    until ! older_live && mkdir /tmp/cc-heavy.lock 2>/dev/null; do touch "$F"; sleep 30; done
+    mem_ok() { [ "$(memory_pressure -Q | awk -F': ' '/free percentage/ {print $2+0}')" -ge 35 ]; }
+    until ! older_live && mem_ok && mkdir /tmp/cc-heavy.lock 2>/dev/null; do touch "$F"; sleep 30; done
     echo "$OWNER" > /tmp/cc-heavy.lock/owner; rm -f "$F"
-    # ... job ...
+    # ... job; before EVERY heavy step: grep -qxF "$OWNER" /tmp/cc-heavy.lock/owner ...
     grep -qxF "$OWNER" /tmp/cc-heavy.lock/owner && rm -rf /tmp/cc-heavy.lock
     ```
-    - Cờ `*-wants` chỉ tồn tại khi đang ở trong vòng chờ; `touch` mỗi nhịp (heartbeat). Cờ có mtime > 5 phút là chết: bỏ qua, **không xoá** (chỉ chủ xoá); > 30 phút thì nhắn chủ. Xếp hàng mà chưa chờ → nhắn tin, không dựng cờ.
+    - Cờ `*-wants` chỉ tồn tại khi đang ở trong vòng chờ; `touch` mỗi nhịp (heartbeat). Cờ có mtime > 5 phút là chết: bỏ qua, **không xoá** (chỉ chủ xoá). Khoá chỉ coi là stale sau 45 phút **và** sau khi đã nhắn chủ. Xếp hàng mà chưa chờ → nhắn tin, không dựng cờ.
     - Tôn trọng mọi cờ còn sống của repo khác; hoà nhau thì epoch cũ hơn đi trước. Quyền ưu tiên chỉ do **user** cấp, có giờ kết thúc, báo cho mọi phiên.
     - Bash tool không giữ biến giữa các lần gọi → ghi lại literal `$OWNER` để release.
+    - "Nặng" = test, install, typecheck, build, dựng app/compose stack, lái trình duyệt. Dev server/stack nhàn rỗi phải dừng. Git hook tự lấy khoá thì shell đang giữ khoá phải `export CC_HEAVY_OWNER='<owner line>'` trong cùng lệnh `git commit`/`git push`. Đầy đủ: `mem:lessons/process/heavy_work_lock`.
   - **Cổng host**: tra/ghi `/tmp/cc-ports.registry` (`<port> <repo> <mục đích>`) trước khi publish cổng; chỉ sửa dòng của SAB-Store, xoá dòng khi dừng stack. Stack kiểm thử production-like của SAB-Store dùng `127.0.0.1:8088`.
   - Script chạy lệnh có mảng đối số: dùng `bash`, không dựa vào word-splitting của zsh (`$C args` trong zsh không tách từ).
 - **Đừng chép số đo vào file này.**
@@ -170,6 +188,23 @@ phát hiện và không thêm kiểm tra. Ngoại lệ được phép trùng l�
 
 ### Giữ agent trong tầm kiểm soát
 
+- Mọi lệnh Agent truyền `model: "sonnet"` tường minh; opus chỉ cho `kongming` (override khỏi fable) hoặc leo thang sau 3 vòng sonnet hỏng, tối đa một lúc: `mem:lessons/process/subagent_model_cap`.
+- Không worktree. Agent chỉ sửa file chạy song song được khi sở hữu file tách rời (lint được, không test/typecheck); một verify agent chạy test sau cùng.
+
 - Giao **danh sách file được sửa** tường minh; cần sửa ngoài danh sách thì báo orchestrator rồi dừng.
 - Chỉ orchestrator chạy git ghi; agent implement chỉ git đọc.
 - Orchestrator quyết định kỹ thuật; chỉ hỏi user khi chạm quyết định sản phẩm hoặc thứ khó đảo ngược (deploy, dữ liệu production).
+- Agent báo lệch so với plan, không tự ứng biến kiến trúc. Không spawn agent git khi còn agent đang sửa file — chung một working tree.
+
+### Nhịp cập nhật khi chạy nhiều agent
+
+- **Xong MỖI agent → cập nhật plan ngay** (bước đã xong, chỗ lệch plan). Agent sau đọc plan để biết đang ở đâu; plan cũ = làm trùng hoặc sai giả định.
+- **Xong MỖI wave → commit** (wave = nhóm agent chạy song song cùng đợt), khi cả wave xong và cây sạch, trước khi spawn wave kế. Dồn nhiều wave rồi commit một lần là mất điểm quay lui khi wave sau hỏng.
+
+## 7. UX — nguyên tắc bắt buộc
+
+1. **Trạng thái hệ thống luôn thấy được**: mọi thao tác async (submit, save, load) có spinner/skeleton/text "Đang …"; không để UI im lặng.
+2. **Phản hồi ngay**: toast thành công/thất bại sau mỗi action (`react-toastify`); lỗi hiện message của server, không nuốt.
+3. **Chặn submit hai lần**: nút submit/action `disabled` sau click tới khi có phản hồi — nhất là đặt hàng/thanh toán (đơn trùng = tiền/tồn kho lệch).
+4. **Control cùng hàng cùng chiều cao**: toolbar, filter bar, hàng nút dùng cùng cỡ padding/size; container `items-center`; không hardcode `height` lệch nhau.
+5. **Nội dung do admin soạn** (Markdown lời nhắc…) hiển thị qua đúng một renderer dùng chung, và màn soạn có preview bằng chính renderer đó.

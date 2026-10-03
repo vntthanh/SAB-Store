@@ -9,7 +9,7 @@ Object storage: SeaweedFS (S3 API), backend dùng SDK `minio` nên biến vẫn 
 (ràng buộc Coolify đã đo) · docblock đầu `backend/services/stock.js` và `backend/tests/global-setup.js`.
 
 ## Bài học đã đo (đọc TRƯỚC khi suy luận lại)
-`mem:lessons/index` — index theo chủ đề (deploy, database, sync).
+`mem:lessons/index` — index theo chủ đề (deploy, database, frontend, verification, workflow, machine, sync).
 
 ## Nhánh & môi trường
 - `main` = production: Coolify (docker.noboroto.id.vn, app `sab-store`, domain store.sabies.vn) build
@@ -21,5 +21,4 @@ Object storage: SeaweedFS (S3 API), backend dùng SDK `minio` nên biến vẫn 
 `mem:suggested_commands`. Checklist khi xong việc: `mem:task_completion_checklist`.
 
 ## Bảo trì memory
-Memory sai/cũ thì sửa hoặc xoá ngay. Không ghi version/số đếm (đọc manifest). Bài học mới: ghi
-vào `lessons/<topic>/<slug>` + thêm một dòng vào `lessons/index`.
+Cấu trúc đồ thị, văn phong, ngưỡng thêm/sửa, cách thêm một bài học: `mem:memory_maintenance`.

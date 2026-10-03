@@ -1,0 +1,11 @@
+{
+	"name": "sab-store-workspace",
+	"private": true,
+	"description": "Repository tooling only (git hooks). The apps live in backend/ and frontend/, each with its own package.json and yarn.lock.",
+	"scripts": {
+		"prepare": "husky"
+	},
+	"devDependencies": {
+		"husky": "9.1.7"
+	}
+}

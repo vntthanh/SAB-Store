@@ -1,0 +1,59 @@
+# Pre-push gate over every file in the pushed range: the full backend suite when
+# backend/ changed, the frontend production bundle when frontend/ changed.
+# Anything else (Markdown, hooks, compose files) runs nothing. Work runs under
+# the machine-wide heavy lock (lib/heavy-lock.sh).
+. "$(dirname "$0")/lib/require-bash.sh"
+set -Eeuo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+ZERO_SHA="0000000000000000000000000000000000000000"
+
+# heavy_lock_hook re-runs this script under the lock, and the ref list arrives
+# on stdin only once: keep it and hand it to the re-run.
+REFS="${CC_SAB_PUSH_REFS-$(cat)}"
+
+backend_changed=false
+frontend_changed=false
+while read -r local_ref local_sha remote_ref remote_sha; do
+	[[ -z "${local_ref:-}" || "$local_sha" == "$ZERO_SHA" ]] && continue
+	if [[ "$remote_sha" == "$ZERO_SHA" ]]; then
+		# New remote branch: compare against the empty tree, i.e. treat every file as pushed.
+		range="$(git hash-object -t tree /dev/null)..$local_sha"
+	else
+		range="$remote_sha..$local_sha"
+	fi
+	# Fail closed: an unreadable range (e.g. the remote moved and was not fetched)
+	# must run every gate, never skip them.
+	if ! files="$(git diff --name-only "$range" --)"; then
+		echo "pre-push: cannot diff $range, running every check" >&2
+		backend_changed=true
+		frontend_changed=true
+		continue
+	fi
+	while IFS= read -r f; do
+		case "$f" in
+			*.md) ;;
+			backend/*) backend_changed=true ;;
+			frontend/*) frontend_changed=true ;;
+		esac
+	done <<<"$files"
+done <<<"$REFS"
+
+if [[ "$backend_changed" == false && "$frontend_changed" == false ]]; then
+	echo "pre-push: no backend or frontend code pushed, nothing to run"
+	exit 0
+fi
+
+# shellcheck source=lib/heavy-lock.sh
+source "$ROOT/.husky/lib/heavy-lock.sh"
+CC_SAB_PUSH_REFS="$REFS" heavy_lock_hook SAB-Store pre-push "$0" "$@"
+
+if [[ "$backend_changed" == true ]]; then
+	echo "pre-push: full backend suite"
+	(cd "$ROOT/backend" && yarn --silent test)
+fi
+
+if [[ "$frontend_changed" == true ]]; then
+	echo "pre-push: frontend changed, building the production bundle"
+	(cd "$ROOT/frontend" && yarn --silent build >/dev/null)
+fi
