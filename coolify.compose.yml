@@ -29,7 +29,8 @@
 # MongoDB runs as a single-node replica set (`rs0`) because transactions need one; the
 # healthcheck initiates it on first start. The keyfile is written from MONGO_REPLICA_KEY
 # into /etc/mongo, never /tmp (fs.protected_regular crash-loops a restarted container).
-# MONGODB_URI must carry `replicaSet=rs0`. Rollback: drop --replSet/--keyFile and the
+# MONGODB_URI must carry `replicaSet=rs0`. Rollback (together with reverting the backend's
+# replica-set startup check, or it refuses to boot): drop --replSet/--keyFile and the
 # `replicaSet` URI option; mongod then starts standalone on the same data dir.
 # The `${VAR:?message}` form is NOT used in this file. The deployment platform does
 # not implement error-if-unset: it substitutes the MESSAGE as the value, so

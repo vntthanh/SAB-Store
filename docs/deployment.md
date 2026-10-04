@@ -305,12 +305,12 @@ docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
   2026-04-25 and stopped shipping free images, so it no longer receives fixes. The compose
   files pin `chrislusf/seaweedfs` by digest; updating it means choosing a new tag and digest
   deliberately.
-- Production runs **no replica set** (AD-4 in `plan.md`). Do not add `session`/transactions
-  to any Mongo write path — `services/stock.js` and the DB import path both accept an
-  optional `session` for a future replica set, but neither uses one today, and a
-  `mongoose.startSession()` call will throw at runtime without one. The Jest harness runs
-  against `mongodb-memory-server`'s replica-set mode, so a transaction would pass in tests and
-  crash in production — this asymmetry is intentional to flag, not a gap to silently fix.
+- MongoDB runs as a **single-node replica set `rs0`** (since 2026-10-04) so multi-document
+  transactions work. The keyfile comes from the runtime variable `MONGO_REPLICA_KEY`
+  (base64, no newlines, 6–1024 chars, e.g. `openssl rand -base64 756 | tr -d '\n'`); the
+  healthcheck initiates the set on first start. `MONGODB_URI` carries `replicaSet=rs0`. The
+  backend refuses to boot against a standalone mongod, so the Jest harness (also a replica
+  set) and production behave the same.
 
 ## Rollback
 
@@ -326,5 +326,8 @@ docker compose -f prod.compose.yml up -d
 cp .env.bak-<timestamp> .env   # only if .env was changed since that commit
 ```
 
-Volumes are untouched by any of this. There is no replica set to roll back (none exists in
-prod).
+Volumes are untouched by any of this. Rolling MongoDB back to standalone: drop
+`--replSet`/`--keyFile` from the mongo service and `replicaSet=rs0` from `MONGODB_URI`, and
+revert the backend's replica-set startup check (`backend/lib/require-replica-set.js` call in
+`backend/lib/database.js`) in the same deploy — otherwise the backend refuses to start.
+mongod starts standalone on the same data dir.
