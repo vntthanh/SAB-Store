@@ -53,6 +53,41 @@ async function makeCombo(overrides = {}) {
 }
 
 /**
+ * Inserts a document the way one written before public codes existed looks:
+ * straight through the driver, so no hook runs and there is no `publicCode`.
+ * Returns the stored raw document.
+ */
+async function insertLegacy(Model, doc) {
+	const now = new Date();
+	const raw = { createdAt: now, updatedAt: now, ...doc };
+	const { insertedId } = await Model.collection.insertOne(raw);
+	return Model.collection.findOne({ _id: insertedId });
+}
+
+function makeLegacyProduct(overrides = {}) {
+	const n = nextSequence();
+	return insertLegacy(Product, {
+		name: `Legacy Product ${n}`,
+		price: 100000,
+		category: 'general',
+		available: true,
+		stockQuantity: 10,
+		...overrides,
+	});
+}
+
+function makeLegacyCombo(overrides = {}) {
+	const n = nextSequence();
+	return insertLegacy(Combo, {
+		name: `Legacy Combo ${n}`,
+		price: 150000,
+		categoryRequirements: [{ category: 'general', quantity: 2 }],
+		isActive: true,
+		...overrides,
+	});
+}
+
+/**
  * Signs up a real user through better-auth on the app under test, then
  * promotes it to admin directly in Mongo, and signs in to mint a session
  * cookie.
@@ -101,4 +136,4 @@ async function makeAdminSession(app) {
 	return { cookies, email, username };
 }
 
-module.exports = { makeProduct, makeCombo, makeAdminSession };
+module.exports = { makeProduct, makeCombo, makeLegacyProduct, makeLegacyCombo, makeAdminSession };

@@ -5,6 +5,7 @@ const { authenticateAdmin, authenticateSeller, authenticateUser } = require('../
 const { validateComboItems } = require('../middleware/validation');
 const { computeOrderPricing, pricingErrorBody, PricingError } = require('../services/pricing');
 const { asEnum } = require('../utils/query-guard');
+const { createWithPublicCodeRetry } = require('../utils/public-code');
 const ErrorLogger = require('../utils/errorLogger');
 const router = express.Router();
 
@@ -111,7 +112,7 @@ router.post('/', authenticateAdmin, async (req, res) => {
 			});
 		}
 
-		const combo = new Combo({
+		const combo = await createWithPublicCodeRetry(Combo, {
 			name,
 			description,
 			price,
@@ -119,8 +120,6 @@ router.post('/', authenticateAdmin, async (req, res) => {
 			priority: priority || 0,
 			...(salesChannel !== undefined && { salesChannel })
 		});
-
-		await combo.save();
 
 		res.status(201).json({
 			success: true,
