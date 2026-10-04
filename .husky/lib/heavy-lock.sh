@@ -1,21 +1,26 @@
 # Machine-wide heavy-job lock for git hooks, shared verbatim by every repo on
-# this Mac (Leaderboard, JudgeHub, ...). A hook's typecheck/lint/test suite is
-# heavy; taking the lock inside the hook means no caller can run it outside the
-# lock.
+# these machines (Leaderboard owns the canonical copy; JudgeHub, QR, SAB-Store,
+# ComparableTransaction copy it unchanged). A hook's typecheck/lint/test suite
+# is heavy; taking the lock inside the hook means no caller, a GUI git client
+# included, can run it outside the lock.
 #
-# Protocol (AGENTS.md "Chi phí chạy test — khoá dùng chung toàn máy"):
+# Protocol (AGENTS.md §5 "Chi phí chạy test — khoá dùng chung toàn máy"):
 # - wait in a wants-flag queue, one flag per process
 #   `<root>/cc-heavy.<repo>-<pid>-wants`, oldest epoch first; a live flag
 #   (mtime <= 5 min) that is empty or unreadable counts as older than ours;
 #   flags older than 5 min are dead and are ignored, never deleted;
-# - free memory must be >= 35% (macOS `memory_pressure -Q`; skipped where the
-#   tool does not exist);
+# - free memory must be >= 35%: macOS `memory_pressure -Q`; Windows available
+#   bytes (free + standby cache, as Task Manager counts it) through
+#   powershell.exe; Linux MemAvailable. Skipped where none can be read;
+# - give up after CC_HEAVY_WAIT_MAX seconds (default 30 min) with a failing
+#   hook rather than ever running the heavy steps without the lock;
 # - acquire with an atomic `mkdir <root>/cc-heavy.lock` and an exact owner line
 #   `<Repo> <job>-<pid> <epoch>`;
 # - release only when the owner line is still ours (`grep -qxF ... && rm`),
 #   never unconditionally; also on INT/TERM/HUP, so a cancelled or timed-out
 #   hook does not leave the lock held (a waiter likewise removes only its own
-#   wants flag). SIGKILL cannot run a handler: the 45-minute stale rule covers it.
+#   wants flag). SIGKILL cannot run a handler: that lock stays until someone
+#   checks the owner line and removes it by hand.
 #
 # A caller that already holds the lock exports CC_HEAVY_OWNER with its exact
 # owner line in the same command as `git commit`/`git push`; the hook then runs
@@ -30,13 +35,22 @@
 # The re-run inherits the helper's stdin, so redirect it on the call
 # (`heavy_lock_hook ... <<<"$saved"`) when the hook already consumed stdin.
 #
-# Needs bash (not plain sh). Env overrides, for tests: CC_HEAVY_ROOT,
-# CC_HEAVY_POLL_SECONDS, CC_HEAVY_MIN_FREE_PCT.
+# Needs bash (not plain sh). Env overrides:
+# - CC_HEAVY_ROOT, or CC_HEAVY_TMP (the name other repos use): the lock
+#   directory, for a GUI client whose git resolves /tmp elsewhere (Windows).
+# - CC_HEAVY_WAIT_MAX (or CC_HEAVY_WAIT_MAX_SECONDS): seconds to wait before
+#   giving up (default 1800).
+# - Tests only: CC_HEAVY_POLL_SECONDS, CC_HEAVY_MIN_FREE_PCT.
 
-CC_HEAVY_ROOT="${CC_HEAVY_ROOT:-/tmp}"
+CC_HEAVY_ROOT="${CC_HEAVY_ROOT:-${CC_HEAVY_TMP:-/tmp}}"
 CC_HEAVY_LOCK="$CC_HEAVY_ROOT/cc-heavy.lock"
 CC_HEAVY_MIN_FREE_PCT="${CC_HEAVY_MIN_FREE_PCT:-35}"
 CC_HEAVY_POLL_SECONDS="${CC_HEAVY_POLL_SECONDS:-10}"
+CC_HEAVY_WAIT_MAX="${CC_HEAVY_WAIT_MAX:-${CC_HEAVY_WAIT_MAX_SECONDS:-1800}}"
+# A non-number would make every deadline test false and silently drop the cap.
+case "$CC_HEAVY_WAIT_MAX" in
+  '' | *[!0-9]*) CC_HEAVY_WAIT_MAX=1800 ;;
+esac
 CC_HEAVY_FLAG_TTL_SECONDS=300
 
 # File mtime in epoch seconds (GNU stat first, then BSD); 0 = dead flag.
@@ -55,8 +69,43 @@ heavy_lock_free_pct() {
   local pct=''
   if command -v memory_pressure >/dev/null 2>&1; then
     pct=$(memory_pressure -Q 2>/dev/null | grep -o '[0-9]*%' | tr -d '%' | tail -1 || true)
+  elif command -v powershell.exe >/dev/null 2>&1; then
+    pct=$(powershell.exe -NoProfile -NonInteractive -Command \
+      '$m = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory; $o = Get-CimInstance Win32_OperatingSystem; [int]($m.AvailableBytes * 100 / ($o.TotalVisibleMemorySize * 1024))' \
+      2>/dev/null | tr -d '\r' || true)
+  elif [ -r /proc/meminfo ]; then
+    pct=$(awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{if (t && a != "") print int(a*100/t)}' /proc/meminfo || true)
   fi
-  echo "${pct:-100}"
+  case "$pct" in
+    '' | *[!0-9]*) pct=100 ;;
+  esac
+  echo "$pct"
+}
+
+# GitHub Desktop's bundled git on Windows ships no `sleep`; without this the
+# wait loop would spin, launching powershell.exe for the memory gate every pass.
+# heavy_lock_acquire refuses to start when neither exists, rather than spin.
+heavy_lock_sleep() {
+  if command -v sleep >/dev/null 2>&1; then
+    sleep "$1"
+  else
+    powershell.exe -NoProfile -NonInteractive -Command "Start-Sleep -Seconds $1" >/dev/null 2>&1 || true
+  fi
+}
+
+# Who holds the lock, for messages: the owner line, or how long an ownerless
+# lock (holder SIGKILLed between mkdir and the owner write) has existed.
+heavy_lock_holder() {
+  local o age
+  o=$(cat "$CC_HEAVY_LOCK/owner" 2>/dev/null || true)
+  if [ -n "$o" ]; then
+    echo "$o"
+  elif [ -d "$CC_HEAVY_LOCK" ]; then
+    age=$(($(date +%s) - $(heavy_lock_mtime "$CC_HEAVY_LOCK")))
+    echo "no owner line, lock dir ${age}s old; if no hook is running, remove $CC_HEAVY_LOCK by hand"
+  else
+    echo none
+  fi
 }
 
 # Is our flag first in the queue? $1 = our flag path, $2 = our epoch.
@@ -84,6 +133,10 @@ heavy_lock_my_turn() {
 # handler can always see it).
 heavy_lock_acquire() {
   local repo="$1" job="$2-$$" epoch free last_msg=0 now line
+  if ! command -v sleep >/dev/null 2>&1 && ! command -v powershell.exe >/dev/null 2>&1; then
+    echo "heavy-lock: no sleep or powershell.exe on PATH, so it cannot wait for the lock; nothing ran" >&2
+    exit 1
+  fi
   epoch=$(date +%s)
   line="$repo $job $epoch"
   flag="$CC_HEAVY_ROOT/cc-heavy.$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')-$$-wants"
@@ -102,15 +155,21 @@ heavy_lock_acquire() {
       return 0
     fi
     now=$(date +%s)
+    if [ $((now - epoch)) -ge "$CC_HEAVY_WAIT_MAX" ]; then
+      rm -f "$flag"
+      flag=''
+      echo "heavy-lock: gave up after ${CC_HEAVY_WAIT_MAX}s (holder: $(heavy_lock_holder), free memory ${free}%); nothing ran, retry later" >&2
+      exit 1
+    fi
     if [ $((now - last_msg)) -ge 60 ]; then
       {
-        echo "heavy-lock: waiting (holder: $(cat "$CC_HEAVY_LOCK/owner" 2>/dev/null || echo none), free memory ${free}%)"
+        echo "heavy-lock: waiting (holder: $(heavy_lock_holder), free memory ${free}%)"
         echo "heavy-lock: if your shell already holds this lock, export CC_HEAVY_OWNER='<owner line>' before git commit/push"
       } >&2
       last_msg=$now
     fi
     # Background + wait: a trap runs as soon as `wait` returns, not after the sleep.
-    sleep "$CC_HEAVY_POLL_SECONDS" &
+    heavy_lock_sleep "$CC_HEAVY_POLL_SECONDS" &
     wait $!
   done
 }

@@ -3,6 +3,8 @@
 # Anything else (Markdown, hooks, compose files) runs nothing. Work runs under
 # the machine-wide heavy lock (lib/heavy-lock.sh).
 . "$(dirname "$0")/lib/require-bash.sh"
+# shellcheck source=lib/hook-env.sh
+. "$(dirname "$0")/lib/hook-env.sh"
 set -Eeuo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -44,6 +46,8 @@ if [[ "$backend_changed" == false && "$frontend_changed" == false ]]; then
 	exit 0
 fi
 
+# shellcheck source=lib/yarn-path.sh
+source "$ROOT/.husky/lib/yarn-path.sh"
 # shellcheck source=lib/heavy-lock.sh
 source "$ROOT/.husky/lib/heavy-lock.sh"
 CC_SAB_PUSH_REFS="$REFS" heavy_lock_hook SAB-Store pre-push "$0" "$@"
