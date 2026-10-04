@@ -1,7 +1,7 @@
 # Husky ở SAB-Store (dựng 03/10/2026)
 
-- SAB không có workspace gốc → thêm `package.json` gốc tối thiểu (private, chỉ husky, `prepare: husky`) + `yarn.lock` gốc. Docker build dùng context `backend/`/`frontend/` nên không bị ảnh hưởng.
-- `.husky/_/` do husky sinh, tự gitignore. `core.hooksPath` là git config RIÊNG từng máy (Syncthing không đồng bộ) → mỗi máy chạy `yarn install` ở gốc một lần.
+- SAB không có workspace gốc → thêm `package.json` gốc tối thiểu (private, chỉ husky, `prepare: husky`) + `pnpm-lock.yaml` gốc (yarn tới 04/10/2026). Docker build dùng context `backend/`/`frontend/` nên không bị ảnh hưởng.
+- `.husky/_/` do husky sinh, tự gitignore. `core.hooksPath` là git config RIÊNG từng máy (Syncthing không đồng bộ) → mỗi máy chạy `pnpm install` ở gốc một lần.
 - Husky gọi hook bằng `sh -e` (bỏ qua shebang); `/bin/sh` macOS là bash 3.2 → `.husky/lib/require-bash.sh` re-exec sang bash ≥4 (Homebrew). Kiểm bằng `PATH=/usr/bin:/bin sh -e .husky/<hook> ...`.
 - `pre-push` đọc danh sách ref từ stdin một lần; `heavy_lock_hook` chạy lại script dưới khoá → truyền ref qua env `CC_SAB_PUSH_REFS`.
 - `jest --findRelatedTests routes/settings.js` (cwd backend) kéo ~28 suite vì app import gần hết route — related ≈ gần full suite với file route/app.

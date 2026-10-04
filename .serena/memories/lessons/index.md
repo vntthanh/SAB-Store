@@ -5,7 +5,7 @@
 - `mem:lessons/deploy/seaweedfs_restart_protected_regular` — `fs.protected_regular=2` + file trong `/tmp` sticky → seaweed crash-loop sau `docker restart` (502 ngày 04/10); config ở `/etc/seaweedfs`, xoá trước khi ghi.
 
 ## database
-- `mem:lessons/database/no_mongo_transactions` — prod standalone mongod, harness replica set: transaction xanh ở test, throw ở prod.
+- `mem:lessons/database/no_mongo_transactions` — prod lên replica set `rs0` 04/10 (đã đo, keyfile /etc/mongo chmod 755, key không xuống dòng); backend fail-fast; rollback phải revert cả kiểm replica set.
 
 ## frontend
 - `mem:lessons/frontend/monaco_self_hosted` — Monaco tự host (copy `min/vs`, loader.config trong lazy factory); exports map chặn package.json; `/monaco/` no-cache; CSP `worker-src blob:`; Playwright phải gõ bàn phím.
@@ -18,13 +18,13 @@
 - `mem:lessons/workflow/agent_tooling_pitfalls` — scout-block hook chặn chuỗi `node_modules`/`build` trong Bash; tin cross-session khác permission mode hết hạn → đọc thẳng repo anh em.
 
 ## machine
-- `mem:lessons/machine/shared_mac_resources` — Mac dùng chung bị watchdog reset 30/09 (load ~55): không worktree thừa, một agent nặng tại một thời điểm, kiểm owner line khoá.
+- `mem:lessons/machine/shared_mac_resources` — watchdog reset 30/09 và 04/10 18:22 (3 node 19 GB RSS, hook chạy đôi): không worktree thừa, một agent nặng, eslint 1 luồng, verify trình duyệt có stack = nặng; reboot xoá scratchpad.
 
 ## process (luật chung của owner — Leaderboard/JudgeHub/QR/SAB)
 - `mem:lessons/process/subagent_model_cap` — mọi Agent truyền `model: "sonnet"`; opus chỉ kongming/leo thang (tối đa 1); không fable.
-- `mem:lessons/process/heavy_work_lock` — không worktree; một agent nặng cả máy; giao thức `/tmp/cc-heavy.lock` (cờ rỗng = nhường, stale 45', cổng RAM 35%, `CC_HEAVY_OWNER` cho hook).
+- `mem:lessons/process/heavy_work_lock` — không worktree; một agent nặng cả máy; giao thức `/tmp/cc-heavy.lock` (cờ rỗng = nhường, stale 45', cổng RAM 35%, `CC_HEAVY_OWNER` cho hook); bản chung heavy-lock/hook-env của Leaderboard (chờ ≤1800 s, cổng RAM Windows/Linux, PATH cho GitHub Desktop).
 - `mem:lessons/process/processes_and_quality_gates` — theo dõi/dừng tiến trình mình đẻ; không `--no-verify`; ≥2 reviewer; ≤29 file/commit; không attribution AI.
-- `mem:lessons/process/deploy_coordination` — một tên tmux mỗi project, kill rồi tạo lại cùng tên; báo peer trước/sau deploy, không chồng build host.
+- `mem:lessons/process/deploy_coordination` — một tên tmux mỗi project; báo peer trước/sau deploy; `df -h` + build từng image; bind-mount file đơn giữ inode cũ; backup mongo bằng mongodump trong container.
 - `mem:lessons/process/tools_secrets_user_facing` — MCP trước; không in secret; `.gitguardian.yaml` cho fixture; trả lời tiếng Việt.
 
 ## sync

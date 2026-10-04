@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
-import { productService, sellerService, comboService } from '../../services/api';
+import { productService, sellerService, comboService, PRICE_CHANGED } from '../../services/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
 
 const DirectSalesPage = () => {
@@ -12,6 +12,9 @@ const DirectSalesPage = () => {
 	const [paymentQR, setPaymentQR] = useState('');
 	const [pricingInfo, setPricingInfo] = useState(null);
 	const [loadingPricing, setLoadingPricing] = useState(false);
+	// Only the newest preview may set the total: an older response landing late
+	// would show (and be echoed as expectedTotal) a stale amount.
+	const pricingRequestId = useRef(0);
 
 	// Refs for input focus management
 	const inputRefs = useRef({});
@@ -77,13 +80,18 @@ const DirectSalesPage = () => {
 			}));
 
 		if (items.length === 0) {
+			pricingRequestId.current++;
 			setPricingInfo(null);
+			setLoadingPricing(false);
 			return;
 		}
 
+		const requestId = ++pricingRequestId.current;
 		setLoadingPricing(true);
 		try {
-			const result = await comboService.calculatePricing(items);
+			const result = await comboService.calculatePricing(items, { channel: 'offline' });
+			// A newer selection already asked for its own price; this one is stale.
+			if (requestId !== pricingRequestId.current) return;
 
 			if (result.success) {
 				setPricingInfo(result.data);
@@ -92,10 +100,11 @@ const DirectSalesPage = () => {
 				setPricingInfo(null);
 			}
 		} catch (error) {
+			if (requestId !== pricingRequestId.current) return;
 			console.error('Pricing calculation error:', error.message || error);
 			setPricingInfo(null);
 		} finally {
-			setLoadingPricing(false);
+			if (requestId === pricingRequestId.current) setLoadingPricing(false);
 		}
 	};
 
@@ -161,16 +170,16 @@ const DirectSalesPage = () => {
 
 		setProcessing(true);
 		try {
-			// Get optimal pricing for this selection
-			const pricingData = pricingInfo || null;
+			if (!pricingInfo) {
+				toast.error('Chưa tính được giá, vui lòng thử lại');
+				return;
+			}
 
-			// Create order through seller service
+			// Only ids and quantities plus the total shown on screen; the server
+			// recomputes the price and answers 409 if it differs.
 			const orderData = {
-				items: selectedItems,
-				isDirectSale: true,
-				// Include optimal pricing information if available
-				optimalPricing: pricingData,
-				useOptimalPricing: pricingData && pricingData.summary && pricingData.summary.totalSavings > 0
+				items: selectedItems.map(({ productId, quantity }) => ({ productId, quantity })),
+				expectedTotal: pricingInfo.totalAmount
 			};
 
 			const response = await sellerService.createDirectOrder(orderData);
@@ -180,11 +189,7 @@ const DirectSalesPage = () => {
 				setCurrentOrder(order);
 				setPaymentQR(order.qrUrl || '');
 
-				// Show combo info if applied (silently without warning).
-				// F12: the seller direct-sale route always writes the
-				// multi-combo shape ({savings, originalTotal, finalTotal,
-				// combos[], breakdown} — see routes/seller.js), which has no
-				// top-level comboName; combo names live in comboInfo.combos[].
+				// Combo names live in comboInfo.combos[]; there is no top-level comboName.
 				if (order.comboInfo && order.comboInfo.savings > 0) {
 					const comboNames = (order.comboInfo.combos || []).map((c) => c.comboName).join(', ');
 					toast.success(`Đã tạo đơn hàng thành công! Áp dụng combo "${comboNames}" tiết kiệm ${formatCurrency(order.comboInfo.savings)}`);
@@ -193,7 +198,12 @@ const DirectSalesPage = () => {
 				}
 			}
 		} catch (error) {
-			toast.error('Lỗi khi tạo đơn hàng: ' + error.message);
+			if (error.code === PRICE_CHANGED) {
+				toast.warning('Giá vừa thay đổi, vui lòng xem lại tổng tiền');
+				calculatePricing();
+			} else {
+				toast.error('Lỗi khi tạo đơn hàng: ' + error.message);
+			}
 		} finally {
 			setProcessing(false);
 		}
@@ -248,8 +258,8 @@ const DirectSalesPage = () => {
 
 	const getTotalAmount = () => {
 		// Use optimal pricing if available
-		if (pricingInfo && pricingInfo.summary) {
-			return pricingInfo.summary.finalTotal;
+		if (pricingInfo) {
+			return pricingInfo.totalAmount;
 		}
 
 		// Fallback to basic calculation
@@ -370,7 +380,7 @@ const DirectSalesPage = () => {
 							</div>
 
 							{/* Pricing Breakdown */}
-							{pricingInfo && pricingInfo.summary.totalSavings > 0 && (
+							{pricingInfo && pricingInfo.savings > 0 && (
 								<div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
 									<div className="flex items-center justify-between mb-2">
 										<span className="text-green-800 font-medium">
@@ -378,24 +388,24 @@ const DirectSalesPage = () => {
 											Combo tối ưu được áp dụng
 										</span>
 										<span className="text-green-700 font-bold">
-											-{formatCurrency(pricingInfo.summary.totalSavings)}
+											-{formatCurrency(pricingInfo.savings)}
 										</span>
 									</div>
 
-									{pricingInfo.combos.length > 0 && (
+									{pricingInfo.comboInfo && pricingInfo.comboInfo.combos.length > 0 && (
 										<div className="text-sm text-green-700 space-y-1">
-											{pricingInfo.combos.map((combo, index) => (
+											{pricingInfo.comboInfo.combos.map((combo, index) => (
 												<div key={index} className="flex justify-between">
-													<span>{combo.name} x{combo.applications}</span>
-													<span>{formatCurrency(combo.totalPrice)}</span>
+													<span>{combo.comboName} x{combo.applications}</span>
+													<span>-{formatCurrency(combo.savings)}</span>
 												</div>
 											))}
 										</div>
 									)}
 
 									<div className="text-xs text-green-600 mt-2">
-										Giá gốc: {formatCurrency(pricingInfo.summary.originalTotal)} →
-										Giá sau combo: {formatCurrency(pricingInfo.summary.finalTotal)}
+										Giá gốc: {formatCurrency(pricingInfo.originalTotal)} →
+										Giá sau combo: {formatCurrency(pricingInfo.totalAmount)}
 									</div>
 								</div>
 							)}
@@ -403,7 +413,7 @@ const DirectSalesPage = () => {
 							<div className="flex justify-center">
 								<button
 									onClick={handleCreateOrder}
-									disabled={getTotalAmount() === 0 || processing}
+									disabled={getTotalAmount() === 0 || processing || loadingPricing || !pricingInfo}
 									className="btn-primary px-8 py-3 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									{processing ? (
@@ -434,9 +444,7 @@ const DirectSalesPage = () => {
 									Tổng tiền: <span className="font-bold text-blue-700">{formatCurrency(currentOrder.totalAmount)}</span>
 								</p>
 
-								{/* Combo Info — F12: comboInfo.comboName does not exist on the
-								    multi-combo shape this route writes; combo names live in
-								    comboInfo.combos[]. See the comment on the toast above. */}
+								{/* Combo names live in comboInfo.combos[]. */}
 								{currentOrder.comboInfo && currentOrder.comboInfo.savings > 0 && (
 									<div className="mt-3 inline-block bg-green-50 border border-green-200 rounded-lg px-4 py-2">
 										<div className="flex items-center space-x-2 text-sm">

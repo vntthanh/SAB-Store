@@ -45,6 +45,18 @@ api.interceptors.response.use(
 	}
 );
 
+// Keeps the server's error `code` and HTTP status on the thrown Error so callers
+// can branch on them (PRICE_CHANGED) instead of parsing the message.
+const toApiError = (error, fallback) => {
+	const apiError = new Error(error.response?.data?.message || fallback);
+	apiError.status = error.response?.status;
+	apiError.code = error.response?.data?.code;
+	apiError.details = error.response?.data?.details;
+	return apiError;
+};
+
+export const PRICE_CHANGED = 'PRICE_CHANGED';
+
 // Product Services
 export const productService = {
 	// Get all products
@@ -96,7 +108,7 @@ export const orderService = {
 			const response = await api.post('/orders', orderData);
 			return response.data;
 		} catch (error) {
-			throw new Error(error.response?.data?.message || 'Lỗi khi tạo đơn hàng');
+			throw toApiError(error, 'Lỗi khi tạo đơn hàng');
 		}
 	},
 
@@ -255,17 +267,6 @@ export const adminService = {
 			return { success: true, message: 'Xuất file Excel thành công' };
 		} catch (error) {
 			throw new Error(error.response?.data?.message || 'Lỗi khi xuất file Excel');
-		}
-	},
-
-	// Create direct sale order (admin)
-	createDirectOrder: async (orderData) => {
-		try {
-			const response = await api.post('/admin/orders/direct', orderData);
-			return response.data;
-		} catch (error) {
-			console.error('API Error - createDirectOrder:', error.response?.data || error.message);
-			throw error;
 		}
 	},
 
@@ -442,7 +443,7 @@ export const sellerService = {
 			const response = await api.post('/seller/orders/direct', orderData);
 			return response.data;
 		} catch (error) {
-			throw new Error(error.response?.data?.message || 'Lỗi khi tạo đơn hàng trực tiếp');
+			throw toApiError(error, 'Lỗi khi tạo đơn hàng trực tiếp');
 		}
 	}
 };
@@ -559,16 +560,6 @@ export const databaseService = {
 
 // Combo Services
 export const comboService = {
-	// Detect applicable combos for given items
-	detectCombos: async (items) => {
-		try {
-			const response = await api.post('/combos/detect', { items });
-			return response.data;
-		} catch (error) {
-			throw new Error(error.response?.data?.message || 'Lỗi khi phát hiện combo');
-		}
-	},
-
 	// Get active combos
 	getActiveCombos: async () => {
 		try {
@@ -579,13 +570,16 @@ export const comboService = {
 		}
 	},
 
-	// Calculate optimal pricing for items
-	calculatePricing: async (items) => {
+	// Server-computed price of a cart: the same engine that prices the order, so
+	// `data.totalAmount` is what must be sent back as `expectedTotal`.
+	// `channel` is omitted when unset so the server applies its own default (online).
+	calculatePricing: async (items, { channel } = {}) => {
 		try {
-			const response = await api.post('/combos/pricing', { items });
+			const body = channel ? { items, channel } : { items };
+			const response = await api.post('/combos/pricing', body);
 			return response.data;
 		} catch (error) {
-			throw new Error(error.response?.data?.message || 'Lỗi khi tính toán giá tối ưu');
+			throw toApiError(error, 'Lỗi khi tính toán giá tối ưu');
 		}
 	}
 };

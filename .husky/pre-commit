@@ -34,7 +34,7 @@ for entry in "${STAGED[@]}"; do
 	f="${entry#*$'\t'}"
 	case "$f" in
 		*.md) ;;
-		backend/package.json | backend/yarn.lock | backend/jest.config.js | \
+		backend/package.json | backend/pnpm-lock.yaml | backend/jest.config.js | \
 			backend/tests/helpers/* | backend/tests/global-setup.js | backend/tests/global-teardown.js | \
 			backend/tests/setup.js | backend/tests/env.js | \
 			backend/models/* | backend/services/pricing.js | backend/services/ComboService.js | \
@@ -57,21 +57,19 @@ if [[ "$backend_full" == false && ${#backend_files[@]} -eq 0 && "$frontend_chang
 	exit 0
 fi
 
-# shellcheck source=lib/yarn-path.sh
-source "$ROOT/.husky/lib/yarn-path.sh"
 # shellcheck source=lib/heavy-lock.sh
 source "$ROOT/.husky/lib/heavy-lock.sh"
 heavy_lock_hook SAB-Store pre-commit "$0" "$@"
 
 if [[ "$backend_full" == true ]]; then
 	echo "pre-commit: shared backend contract changed, running the full backend suite"
-	(cd "$ROOT/backend" && yarn --silent test)
+	(cd "$ROOT/backend" && pnpm --silent test)
 elif ((${#backend_files[@]} > 0)); then
 	echo "pre-commit: backend tests related to ${#backend_files[@]} staged file(s)"
-	(cd "$ROOT/backend" && yarn --silent test --findRelatedTests --passWithNoTests "${backend_files[@]}")
+	(cd "$ROOT/backend" && pnpm --silent test --findRelatedTests --passWithNoTests "${backend_files[@]}")
 fi
 
 if [[ "$frontend_changed" == true ]]; then
 	echo "pre-commit: frontend changed, building the production bundle"
-	(cd "$ROOT/frontend" && yarn --silent build >/dev/null)
+	(cd "$ROOT/frontend" && pnpm --silent build >/dev/null)
 fi

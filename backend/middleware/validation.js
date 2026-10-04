@@ -1,5 +1,6 @@
 const { body, validationResult } = require('express-validator');
 const { createPasswordValidationRules } = require('../utils/passwordValidator');
+const { MAX_UNITS_PER_ORDER } = require('../services/pricing');
 
 // Field names whose rejected value must never be echoed back in a 400 body —
 // a wrong password would otherwise appear verbatim in the response.
@@ -26,6 +27,24 @@ const handleValidationErrors = (req, res, next) => {
 
 	next();
 };
+
+/**
+ * The total the client displayed. Mandatory so an order can never be placed
+ * without the customer having seen a price (stale tabs get a clear 400);
+ * the route compares it with the recomputed total and answers 409 on mismatch.
+ */
+const expectedTotalRule = body('expectedTotal')
+	.exists({ values: 'null' })
+	.withMessage('Thiếu tổng tiền hiển thị, vui lòng tải lại trang')
+	.bail()
+	.custom((value) => Number.isInteger(value) && value >= 0)
+	.withMessage('Tổng tiền hiển thị không hợp lệ');
+
+/**
+ * Validation rules for a counter (direct) sale. Item shape and availability
+ * are checked by the route and the pricing engine.
+ */
+const validateDirectOrder = [expectedTotalRule, handleValidationErrors];
 
 /**
  * Validation rules for creating an order
@@ -81,6 +100,8 @@ const validateOrder = [
 		.isInt({ min: 1, max: 100 })
 		.withMessage('Số lượng phải từ 1-100'),
 
+	expectedTotalRule,
+
 	handleValidationErrors
 ];
 
@@ -119,10 +140,11 @@ const validateOrderUpdate = [
 // two independent reasons. Query input is guarded by utils/query-guard.js.
 
 /**
- * Validation rules for combo cart items (public /combos/detect, /combos/pricing).
- * Bounds the array so an anonymous caller cannot force a per-item DB lookup
- * loop (ComboService) over an unbounded list, and bounds quantity so it
- * cannot reach Infinity/NaN territory in downstream pricing math.
+ * Validation rules for the public cart preview (/combos/pricing).
+ * Bounds the array so an anonymous caller cannot force an unbounded product
+ * lookup, and bounds quantity so it cannot reach Infinity/NaN territory in
+ * downstream pricing math. The order-wide unit cap is enforced by the pricing
+ * engine, which sees lines after merging duplicates.
  */
 const validateComboItems = [
 	body('items')
@@ -134,8 +156,8 @@ const validateComboItems = [
 		.withMessage('ID sản phẩm không hợp lệ'),
 
 	body('items.*.quantity')
-		.isInt({ min: 1, max: 1000 })
-		.withMessage('Số lượng phải từ 1-1000')
+		.isInt({ min: 1, max: MAX_UNITS_PER_ORDER })
+		.withMessage(`Số lượng phải từ 1-${MAX_UNITS_PER_ORDER}`)
 		.toInt(),
 
 	handleValidationErrors
@@ -204,6 +226,7 @@ const validatePasswordReset = [
 
 module.exports = {
 	validateOrder,
+	validateDirectOrder,
 	validateOrderUpdate,
 	validateComboItems,
 	validatePasswordChange,

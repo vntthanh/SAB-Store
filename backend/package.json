@@ -1,6 +1,7 @@
 {
 	"name": "minipreorder-backend",
 	"version": "1.0.0",
+	"packageManager": "pnpm@10.33.0",
 	"description": "Backend API for Mini Preorder System",
 	"main": "server.js",
 	"scripts": {

@@ -43,6 +43,10 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
   (`resourceable_type='App\Models\Application'`, `resourceable_id=12`, `is_preview=false`); `value` tự
   giải mã/mã hoá qua Eloquent — không UPDATE thẳng SQL cột `value`. Chỉ in path/độ dài, không in giá trị.
   Tinker echo lại dòng lệnh với tiền tố `> `: lọc output theo marker riêng, đừng `grep '^R'`.
+- Thêm biến MỚI (đo 04/10, `MONGO_REPLICA_KEY`): `new \App\Models\EnvironmentVariable()` với `key`, `value`
+  (lấy từ `getenv()` — truyền bằng `docker exec -e KEY` không kèm giá trị, để secret không nằm trong argv),
+  `is_buildtime=false`, `is_preview=false`, `resourceable_type='App\Models\Application'`, `resourceable_id=12`, `save()`.
+  Đếm trước (idempotent), in lại chỉ độ dài + `is_buildtime`.
 - Chọn container của app trên host (nhiều project): label `com.docker.compose.project=xy4efknzf2uepknbnsktconc`
   + `com.docker.compose.service=<service>`. Đổi tên service → Coolify tự xoá container service cũ (đo 29/09:
   `minio` biến mất khi thay bằng `sabstore-seaweedfs`), bind cũ còn nguyên.

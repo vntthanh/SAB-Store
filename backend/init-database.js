@@ -98,7 +98,8 @@ async function initDatabase() {
 				status: "active",
 				category: "Đồ mặc",
 				stockQuantity: 50,
-				available: true
+				available: true,
+				salesChannel: 'all'
 			},
 			{
 				name: "Mũ SAB",
@@ -108,7 +109,8 @@ async function initDatabase() {
 				status: "active",
 				category: "Phụ kiện",
 				stockQuantity: 30,
-				available: true
+				available: true,
+				salesChannel: 'all'
 			}
 		];
 

@@ -10,9 +10,13 @@ const mongoose = require('mongoose');
 const { computeOrderPricing, PricingError } = require('../../services/pricing');
 const { makeProduct, makeCombo } = require('../helpers/factories');
 
+// Channel-specific rules live in tests/channel; these tests pin the pricing
+// rules themselves on the online channel.
+const ONLINE = { channel: 'online' };
+
 describe('computeOrderPricing', () => {
 	it('throws EMPTY_CART for an empty items array, never a zero total', async () => {
-		await expect(computeOrderPricing([])).rejects.toMatchObject({
+		await expect(computeOrderPricing([], ONLINE)).rejects.toMatchObject({
 			name: 'PricingError',
 			code: 'EMPTY_CART',
 			httpStatus: 400
@@ -20,8 +24,8 @@ describe('computeOrderPricing', () => {
 	});
 
 	it('throws EMPTY_CART when items is missing/not an array', async () => {
-		await expect(computeOrderPricing(undefined)).rejects.toThrow(PricingError);
-		await expect(computeOrderPricing(null)).rejects.toThrow(PricingError);
+		await expect(computeOrderPricing(undefined, ONLINE)).rejects.toThrow(PricingError);
+		await expect(computeOrderPricing(null, ONLINE)).rejects.toThrow(PricingError);
 	});
 
 	it('computes totalAmount from DB prices, ignoring anything client-shaped', async () => {
@@ -29,7 +33,7 @@ describe('computeOrderPricing', () => {
 
 		const result = await computeOrderPricing([
 			{ productId: product._id.toString(), quantity: 3 }
-		]);
+		], ONLINE);
 
 		expect(result.totalAmount).toBe(225000);
 		expect(result.orderItems).toHaveLength(1);
@@ -45,7 +49,7 @@ describe('computeOrderPricing', () => {
 	it('exposes loaded product documents keyed by productId.toString()', async () => {
 		const product = await makeProduct();
 
-		const result = await computeOrderPricing([{ productId: product._id.toString(), quantity: 1 }]);
+		const result = await computeOrderPricing([{ productId: product._id.toString(), quantity: 1 }], ONLINE);
 
 		expect(result.products).toBeInstanceOf(Map);
 		expect(result.products.get(product._id.toString())._id.toString()).toBe(product._id.toString());
@@ -57,7 +61,7 @@ describe('computeOrderPricing', () => {
 		const result = await computeOrderPricing([
 			{ productId: product._id.toString(), quantity: 2 },
 			{ productId: product._id.toString(), quantity: 5 }
-		]);
+		], ONLINE);
 
 		expect(result.orderItems).toHaveLength(1);
 		expect(result.orderItems[0].quantity).toBe(7);
@@ -68,7 +72,7 @@ describe('computeOrderPricing', () => {
 		const product = await makeProduct({ price: 20000 });
 		const upperId = product._id.toString().toUpperCase();
 
-		const result = await computeOrderPricing([{ productId: upperId, quantity: 1 }]);
+		const result = await computeOrderPricing([{ productId: upperId, quantity: 1 }], ONLINE);
 
 		expect(result.totalAmount).toBe(20000);
 		expect(result.orderItems[0].productId.toString()).toBe(product._id.toString());
@@ -77,7 +81,7 @@ describe('computeOrderPricing', () => {
 	it('throws PRODUCT_UNAVAILABLE with the missing id when a product does not exist', async () => {
 		const missingId = new mongoose.Types.ObjectId().toString();
 
-		await expect(computeOrderPricing([{ productId: missingId, quantity: 1 }])).rejects.toMatchObject({
+		await expect(computeOrderPricing([{ productId: missingId, quantity: 1 }], ONLINE)).rejects.toMatchObject({
 			code: 'PRODUCT_UNAVAILABLE',
 			details: { missingIds: [missingId] }
 		});
@@ -87,29 +91,29 @@ describe('computeOrderPricing', () => {
 		const product = await makeProduct({ available: false });
 
 		await expect(
-			computeOrderPricing([{ productId: product._id.toString(), quantity: 1 }])
+			computeOrderPricing([{ productId: product._id.toString(), quantity: 1 }], ONLINE)
 		).rejects.toMatchObject({ code: 'PRODUCT_UNAVAILABLE' });
 	});
 
-	it('throws PRODUCT_UNAVAILABLE for a product with isActive:false even if available:true', async () => {
-		// Availability is one rule (isActive AND available), matching
-		// Product.findAvailable() — there is no flag to relax it.
+	it('sells a product with isActive:false when available:true', async () => {
+		// isActive is deprecated and no longer read: `available` is the only
+		// on/off switch, so a stale isActive:false must not block a sale.
 		const product = await makeProduct({ isActive: false, available: true });
 
-		await expect(
-			computeOrderPricing([{ productId: product._id.toString(), quantity: 1 }])
-		).rejects.toMatchObject({ code: 'PRODUCT_UNAVAILABLE' });
+		const result = await computeOrderPricing([{ productId: product._id.toString(), quantity: 1 }], ONLINE);
+
+		expect(result.totalAmount).toBe(product.price);
 	});
 
 	it('throws INVALID_QUANTITY for a zero or negative quantity', async () => {
 		const product = await makeProduct();
 
 		await expect(
-			computeOrderPricing([{ productId: product._id.toString(), quantity: 0 }])
+			computeOrderPricing([{ productId: product._id.toString(), quantity: 0 }], ONLINE)
 		).rejects.toMatchObject({ code: 'INVALID_QUANTITY' });
 
 		await expect(
-			computeOrderPricing([{ productId: product._id.toString(), quantity: -1 }])
+			computeOrderPricing([{ productId: product._id.toString(), quantity: -1 }], ONLINE)
 		).rejects.toMatchObject({ code: 'INVALID_QUANTITY' });
 	});
 
@@ -128,10 +132,12 @@ describe('computeOrderPricing', () => {
 			const result = await computeOrderPricing([
 				{ productId: a._id.toString(), quantity: 1 },
 				{ productId: b._id.toString(), quantity: 1 }
-			]);
+			], ONLINE);
 
 			expect(result.comboInfo).not.toBeNull();
-			expect(result.comboInfo.comboId.toString()).toBe(combo._id.toString());
+			expect(result.comboInfo.combos).toEqual([
+				{ comboId: combo._id, comboName: combo.name, applications: 1, savings: 30000 }
+			]);
 			expect(result.comboInfo.originalTotal).toBe(150000);
 			expect(result.comboInfo.finalTotal).toBe(120000);
 			expect(result.comboInfo.savings).toBe(30000);
@@ -159,7 +165,7 @@ describe('computeOrderPricing', () => {
 				{ productId: b1._id.toString(), quantity: 1 },
 				{ productId: b2._id.toString(), quantity: 1 },
 				{ productId: b3._id.toString(), quantity: 1 }
-			]);
+			], ONLINE);
 
 			expect(result.comboInfo).toBeNull();
 			expect(result.totalAmount).toBe(300); // full price, no combo discount
@@ -182,7 +188,7 @@ describe('computeOrderPricing', () => {
 				{ productId: a._id.toString(), quantity: 1 },
 				{ productId: b1._id.toString(), quantity: 1 },
 				{ productId: b2._id.toString(), quantity: 1 }
-			]);
+			], ONLINE);
 
 			// One combo application (a + one sticker) + one sticker left over
 			// at full price.
@@ -196,7 +202,7 @@ describe('computeOrderPricing', () => {
 			const b = await makeProduct({ category: 'sticker', price: 50000 });
 			await makeCombo({
 				price: 1, // would be hugely beneficial if it applied
-				isActive: false,
+				isActive: false, // Combo.isActive is live (only Product.isActive is deprecated)
 				categoryRequirements: [
 					{ category: 'lanyard', quantity: 1 },
 					{ category: 'sticker', quantity: 1 }
@@ -206,7 +212,7 @@ describe('computeOrderPricing', () => {
 			const result = await computeOrderPricing([
 				{ productId: a._id.toString(), quantity: 1 },
 				{ productId: b._id.toString(), quantity: 1 }
-			]);
+			], ONLINE);
 
 			expect(result.comboInfo).toBeNull();
 			expect(result.totalAmount).toBe(150000);
@@ -214,12 +220,12 @@ describe('computeOrderPricing', () => {
 	});
 
 	describe('opts.session', () => {
-		it('accepts a null session (no replica set on production, see plan AD-4)', async () => {
+		it('accepts a null session (production is a standalone mongod)', async () => {
 			const product = await makeProduct({ price: 5000 });
 
 			const result = await computeOrderPricing(
 				[{ productId: product._id.toString(), quantity: 1 }],
-				{ session: null }
+				{ ...ONLINE, session: null }
 			);
 
 			expect(result.totalAmount).toBe(5000);

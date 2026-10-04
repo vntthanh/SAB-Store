@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useCart } from '../context/CartContext';
-import { orderService } from '../services/api';
+import { orderService, PRICE_CHANGED } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import MarkdownContent from '../components/MarkdownContent';
 import usePublicSettings from '../hooks/usePublicSettings';
@@ -10,7 +10,7 @@ import usePublicSettings from '../hooks/usePublicSettings';
 const CheckoutPage = () => {
 	const settings = usePublicSettings();
 	const navigate = useNavigate();
-	const { cart, getCartTotal, formatCurrency, clearCart, getPricingBreakdown } = useCart();
+	const { cart, getCartTotal, formatCurrency, clearCart, getPricingBreakdown, comboDetection, pricingError, checkForCombos } = useCart();
 
 	const [formData, setFormData] = useState({
 		studentId: '',
@@ -103,11 +103,17 @@ const CheckoutPage = () => {
 			return;
 		}
 
+		if (pricingError) {
+			toast.error('Không tính được giá, vui lòng thử lại');
+			return;
+		}
+
 		setIsSubmitting(true);
 
 		try {
-			// Get optimal pricing breakdown to send to backend
-			const pricingBreakdown = getPricingBreakdown();
+			// The total shown on this page; the server refuses the order (409)
+			// if it no longer computes the same amount.
+			const expectedTotal = getCartTotal();
 
 			const orderData = {
 				studentId: formData.studentId.trim(),
@@ -119,9 +125,7 @@ const CheckoutPage = () => {
 					productId: item.productId,
 					quantity: item.quantity
 				})),
-				// Include optimal pricing information
-				optimalPricing: pricingBreakdown,
-				useOptimalPricing: pricingBreakdown.summary.totalSavings > 0
+				expectedTotal
 			};
 
 			const response = await orderService.createOrder(orderData);
@@ -155,6 +159,11 @@ const CheckoutPage = () => {
 				}, 100);
 			}
 		} catch (error) {
+			if (error.code === PRICE_CHANGED) {
+				toast.warning('Giá vừa thay đổi, vui lòng xem lại giỏ hàng');
+				checkForCombos();
+				return;
+			}
 			console.error('Order creation error:', error);
 			toast.error(error.message || 'Có lỗi xảy ra khi tạo đơn hàng');
 		} finally {
@@ -355,7 +364,7 @@ const CheckoutPage = () => {
 								</div>
 
 								{/* Combo Savings Display */}
-								{pricingBreakdown.summary.totalSavings > 0 && (
+								{pricingBreakdown.savings > 0 && (
 									<div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
 										<div className="flex items-center justify-between mb-2">
 											<span className="text-green-800 font-medium text-sm">
@@ -363,7 +372,7 @@ const CheckoutPage = () => {
 												Combo tối ưu được áp dụng
 											</span>
 											<span className="text-green-700 font-bold">
-												-{formatCurrency(pricingBreakdown.summary.totalSavings)}
+												-{formatCurrency(pricingBreakdown.savings)}
 											</span>
 										</div>
 
@@ -371,16 +380,16 @@ const CheckoutPage = () => {
 											<div className="text-sm text-green-700 space-y-1">
 												{pricingBreakdown.combos.map((combo, index) => (
 													<div key={index} className="flex justify-between">
-														<span>{combo.name} x{combo.applications}</span>
-														<span>{formatCurrency(combo.totalPrice)}</span>
+														<span>{combo.comboName} x{combo.applications}</span>
+														<span>-{formatCurrency(combo.savings)}</span>
 													</div>
 												))}
 											</div>
 										)}
 
 										<div className="text-xs text-green-600 mt-2">
-											Giá gốc: {formatCurrency(pricingBreakdown.summary.originalTotal)} →
-											Giá sau combo: {formatCurrency(pricingBreakdown.summary.finalTotal)}
+											Giá gốc: {formatCurrency(pricingBreakdown.originalTotal)} →
+											Giá sau combo: {formatCurrency(pricingBreakdown.totalAmount)}
 										</div>
 									</div>
 								)}
@@ -410,10 +419,23 @@ const CheckoutPage = () => {
 
 								{/* Submit Button */}
 								<div className="mt-6">
+									{pricingError && (
+										<div className="mb-3 flex items-center justify-between gap-3 rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">
+											<span>Không tính được giá, vui lòng thử lại</span>
+											<button
+												type="button"
+												onClick={checkForCombos}
+												disabled={comboDetection.isChecking}
+												className="btn-secondary px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+											>
+												Thử lại
+											</button>
+										</div>
+									)}
 									<button
 										type="submit"
 										form="checkout-form"
-										disabled={isSubmitting}
+										disabled={isSubmitting || comboDetection.isChecking || pricingError}
 										className="btn-success w-full text-lg py-3 disabled:opacity-50 disabled:cursor-not-allowed"
 									>
 										{isSubmitting ? (

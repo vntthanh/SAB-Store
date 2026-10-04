@@ -4,7 +4,7 @@
 
 - **Docker Compose (dev or prod)** reads the **root** `.env` — `cp .env.example .env`. This is
   what `compose.yml`/`prod.compose.yml` inject into every container.
-- **Running the backend directly** (`cd backend && yarn dev`, no Docker) reads
+- **Running the backend directly** (`cd backend && pnpm dev`, no Docker) reads
   `backend/.env` — `cp backend/.env.example backend/.env`. This file is loaded by plain
   `dotenv`, which does **not** expand `${VAR}` references, so `PUBLIC_URL`/`BASE_URL`/
   `CORS_ORIGIN` are written out as three literal values there instead of one interpolated

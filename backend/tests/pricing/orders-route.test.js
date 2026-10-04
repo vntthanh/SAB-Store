@@ -6,8 +6,10 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct } = require('../helpers/factories');
+const Order = require('../../models/Order');
 
 function validOrderBody(overrides = {}) {
+	// expectedTotal is mandatory; tests that care about it set their own.
 	return {
 		studentId: 'SV12345',
 		fullName: 'Nguyen Van A',
@@ -15,6 +17,7 @@ function validOrderBody(overrides = {}) {
 		phoneNumber: '0987654321',
 		additionalNote: '',
 		items: [],
+		expectedTotal: 0,
 		...overrides
 	};
 }
@@ -26,26 +29,20 @@ describe('POST /api/orders', () => {
 		app = buildTestApp();
 	});
 
-	it('stores the DB-computed total even when the client sends finalTotal: 0', async () => {
+	it('stores the DB-computed total; a client-computed total of 0 is refused, not stored', async () => {
 		const product = await makeProduct({ price: 150000 });
+		const items = [{ productId: product._id.toString(), quantity: 2 }];
 
-		const res = await request(app)
-			.post('/api/orders')
-			.send(
-				validOrderBody({
-					items: [{ productId: product._id.toString(), quantity: 2 }],
-					useOptimalPricing: true,
-					optimalPricing: {
-						summary: { finalTotal: 0, originalTotal: 0, totalSavings: 0 },
-						combos: [],
-						breakdown: []
-					}
-				})
-			);
+		const refused = await request(app).post('/api/orders').send(validOrderBody({ items, expectedTotal: 0 }));
+		expect(refused.status).toBe(409);
+		expect(refused.body.code).toBe('PRICE_CHANGED');
+		expect(refused.body.details).toEqual({ expectedTotal: 0, totalAmount: 300000 });
+		expect(await Order.countDocuments({})).toBe(0);
+
+		const res = await request(app).post('/api/orders').send(validOrderBody({ items, expectedTotal: 300000 }));
 
 		expect(res.status).toBe(201);
 		expect(res.body.success).toBe(true);
-		// 2 x 150000 — not the client-submitted 0.
 		expect(res.body.data.totalAmount).toBe(300000);
 
 		const tracked = await request(app).get(`/api/orders/${res.body.data.orderCode}`);
@@ -87,7 +84,8 @@ describe('POST /api/orders', () => {
 					items: [
 						{ productId: product._id.toString(), quantity: 1 },
 						{ productId: product._id.toString(), quantity: 2 }
-					]
+					],
+					expectedTotal: 60000
 				})
 			);
 
@@ -112,7 +110,8 @@ describe('GET /api/orders/:orderCode', () => {
 				validOrderBody({
 					studentId: 'SECRET-STUDENT-ID',
 					fullName: 'Secret Full Name',
-					items: [{ productId: product._id.toString(), quantity: 1 }]
+					items: [{ productId: product._id.toString(), quantity: 1 }],
+					expectedTotal: 10000
 				})
 			);
 		expect(createRes.status).toBe(201);

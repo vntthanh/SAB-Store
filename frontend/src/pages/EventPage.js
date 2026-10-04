@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { productService, orderService, formatCurrency } from '../services/api';
+import { productService, orderService, comboService, formatCurrency, PRICE_CHANGED } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import MarkdownContent from '../components/MarkdownContent';
 import usePublicSettings from '../hooks/usePublicSettings';
@@ -27,6 +27,40 @@ const EventPage = () => {
 
 	const [errors, setErrors] = useState({});
 	const [isSubmitting, setIsSubmitting] = useState(false);
+	// Server-computed total for the chosen quantity (combos included); this is
+	// the figure shown and the figure sent back as expectedTotal.
+	const [pricing, setPricing] = useState(null);
+	const [loadingPricing, setLoadingPricing] = useState(false);
+
+	// True while the latest preview failed; submit stays off until a retry works.
+	const [pricingError, setPricingError] = useState(false);
+	// Only the newest request may update state, and the loading flag stays on
+	// until that newest request settles.
+	const pricingRequestId = useRef(0);
+
+	const loadPricing = useCallback(async () => {
+		if (!product) return;
+		const requestId = ++pricingRequestId.current;
+		setLoadingPricing(true);
+		setPricingError(false);
+		try {
+			const result = await comboService.calculatePricing([{ productId: product._id, quantity }]);
+			if (requestId !== pricingRequestId.current) return;
+			if (!result.success) throw new Error(result.message || 'Không tính được giá');
+			setPricing(result.data);
+		} catch (err) {
+			if (requestId !== pricingRequestId.current) return;
+			setPricing(null);
+			setPricingError(true);
+			toast.error(err.message);
+		} finally {
+			if (requestId === pricingRequestId.current) setLoadingPricing(false);
+		}
+	}, [product, quantity]);
+
+	useEffect(() => {
+		loadPricing();
+	}, [loadPricing]);
 
 	// Fetch the first available product
 	useEffect(() => {
@@ -134,6 +168,11 @@ const EventPage = () => {
 			return;
 		}
 
+		if (!pricing) {
+			toast.error('Chưa tính được giá, vui lòng thử lại');
+			return;
+		}
+
 		setIsSubmitting(true);
 
 		try {
@@ -148,9 +187,7 @@ const EventPage = () => {
 					productId: product._id,
 					quantity: quantity
 				}],
-				// No combo pricing for single item
-				optimalPricing: null,
-				useOptimalPricing: false
+				expectedTotal: pricing.totalAmount
 			};
 
 			const response = await orderService.createOrder(orderData);
@@ -177,6 +214,11 @@ const EventPage = () => {
 				}, 100);
 			}
 		} catch (error) {
+			if (error.code === PRICE_CHANGED) {
+				toast.warning('Giá vừa thay đổi, vui lòng xem lại giá trước khi đăng ký');
+				loadPricing();
+				return;
+			}
 			console.error('Order creation error:', error);
 			toast.error(error.message || 'Có lỗi xảy ra khi đặt vé tham dự');
 		} finally {
@@ -280,7 +322,7 @@ const EventPage = () => {
 						{/* Price below quantity */}
 						<div className="text-center">
 							<p className="text-2xl font-bold text-blue-700">
-								{formatCurrency(product.price * quantity)}
+								{loadingPricing || !pricing ? '...' : formatCurrency(pricing.totalAmount)}
 							</p>
 							<p className="text-sm text-gray-500">
 								{formatCurrency(product.price)} / bạn
@@ -476,10 +518,23 @@ const EventPage = () => {
 
 				{/* Submit Button */}
 				<div className="mt-6">
+					{pricingError && (
+						<div className="mb-3 flex items-center justify-between gap-3 rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">
+							<span>Không tính được giá, vui lòng thử lại</span>
+							<button
+								type="button"
+								onClick={loadPricing}
+								disabled={loadingPricing}
+								className="btn-secondary px-3 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								Thử lại
+							</button>
+						</div>
+					)}
 					<button
 						type="submit"
 						form="event-form"
-						disabled={isSubmitting}
+						disabled={isSubmitting || loadingPricing || !pricing}
 						className="btn-success w-full text-lg py-3 disabled:opacity-50 disabled:cursor-not-allowed"
 					>
 						{isSubmitting ? (

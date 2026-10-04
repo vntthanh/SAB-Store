@@ -2,9 +2,9 @@ const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct } = require('../helpers/factories');
 
-// Q4 (plan Phase 00 §B): `?available=all` used to bypass the availability
-// filter entirely, exposing unavailable products on the public catalog.
-describe('GET /api/products — ?available=all removed', () => {
+// The public catalog lists only products sellable online. No query parameter
+// (`?available=all`, `?available=false`) may widen that and expose stopped products.
+describe('GET /api/products — availability query parameters never widen the list', () => {
 	let app;
 
 	beforeAll(() => {
@@ -33,13 +33,13 @@ describe('GET /api/products — ?available=all removed', () => {
 		expect(names).not.toContain(hidden.name);
 	});
 
-	it('still supports explicitly listing unavailable products via available=false', async () => {
+	it('ignores available=false: the public list never shows stopped products', async () => {
 		const hidden = await makeProduct({ name: 'Explicit False Target', available: false });
 
 		const res = await request(app).get('/api/products').query({ available: 'false' });
 
 		expect(res.status).toBe(200);
 		const names = res.body.data.products.map((p) => p.name);
-		expect(names).toContain(hidden.name);
+		expect(names).not.toContain(hidden.name);
 	});
 });

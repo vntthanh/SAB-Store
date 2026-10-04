@@ -1,11 +1,19 @@
 const express = require('express');
 const Combo = require('../models/Combo');
 const Product = require('../models/Product');
-const ComboService = require('../services/ComboService');
 const { authenticateAdmin, authenticateSeller, authenticateUser } = require('../middleware/better-auth');
 const { validateComboItems } = require('../middleware/validation');
+const { computeOrderPricing, pricingErrorBody, PricingError } = require('../services/pricing');
+const { asEnum } = require('../utils/query-guard');
 const ErrorLogger = require('../utils/errorLogger');
 const router = express.Router();
+
+const SALE_CHANNELS = ['online', 'offline'];
+const INVALID_SALES_CHANNEL_MESSAGE = 'Kênh bán không hợp lệ';
+
+// An unknown channel falls back to online (the storefront) instead of erroring:
+// these are read-only previews, and the order routes enforce the channel anyway.
+const channelOf = (value) => asEnum(value, SALE_CHANNELS) || 'online';
 
 /**
  * @route   GET /api/combos
@@ -47,7 +55,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
  */
 router.get('/active', async (req, res) => {
 	try {
-		const combos = await Combo.findActive();
+		const combos = await Combo.findSellable(channelOf(req.query.channel));
 
 		res.json({
 			success: true,
@@ -63,158 +71,17 @@ router.get('/active', async (req, res) => {
 });
 
 /**
- * @route   POST /api/combos/detect
- * @desc    Detect optimal combo combination for given products
- * @access  Public
- */
-router.post('/detect', validateComboItems, async (req, res) => {
-	try {
-		const { items } = req.body;
-
-		// Get product details for all items
-		const productIds = items.map(item => item.productId);
-		const products = await Product.find({ _id: { $in: productIds } });
-
-		// Create products with quantities
-		const productsWithQuantities = items.map(item => {
-			const product = products.find(p => p._id.toString() === item.productId);
-			return {
-				product,
-				quantity: item.quantity
-			};
-		}).filter(item => item.product); // Remove items where product not found
-
-		if (productsWithQuantities.length === 0) {
-			return res.json({
-				success: true,
-				data: {
-					applicableCombos: [],
-					bestCombo: null,
-					optimalPricing: null
-				}
-			});
-		}
-
-		// Find optimal combo combination
-		const optimalCombos = await Combo.findOptimalCombination(productsWithQuantities);
-
-		// Calculate optimal pricing breakdown
-		let optimalPricing = null;
-		if (optimalCombos.length > 0) {
-			const bestCombo = optimalCombos[0];
-
-			// Calculate remaining items after applying best combo
-			const remainingItems = [...productsWithQuantities];
-			const productsByCategory = {};
-
-			remainingItems.forEach(item => {
-				if (!productsByCategory[item.product.category]) {
-					productsByCategory[item.product.category] = [];
-				}
-				productsByCategory[item.product.category].push(item);
-			});
-
-			// Remove items used in combo
-			let comboItemsUsed = [];
-			for (const requirement of bestCombo.combo.categoryRequirements) {
-				const categoryItems = productsByCategory[requirement.category] || [];
-				let remainingNeeded = requirement.quantity * bestCombo.maxApplications;
-
-				// Sort by price (highest first) to use most expensive items in combo
-				categoryItems.sort((a, b) => b.product.price - a.product.price);
-
-				for (let i = 0; i < categoryItems.length && remainingNeeded > 0; i++) {
-					const item = categoryItems[i];
-					const useQuantity = Math.min(item.quantity, remainingNeeded);
-
-					comboItemsUsed.push({
-						productId: item.product._id,
-						productName: item.product.name,
-						category: item.product.category,
-						price: item.product.price,
-						quantity: useQuantity,
-						subtotal: useQuantity * item.product.price
-					});
-
-					// Update remaining quantity
-					item.quantity -= useQuantity;
-					remainingNeeded -= useQuantity;
-				}
-			}
-
-			// Calculate remaining items cost
-			const remainingItemsCost = remainingItems.reduce((total, item) => {
-				return total + (item.product.price * item.quantity);
-			}, 0);
-
-			const comboTotal = bestCombo.maxApplications * bestCombo.combo.price;
-			const originalTotal = productsWithQuantities.reduce((total, item) => {
-				return total + (item.product.price * item.quantity);
-			}, 0);
-
-			optimalPricing = {
-				originalTotal,
-				comboApplications: bestCombo.maxApplications,
-				comboName: bestCombo.combo.name,
-				comboPrice: bestCombo.combo.price,
-				comboTotal,
-				comboItemsUsed,
-				remainingItemsCost,
-				finalTotal: comboTotal + remainingItemsCost,
-				totalSavings: originalTotal - (comboTotal + remainingItemsCost),
-				remainingItems: remainingItems.filter(item => item.quantity > 0).map(item => ({
-					productId: item.product._id,
-					productName: item.product.name,
-					price: item.product.price,
-					quantity: item.quantity,
-					subtotal: item.product.price * item.quantity
-				}))
-			};
-		}
-
-		// Format response for backward compatibility
-		const bestCombo = optimalCombos.length > 0 ? {
-			...optimalCombos[0].combo.toObject(),
-			maxApplications: optimalCombos[0].maxApplications,
-			totalSavings: optimalCombos[0].totalSavings,
-			savingsPerApplication: optimalCombos[0].savingsPerApplication,
-			isBetterDeal: optimalCombos[0].totalSavings > 0,
-			// Legacy fields for compatibility
-			savings: optimalCombos[0].totalSavings,
-			price: optimalPricing ? optimalPricing.finalTotal : optimalCombos[0].combo.price
-		} : null;
-
-		res.json({
-			success: true,
-			data: {
-				applicableCombos: optimalCombos.map(analysis => ({
-					...analysis.combo.toObject(),
-					maxApplications: analysis.maxApplications,
-					totalSavings: analysis.totalSavings,
-					savingsPerApplication: analysis.savingsPerApplication,
-					isBetterDeal: analysis.totalSavings > 0
-				})),
-				bestCombo,
-				optimalPricing
-			}
-		});
-	} catch (error) {
-		ErrorLogger.logRoute('POST /combos/detect', error, req);
-		res.status(500).json({
-			success: false,
-			message: 'Lỗi server khi phát hiện combo'
-		});
-	}
-});
-
-/**
  * @route   POST /api/combos
  * @desc    Create new combo
  * @access  Private/Admin
  */
 router.post('/', authenticateAdmin, async (req, res) => {
 	try {
-		const { name, description, price, categoryRequirements, priority } = req.body;
+		const { name, description, price, categoryRequirements, priority, salesChannel } = req.body;
+
+		if (salesChannel !== undefined && !asEnum(salesChannel, Product.SALES_CHANNELS)) {
+			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
+		}
 
 		// Validate required fields
 		if (!name || !price || !categoryRequirements || !Array.isArray(categoryRequirements)) {
@@ -249,7 +116,8 @@ router.post('/', authenticateAdmin, async (req, res) => {
 			description,
 			price,
 			categoryRequirements,
-			priority: priority || 0
+			priority: priority || 0,
+			...(salesChannel !== undefined && { salesChannel })
 		});
 
 		await combo.save();
@@ -288,20 +156,39 @@ router.post('/', authenticateAdmin, async (req, res) => {
 
 /**
  * @route   POST /api/combos/pricing
- * @desc    Calculate optimal pricing for cart items
+ * @desc    Preview the price of a cart. Same engine as order creation, so the
+ *          total returned here is the total an order with these items is
+ *          charged (clients echo it back as `expectedTotal`).
  * @access  Public
  */
 router.post('/pricing', validateComboItems, async (req, res) => {
 	try {
 		const { items } = req.body;
 
-		const pricingBreakdown = await ComboService.getPricingBreakdown(items);
+		const { originalTotal, totalAmount, savings, orderItems, comboInfo } =
+			await computeOrderPricing(items, { channel: channelOf(req.body.channel) });
 
 		res.json({
 			success: true,
-			data: pricingBreakdown
+			data: {
+				originalTotal,
+				totalAmount,
+				savings,
+				orderItems: orderItems.map((item) => ({
+					...item,
+					productId: item.productId.toString(),
+					comboId: item.comboId ? item.comboId.toString() : null
+				})),
+				comboInfo,
+				// Kept so seller tabs opened before a deploy keep rendering: that
+				// bundle reads `summary.totalSavings`. Remove after the next release.
+				summary: { originalTotal, totalSavings: savings, finalTotal: totalAmount }
+			}
 		});
 	} catch (error) {
+		if (error instanceof PricingError) {
+			return res.status(error.httpStatus).json(pricingErrorBody(error));
+		}
 		ErrorLogger.logRoute('POST /combos/pricing', error, req);
 		res.status(500).json({
 			success: false,
@@ -330,7 +217,11 @@ router.get('/pricing', async (req, res) => {
 router.put('/:id', authenticateAdmin, async (req, res) => {
 	try {
 		const { id } = req.params;
-		const { name, description, price, categoryRequirements, priority, isActive } = req.body;
+		const { name, description, price, categoryRequirements, priority, isActive, salesChannel } = req.body;
+
+		if (salesChannel !== undefined && !asEnum(salesChannel, Product.SALES_CHANNELS)) {
+			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
+		}
 
 		// Validate ObjectId format
 		if (!id.match(/^[0-9a-fA-F]{24}$/)) {
@@ -377,6 +268,7 @@ router.put('/:id', authenticateAdmin, async (req, res) => {
 		if (categoryRequirements !== undefined) combo.categoryRequirements = categoryRequirements;
 		if (priority !== undefined) combo.priority = priority;
 		if (isActive !== undefined) combo.isActive = isActive;
+		if (salesChannel !== undefined) combo.salesChannel = salesChannel;
 
 		await combo.save();
 

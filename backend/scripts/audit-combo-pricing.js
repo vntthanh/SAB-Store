@@ -35,13 +35,23 @@ function maxApplications(combo, quantityByCategory) {
 	return Number.isFinite(applications) ? applications : 0;
 }
 
+// Orders store comboInfo in two shapes: a single combo ({ comboId, ... }, older
+// online orders) or several ({ combos: [{ comboId, ... }] }, counter orders and
+// everything priced by the current engine).
+function comboRefsOf(comboInfo) {
+	if (Array.isArray(comboInfo.combos)) return comboInfo.combos;
+	return comboInfo.comboId ? [comboInfo] : [];
+}
+
 async function main() {
 	const uri = process.env.MONGODB_URI;
 	if (!uri) throw new Error('MONGODB_URI is required');
 
 	await mongoose.connect(uri);
 
-	const orders = await Order.find({ 'comboInfo.comboId': { $ne: null } })
+	const orders = await Order.find({
+		$or: [{ 'comboInfo.comboId': { $ne: null } }, { 'comboInfo.combos.0': { $exists: true } }]
+	})
 		.select('orderCode status totalAmount items comboInfo createdAt')
 		.lean();
 
@@ -55,9 +65,10 @@ async function main() {
 	const unverifiable = [];
 
 	for (const order of orders) {
-		const combo = comboById.get(String(order.comboInfo.comboId));
-		if (!combo) {
-			// The combo was deleted since; its requirements cannot be reconstructed.
+		const refs = comboRefsOf(order.comboInfo);
+		const applied = refs.map((ref) => comboById.get(String(ref.comboId)));
+		if (refs.length === 0 || applied.some((combo) => !combo)) {
+			// A combo was deleted since; its requirements cannot be reconstructed.
 			unverifiable.push({ orderCode: order.orderCode, reason: 'combo no longer exists' });
 			continue;
 		}
@@ -75,13 +86,16 @@ async function main() {
 			continue;
 		}
 
-		if (maxApplications(combo, quantityByCategory) < 1) {
+		// Each combo applied must be satisfiable by the order's items on its own;
+		// this is necessary, not sufficient, when several combos share items.
+		const unqualified = applied.filter((combo) => maxApplications(combo, quantityByCategory) < 1);
+		if (unqualified.length > 0) {
 			suspect.push({
 				orderCode: order.orderCode,
 				status: order.status,
 				storedTotal: order.totalAmount,
 				claimedSavings: order.comboInfo.savings || 0,
-				comboName: combo.name,
+				comboName: unqualified.map((combo) => combo.name).join(', '),
 				createdAt: order.createdAt,
 			});
 		}
@@ -116,7 +130,11 @@ async function main() {
 	await mongoose.disconnect();
 }
 
-main().catch((error) => {
-	console.error('audit failed:', error.message);
-	process.exit(1);
-});
+if (require.main === module) {
+	main().catch((error) => {
+		console.error('audit failed:', error.message);
+		process.exit(1);
+	});
+}
+
+module.exports = { comboRefsOf };

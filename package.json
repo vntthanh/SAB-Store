@@ -1,7 +1,8 @@
 {
 	"name": "sab-store-workspace",
 	"private": true,
-	"description": "Repository tooling only (git hooks). The apps live in backend/ and frontend/, each with its own package.json and yarn.lock.",
+	"packageManager": "pnpm@10.33.0",
+	"description": "Repository tooling only (git hooks). The apps live in backend/ and frontend/, each with its own package.json and pnpm-lock.yaml.",
 	"scripts": {
 		"prepare": "husky"
 	},

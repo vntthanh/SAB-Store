@@ -57,7 +57,7 @@ describe('concurrency: last unit, 20 parallel buyers', () => {
 				request(app)
 					.post('/api/seller/orders/direct')
 					.set('Cookie', cookies)
-					.send({ items: [{ productId: String(product._id), quantity: 1 }] })
+					.send({ items: [{ productId: String(product._id), quantity: 1 }], expectedTotal: 50000 })
 			)
 		);
 

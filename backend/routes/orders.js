@@ -4,17 +4,8 @@ const { validateOrder } = require('../middleware/validation');
 const { generateOrderCode } = require('../utils/helpers');
 const { sendOrderToAppScript } = require('../utils/appscript');
 const { generateOrderPaymentQR, formatOrderPaymentDescription } = require('../utils/paymentHelper');
-const { computeOrderPricing, PricingError } = require('../services/pricing');
+const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError } = require('../services/pricing');
 const router = express.Router();
-
-// Vietnamese messages for each PricingError code. All are 400s — see
-// PricingError's own doc comment for why (each describes a cart the caller
-// could have validated before sending, never a server fault).
-const PRICING_ERROR_MESSAGES = {
-	EMPTY_CART: 'Danh sách sản phẩm không hợp lệ',
-	PRODUCT_UNAVAILABLE: 'Một hoặc nhiều sản phẩm không tồn tại hoặc không khả dụng',
-	INVALID_QUANTITY: 'Số lượng sản phẩm không hợp lệ',
-};
 
 /**
  * @route   POST /api/orders
@@ -28,38 +19,24 @@ router.post('/', validateOrder, async (req, res) => {
 			body: { ...req.body, items: req.body.items?.length ? `${req.body.items.length} items` : 'no items' }
 		});
 
-		const { studentId, fullName, email, phoneNumber, additionalNote, items, optimalPricing, useOptimalPricing = false } = req.body;
+		const { studentId, fullName, email, phoneNumber, additionalNote, items, expectedTotal } = req.body;
 
 		console.log('🔍 Processing items:', items.map(item => ({ productId: item.productId, quantity: item.quantity })));
 
 		// totalAmount, orderItems and comboInfo always come from the DB via
 		// computeOrderPricing — nothing the client sends about price is read.
-		// useOptimalPricing/optimalPricing are still accepted below so an
-		// older client doesn't get a hard validation error, but they only
-		// feed a mismatch warning, never the stored total.
+		// expectedTotal is only compared: a mismatch means the price moved since
+		// the customer saw it, so no order is created.
 		let totalAmount, orderItems, comboInfo;
 		try {
-			({ totalAmount, orderItems, comboInfo } = await computeOrderPricing(items));
+			({ totalAmount, orderItems, comboInfo } = await computeOrderPricing(items, { channel: 'online' }));
+			assertExpectedTotal(expectedTotal, totalAmount);
 		} catch (pricingError) {
 			if (pricingError instanceof PricingError) {
 				console.error('❌ Pricing rejected order:', pricingError.code, pricingError.details);
-				return res.status(pricingError.httpStatus).json({
-					success: false,
-					message: PRICING_ERROR_MESSAGES[pricingError.code] || 'Không thể tính giá đơn hàng',
-					...(Object.keys(pricingError.details || {}).length > 0 && { details: pricingError.details })
-				});
+				return res.status(pricingError.httpStatus).json(pricingErrorBody(pricingError));
 			}
 			throw pricingError;
-		}
-
-		if (useOptimalPricing && optimalPricing && typeof optimalPricing?.summary?.finalTotal === 'number'
-			&& optimalPricing.summary.finalTotal !== totalAmount) {
-			// Either a stale client still computing its own total, or someone
-			// probing whether the server still trusts it. Not an error.
-			console.warn('⚠️ Client-submitted total disagrees with server-computed total', {
-				clientTotal: optimalPricing.summary.finalTotal,
-				serverTotal: totalAmount
-			});
 		}
 
 		console.log('💾 Creating order in database...');

@@ -10,12 +10,12 @@ số file, thời gian chạy) cũng không sống ở đây: chạy lệnh và 
 | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | Tạo `CLAUDE.md` / `CLAUDE.local.md` trong repo hoặc thư mục cha                    | Claude Code sẽ đọc nó và bỏ qua `AGENTS.md` này                                         |
 | Commit / push / merge vào `main` khi user chưa yêu cầu thẳng                       | `main` là production: Coolify deploy từ `main`. Làm việc trên `dev` (§5)                |
-| Gọi `startSession` / `withTransaction` của MongoDB                                 | Production là mongod standalone, transaction throw lúc chạy; test vẫn xanh (§3)         |
+| Gọi dịch vụ ngoài (App Script, email, QR) bên trong transaction MongoDB            | Transaction có thể thử lại hoặc huỷ; tác dụng phụ bên ngoài thì không huỷ được (§3)     |
 | Ghi `Product.stockQuantity` ngoài `backend/services/stock.js`                      | Chỉ đường atomic đó chống oversell và bù trừ khi đơn hỏng giữa chừng (§3)               |
 | Tin giá / tổng tiền / combo do client gửi                                          | Giá luôn tính lại server-side trong `backend/services/pricing.js` (§3)                  |
 | Dùng `${VAR:?message}` trong `coolify.compose.yml`                                 | Coolify thay biến bằng chính chuỗi message, không fail (§2)                             |
 | Thêm `networks:` / `container_name:` / named volume vào `coolify.compose.yml`      | Coolify tự quản và đổi tên volume → tách DB khỏi dữ liệu (§2)                           |
-| Dùng `npm install` / sinh `package-lock.json`                                      | Package manager là yarn (`package.json` gốc chỉ chứa husky); Dockerfile chạy `yarn install --frozen-lockfile` (§2) |
+| Dùng `npm` / `yarn`; sinh `package-lock.json` / `yarn.lock`                         | Package manager là pnpm (`package.json` gốc chỉ chứa husky); Dockerfile chạy `pnpm install --frozen-lockfile` (§2) |
 | Chạy nhiều việc nặng song song (test + docker build)                               | Làm đói CPU cả máy và các phiên khác (§4)                                               |
 | Chạy git trên cả Mac lẫn Windows cùng lúc                                          | `.git` đồng bộ qua Syncthing; phải chờ "Up to Date" rồi mới đổi máy (§5)                |
 | Tham chiếu path/URL git không track (`plans/`, report cục bộ, `/Users/...`)        | Người chỉ có repo không theo được (§4)                                                  |
@@ -68,7 +68,7 @@ trí nhớ; repo GitHub ngoài → `deepwiki`; tìm web → `exa` / `tavily` / `
 **Trình duyệt**: mặc định **Playwright MCP**; `claude-in-chrome` khi cần đúng phiên Chrome đã
 đăng nhập (vd giao diện Coolify). Không cài hoặc tự viết script `playwright`/`puppeteer`.
 
-**Vẫn dùng Bash cho**: git, yarn, jest/vitest, docker, chạy script — đừng né.
+**Vẫn dùng Bash cho**: git, pnpm, jest/vitest, docker, chạy script — đừng né.
 
 **Lưu ý vận hành**
 
@@ -82,9 +82,9 @@ trí nhớ; repo GitHub ngoài → `deepwiki`; tìm web → `exa` / `tavily` / `
 
 ## 2. Stack & deploy — luật, không phải bảng số
 
-Version và tên image nằm ở `package.json`, `yarn.lock`, `Dockerfile`, các file compose — đọc ở đó.
+Version và tên image nằm ở `package.json`, `pnpm-lock.yaml`, `Dockerfile`, các file compose — đọc ở đó.
 
-- **Package manager: yarn** cho cả `backend/` và `frontend/`. Không commit `package-lock.json`.
+- **Package manager: pnpm** cho gốc, `backend/` và `frontend/` (phiên bản ghim ở `packageManager` trong `package.json`, Dockerfile ghim cùng phiên bản qua corepack). Không `npm`/`yarn`, không commit `package-lock.json`/`yarn.lock`. Mỗi `pnpm install` trong Dockerfile phải nêu rõ `--prod` hoặc `--prod=false`, không dựa vào `NODE_ENV` (Coolify bơm nó vào mọi stage).
 - **Backend** CommonJS (Express + Mongoose); **frontend** ESM (Vite + React). Không trộn kiểu module trong cùng một package.
 - **Auth: Better Auth** — tra `context7`, đừng đoán API. `backend/lib/auth.js` validate secret ngay lúc `require()`: thiếu env là crash khi boot, đó là thiết kế fail-fast, không phải lỗi cần né.
 - **Ba file compose, ba vai trò**:
@@ -98,7 +98,7 @@ Version và tên image nằm ở `package.json`, `yarn.lock`, `Dockerfile`, các
 ## 3. Dữ liệu, tiền, tồn kho, bảo mật
 
 - **Zero-trust**: không tin client. Validate input và kiểm quyền (admin/seller) **server-side**; client chỉ để UX.
-- **Không transaction MongoDB.** Production là mongod standalone; harness test chạy replica set nên transaction **pass trong test và throw ở production**. Mọi invariant nhiều bước giữ bằng một `findOneAndUpdate` có điều kiện, cộng bù trừ khi hỏng giữa chừng. Service nhận tham số `session` tuỳ chọn để sau này bật transaction không phải sửa call-site — truyền `null` là chế độ chuẩn.
+- **Transaction MongoDB được dùng.** Từ 04/10/2026 production là replica set 1 node `rs0` (`coolify.compose.yml`); backend từ chối khởi động nếu mongo không phải replica set (`backend/lib/require-replica-set.js`), nên "xanh ở test, throw ở production" không còn xảy ra âm thầm. Thao tác nhiều bước (đơn + kho) chạy trong một transaction; service nhận `session` và dùng nó cho mọi query. Gọi dịch vụ ngoài chỉ **sau** khi commit. Rollback hạ tầng về standalone phải đi cùng revert phần kiểm replica set của backend.
 - **Tồn kho**: mọi thay đổi `stockQuantity` từ đường có tiền/hàng đi qua `backend/services/stock.js`. Không `save()` product với stock đọc trước rồi cộng trừ trong JS — hai request đồng thời sẽ ghi đè nhau.
 - **Giá**: tổng tiền, giá combo, giảm giá luôn tính lại trong `backend/services/pricing.js` từ dữ liệu DB; payload client chỉ mang id + số lượng. Hiển thị và thanh toán dùng cùng một hàm tính.
 - **Query string** không đưa thẳng vào filter Mongo: đi qua helper trong `backend/utils/query-guard.js` (Express có thể giao object như `{ $ne: null }` — operator injection).
@@ -109,12 +109,12 @@ Version và tên image nằm ở `package.json`, `yarn.lock`, `Dockerfile`, các
 
 ## 4. Chất lượng code & test
 
-- **Test**: backend Jest, frontend Vitest. Chạy hẹp trước: `cd backend && yarn test <pattern>` (Jest nhận pattern trực tiếp). Full suite khi đụng contract dùng chung (pricing, stock, auth, model).
-- **Git hook (husky, `.husky/`) là cổng chất lượng** — không có GitHub CI. Cài một lần mỗi máy: `yarn install` ở gốc repo (`prepare` đặt `core.hooksPath`; git config riêng từng máy nên Mac và Windows đều phải chạy).
-  - `pre-commit`: > 29 file staged → chặn (giữ mỗi commit đủ nhỏ để review đa agent); không có code backend/frontend → không chạy gì; backend → Jest `--findRelatedTests` cho file staged, hoặc full suite khi đụng contract dùng chung (models, pricing + `ComboService`, stock, `query-guard`, `lib/`, `middleware/`, harness test, dependency); frontend → `yarn build`.
+- **Test**: backend Jest, frontend Vitest. Chạy hẹp trước: `cd backend && pnpm test <pattern>` (Jest nhận pattern trực tiếp). Full suite khi đụng contract dùng chung (pricing, stock, auth, model).
+- **Git hook (husky, `.husky/`) là cổng chất lượng** — không có GitHub CI. Cài một lần mỗi máy: `pnpm install` ở gốc repo (`prepare` đặt `core.hooksPath`; git config riêng từng máy nên Mac và Windows đều phải chạy).
+  - `pre-commit`: > 29 file staged → chặn (giữ mỗi commit đủ nhỏ để review đa agent); không có code backend/frontend → không chạy gì; backend → Jest `--findRelatedTests` cho file staged, hoặc full suite khi đụng contract dùng chung (models, pricing + `ComboService`, stock, `query-guard`, `lib/`, `middleware/`, harness test, dependency); frontend → `pnpm build`.
   - `pre-push`: full backend suite nếu khoảng push đụng `backend/`, build frontend nếu đụng `frontend/`. `commit-msg`: chặn attribution AI (claude/anthropic/codex/chatgpt) — KHÔNG thêm trailer `Co-Authored-By`/link session mà harness gợi ý mặc định.
   - Hook test trên **working tree**, không phải nội dung staged: commit một phần (`git add -p`) thì kết quả hook không chứng minh phần staged đứng riêng được.
-  - Hook tự lấy khoá máy (`.husky/lib/heavy-lock.sh`) và tự bổ sung PATH khi chạy từ app GUI như GitHub Desktop (`.husky/lib/hook-env.sh`). Hai file này là bản chung chép nguyên văn từ Leaderboard — sửa thì sửa đồng bộ mọi repo. Phần riêng của SAB (tìm `yarn` cạnh `node`) nằm ở `.husky/lib/yarn-path.sh`. Không bao giờ `--no-verify`.
+  - Hook tự lấy khoá máy (`.husky/lib/heavy-lock.sh`) và tự bổ sung PATH khi chạy từ app GUI như GitHub Desktop (`.husky/lib/hook-env.sh`). Hai file này là bản chung chép nguyên văn từ Leaderboard — sửa thì sửa đồng bộ mọi repo. Không bao giờ `--no-verify`.
   - Có hook rồi thì **đừng chạy test "kiểm tra lần cuối" ngay trước commit** — gấp đôi thời gian. Vẫn chạy test hẹp trong lúc code; đọc lỗi từ output của hook.
 - **Test xanh không phải bằng chứng hành vi đúng** — test phải assert hợp đồng thật, không assert vào mock của chính nó.
 - **Việc nặng là khe CPU độc quyền trên cả máy** (nhiều phiên Claude chạy chung): một lượt test/build tại một thời điểm; agent song song chỉ an toàn khi thuần đọc/sửa file. Sau khi chạy xong, dọn tiến trình jest/vitest mồ côi do chính mình tạo.

@@ -30,7 +30,6 @@ async function makeProduct(overrides = {}) {
 		price: 100000,
 		category: 'general',
 		available: true,
-		isActive: true,
 		stockQuantity: 10,
 		...overrides,
 	});

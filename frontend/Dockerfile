@@ -5,22 +5,23 @@ ARG NGINX_IMAGE=nginx:alpine@sha256:df221db836e1754089190208cee7eeda94f233197056
 
 # ── deps ─────────────────────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS deps
+# The version must match `packageManager` in package.json.
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
-COPY package.json yarn.lock ./
-# `--production=false` is load-bearing. The deploy platform injects every
-# environment variable as an ARG into every stage, NODE_ENV=production included;
-# yarn classic then silently skips devDependencies and the build dies with
-# `vite: not found` (reproduced 2026-09-29 with `ARG NODE_ENV` +
-# `--build-arg NODE_ENV=production`). The flag makes the install ignore NODE_ENV.
-RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
-	yarn install --frozen-lockfile --production=false --non-interactive
+COPY package.json pnpm-lock.yaml .npmrc ./
+# `--prod=false` is load-bearing. The deploy platform injects every environment
+# variable as an ARG into every stage, NODE_ENV=production included; a package
+# manager that honours NODE_ENV then skips devDependencies and the build dies
+# with `vite: not found`. The flag makes the install ignore NODE_ENV.
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+	pnpm install --frozen-lockfile --prod=false
 
 # ── builder ──────────────────────────────────────────────────────────────────
 FROM deps AS builder
 COPY . .
 # No VITE_API_URL: the SPA calls the API via the relative path /api, so nothing
 # domain-specific gets baked into the bundle.
-RUN yarn build
+RUN pnpm build
 
 # ── runner: static files behind nginx ────────────────────────────────────────
 FROM ${NGINX_IMAGE} AS runner

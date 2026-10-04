@@ -28,7 +28,8 @@ describe('NoSQL operator injection — public product routes', () => {
 		// filter at all here (nothing in the fixture data has category "x"),
 		// so the real proof is in the query the server actually built:
 		// asString() must have coerced the object to undefined, not forwarded
-		// it into Product.find() as a live operator.
+		// it into Product.find() as a live operator. The caller's filter is the
+		// first $and clause; the second is the channel rule.
 		const querySpy = jest.spyOn(require('../../models/Product'), 'find');
 		const product = await makeProduct({ category: 'lanyard' });
 
@@ -36,7 +37,7 @@ describe('NoSQL operator injection — public product routes', () => {
 
 		expect(res.status).toBe(200);
 		const calledWith = querySpy.mock.calls[querySpy.mock.calls.length - 1][0];
-		expect(calledWith).not.toHaveProperty('category');
+		expect(calledWith.$and[0]).not.toHaveProperty('category');
 		const names = res.body.data.products.map((p) => p.name);
 		expect(names).toContain(product.name);
 		querySpy.mockRestore();

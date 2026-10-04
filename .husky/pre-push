@@ -46,18 +46,16 @@ if [[ "$backend_changed" == false && "$frontend_changed" == false ]]; then
 	exit 0
 fi
 
-# shellcheck source=lib/yarn-path.sh
-source "$ROOT/.husky/lib/yarn-path.sh"
 # shellcheck source=lib/heavy-lock.sh
 source "$ROOT/.husky/lib/heavy-lock.sh"
 CC_SAB_PUSH_REFS="$REFS" heavy_lock_hook SAB-Store pre-push "$0" "$@"
 
 if [[ "$backend_changed" == true ]]; then
 	echo "pre-push: full backend suite"
-	(cd "$ROOT/backend" && yarn --silent test)
+	(cd "$ROOT/backend" && pnpm --silent test)
 fi
 
 if [[ "$frontend_changed" == true ]]; then
 	echo "pre-push: frontend changed, building the production bundle"
-	(cd "$ROOT/frontend" && yarn --silent build >/dev/null)
+	(cd "$ROOT/frontend" && pnpm --silent build >/dev/null)
 fi

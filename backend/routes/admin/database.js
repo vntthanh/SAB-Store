@@ -66,11 +66,11 @@ const upload = multer({
 const IMPORT_WHITELIST = {
 	products: [
 		'_id', 'name', 'description', 'price', 'imageUrl', 'category', 'available',
-		'isActive', 'stockQuantity', 'minOrderQuantity', 'maxOrderQuantity',
+		'isActive', 'salesChannel', 'stockQuantity', 'minOrderQuantity', 'maxOrderQuantity',
 		'sku', 'tags', 'weight', 'dimensions', 'featured', 'salePrice',
 		'saleStartDate', 'saleEndDate'
 	],
-	combos: ['_id', 'name', 'description', 'price', 'categoryRequirements', 'isActive', 'priority'],
+	combos: ['_id', 'name', 'description', 'price', 'categoryRequirements', 'isActive', 'salesChannel', 'priority'],
 	orders: [
 		'phoneNumber', 'orderCode', 'orderNumber', 'studentId', 'fullName', 'email',
 		'additionalNote', 'items', 'status', 'transactionCode', 'cancelReason',
@@ -90,6 +90,8 @@ const REJECTED_SECTIONS = {
 	users: 'Người dùng không thể import qua file vì lý do bảo mật. Tạo tài khoản qua giao diện quản trị.',
 	accounts: 'Tài khoản đăng nhập không thể import qua file vì lý do bảo mật. Tạo tài khoản qua giao diện quản trị.'
 };
+
+const CHANNEL_SECTIONS = ['products', 'combos'];
 
 const KNOWN_IMPORT_SECTIONS = [...Object.keys(IMPORT_WHITELIST), ...Object.keys(REJECTED_SECTIONS)];
 
@@ -181,6 +183,13 @@ function validateImportStructure(data) {
 		value.forEach((record, index) => {
 			if (!record || typeof record !== 'object' || Array.isArray(record)) {
 				problems.push(`Phần "${section}" tại vị trí ${index} không phải là một object hợp lệ`);
+				return;
+			}
+			// Rejected up front, with the rest of the structure, so a bad value
+			// never lets the import half-apply.
+			if (CHANNEL_SECTIONS.includes(section) && record.salesChannel !== undefined
+				&& !Product.SALES_CHANNELS.includes(record.salesChannel)) {
+				problems.push(`Phần "${section}" tại vị trí ${index} có salesChannel không hợp lệ`);
 			}
 		});
 	}

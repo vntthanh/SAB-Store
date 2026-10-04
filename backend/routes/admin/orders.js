@@ -1,23 +1,15 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const Order = require('../../models/Order');
 const { validateOrderUpdate } = require('../../middleware/validation');
 const { getPaginationInfo } = require('../../utils/helpers');
 const { sendOrderToAppScript } = require('../../utils/appscript');
-const { computeOrderPricing, PricingError } = require('../../services/pricing');
-const { StockError, deductStockForItems, restoreStockForItems, applyStatusTransitionStockEffect } = require('../../services/stock');
+const { StockError, applyStatusTransitionStockEffect } = require('../../services/stock');
 const ErrorLogger = require('../../utils/errorLogger');
 const { asEnum, asSort, safeSearch, asPageLimit } = require('../../utils/query-guard');
 const router = express.Router();
 
 const ORDER_STATUSES = ['confirmed', 'paid', 'delivered', 'cancelled'];
 const ORDER_SORTABLE_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode'];
-
-const PRICING_ERROR_MESSAGES = {
-	EMPTY_CART: 'Danh sách sản phẩm không hợp lệ',
-	PRODUCT_UNAVAILABLE: 'Một hoặc nhiều sản phẩm không tồn tại hoặc không khả dụng',
-	INVALID_QUANTITY: 'Số lượng sản phẩm không hợp lệ',
-};
 
 /**
  * @route   GET /api/admin/orders
@@ -380,155 +372,6 @@ router.delete('/', async (req, res) => {
 			success: false,
 			message: 'Lỗi server khi xóa đơn hàng',
 			error: process.env.NODE_ENV === 'development' ? error.message : undefined
-		});
-	}
-});
-
-/**
- * Generate a direct-sale order code that has not been used yet. Only checks
- * for a pre-existing collision; the caller must still handle E11000 on
- * save() for the narrower race between this check and the insert.
- */
-async function generateUniqueDirectOrderCode() {
-	for (let attempt = 0; attempt < 10; attempt++) {
-		const orderCode = `AD${String(Math.floor(Math.random() * 900000) + 100000)}`; // AD100000-AD999999
-		// eslint-disable-next-line no-await-in-loop
-		const existing = await Order.findOne({ orderCode }).lean();
-		if (!existing) return orderCode;
-	}
-	return null;
-}
-
-/**
- * @route   POST /api/admin/orders/direct
- * @desc    Create direct sale order (admin)
- * @access  Private (Admin)
- *
- * Rewritten for Q2: the previous version cast `createdBy` from
- * `req.admin.username` (a String) into the schema's ObjectId field, so
- * `order.save()` threw a CastError on every single call — the route never
- * produced an order. It also declared `fullName` twice in the same object
- * literal (the second silently won), generated `orderCode` from
- * `countDocuments() + 1` (a duplicate-key race under any concurrent calls),
- * and set `status: 'paid'` without ever deducting stock — the exact
- * asymmetric accounting this phase closes everywhere else.
- */
-router.post('/direct', async (req, res) => {
-	try {
-		const { items } = req.body;
-
-		if (!items || !Array.isArray(items) || items.length === 0) {
-			return res.status(400).json({
-				success: false,
-				message: 'Danh sách sản phẩm không được để trống'
-			});
-		}
-
-		let totalAmount, orderItems, comboInfo;
-		try {
-			({ totalAmount, orderItems, comboInfo } = await computeOrderPricing(items));
-		} catch (pricingError) {
-			if (pricingError instanceof PricingError) {
-				return res.status(pricingError.httpStatus).json({
-					success: false,
-					message: PRICING_ERROR_MESSAGES[pricingError.code] || 'Không thể tính giá đơn hàng',
-					...(Object.keys(pricingError.details || {}).length > 0 && { details: pricingError.details })
-				});
-			}
-			throw pricingError;
-		}
-
-		// Deduct stock before persisting the order — a mid-loop failure
-		// (insufficient stock on a later line) compensates every line already
-		// deducted, so a rejected direct sale never leaves stock short.
-		try {
-			await deductStockForItems(
-				orderItems.map((item) => ({ productId: item.productId, quantity: item.quantity }))
-			);
-		} catch (stockErr) {
-			if (stockErr instanceof StockError && stockErr.code === 'INSUFFICIENT_STOCK') {
-				return res.status(400).json({
-					success: false,
-					message: 'Không đủ hàng trong kho cho đơn bán trực tiếp này',
-					details: stockErr.details
-				});
-			}
-			throw stockErr;
-		}
-
-		const createdBy = mongoose.Types.ObjectId.isValid(req.admin?.id) ? req.admin.id : null;
-
-		let order;
-		let attempts = 0;
-		const maxAttempts = 10;
-		try {
-			while (!order) {
-				attempts++;
-				if (attempts > maxAttempts) {
-					throw Object.assign(new Error('ORDER_CODE_EXHAUSTED'), { code: 'ORDER_CODE_EXHAUSTED' });
-				}
-
-				const orderCode = await generateUniqueDirectOrderCode();
-				if (!orderCode) continue;
-
-				try {
-					order = await new Order({
-						orderCode,
-						fullName: `NB: ${req.admin.username}`,
-						items: orderItems,
-						totalAmount,
-						status: 'paid',
-						isDirectSale: true,
-						stockDeducted: true,
-						createdBy,
-						lastUpdatedBy: req.admin.username,
-						comboInfo,
-						statusHistory: [{
-							status: 'paid',
-							updatedAt: new Date(),
-							updatedBy: req.admin.username,
-							note: 'Bán trực tiếp tại cửa hàng'
-						}]
-					}).save();
-				} catch (saveError) {
-					if (saveError.code === 11000) continue; // orderCode collision, retry
-					throw saveError;
-				}
-			}
-		} catch (orderCreationError) {
-			// Order never persisted — compensate the stock deducted above so a
-			// failed direct sale (code exhaustion, unexpected save error)
-			// never leaves stock permanently short.
-			await restoreStockForItems(
-				orderItems.map((item) => ({ productId: item.productId, quantity: item.quantity }))
-			).catch((compensationError) => {
-				ErrorLogger.logCritical('Bù kho thất bại sau khi tạo đơn bán trực tiếp (admin) thất bại', compensationError, { orderItems });
-			});
-
-			if (orderCreationError.code === 'ORDER_CODE_EXHAUSTED') {
-				return res.status(500).json({
-					success: false,
-					message: 'Không thể tạo mã đơn hàng duy nhất sau nhiều lần thử'
-				});
-			}
-			throw orderCreationError;
-		}
-
-		res.status(201).json({
-			success: true,
-			message: 'Tạo đơn hàng bán trực tiếp thành công',
-			data: {
-				order,
-				orderCode: order.orderCode,
-				totalAmount
-			}
-		});
-
-	} catch (error) {
-		console.error('💥 Direct order creation error:', error);
-		res.status(500).json({
-			success: false,
-			message: 'Lỗi server khi tạo đơn hàng'
 		});
 	}
 });

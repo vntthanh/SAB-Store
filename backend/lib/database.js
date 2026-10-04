@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 require('dotenv').config();
 const ErrorLogger = require('../utils/errorLogger');
+const { requireReplicaSet } = require('./require-replica-set');
 
 let isConnected = false;
 
@@ -23,6 +24,7 @@ async function connectDB() {
 		});
 
 		await mongoose.connect(mongoUri);
+		await requireReplicaSet(mongoose.connection);
 
 		isConnected = true;
 		ErrorLogger.logInfo('[OK] MongoDB connected successfully via Mongoose', {

@@ -7,6 +7,9 @@ const router = express.Router();
 /** `stockQuantity` must be a non-negative integer; anything else is rejected outright. */
 const isValidStockQuantity = (v) => Number.isInteger(v) && v >= 0;
 
+const isValidSalesChannel = (v) => v === undefined || Product.SALES_CHANNELS.includes(v);
+const INVALID_SALES_CHANNEL_MESSAGE = 'Kênh bán không hợp lệ';
+
 /**
  * @route   GET /api/admin/products
  * @desc    Get all products for admin management
@@ -14,7 +17,7 @@ const isValidStockQuantity = (v) => Number.isInteger(v) && v >= 0;
  */
 router.get('/', async (req, res) => {
 	try {
-		const { page, limit, search, category, status } = req.query;
+		const { page, limit, search, category, status, channel } = req.query;
 		const searchMatch = safeSearch(search);
 		const safeCategory = asString(category, 100);
 		// `status` used to compare against the *string* 'true': anything else —
@@ -22,8 +25,21 @@ router.get('/', async (req, res) => {
 		// filter. asEnum only accepts the two real values and drops the rest.
 		const availableFilter = asEnum(status, ['true', 'false']);
 
+		// Filters on the channel the admin *set*, not on sellability. Documents
+		// written before the field existed count as 'all'.
+		const channelFilter = asEnum(channel, Product.SALES_CHANNELS);
+		const channelClause = channelFilter === 'all'
+			? { $or: [{ salesChannel: 'all' }, { salesChannel: { $exists: false } }] }
+			: { salesChannel: channelFilter };
+
+		// $and keeps the channel clause from colliding with the search $or.
+		const clauses = [
+			searchMatch && { $or: [{ name: searchMatch }, { description: searchMatch }] },
+			channelFilter && channelClause
+		].filter(Boolean);
+
 		const filter = {
-			...(searchMatch && { $or: [{ name: searchMatch }, { description: searchMatch }] }),
+			...(clauses.length > 0 && { $and: clauses }),
 			...(safeCategory && safeCategory !== 'all' && { category: safeCategory }),
 			...(availableFilter !== undefined && { available: availableFilter === 'true' })
 		};
@@ -75,10 +91,14 @@ router.post('/', async (req, res) => {
 			category,
 			imageUrl,
 			available,
-			isActive,
+			salesChannel,
 			minOrderQuantity,
 			stockQuantity
 		} = req.body;
+
+		if (!isValidSalesChannel(salesChannel)) {
+			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
+		}
 
 		// Validate required fields
 		if (!name || !price || !category) {
@@ -102,7 +122,7 @@ router.post('/', async (req, res) => {
 			category,
 			imageUrl: imageUrl || undefined, // Let the schema default handle it
 			available: available !== undefined ? available : true,
-			isActive: isActive !== undefined ? isActive : true,
+			...(salesChannel !== undefined && { salesChannel }),
 			stockQuantity: stockQuantity !== undefined ? stockQuantity : 0,
 			minOrderQuantity: minOrderQuantity || 1
 		});
@@ -157,7 +177,11 @@ router.put('/:id', async (req, res) => {
 		// `stockQuantity` is handled separately below: it is never written as
 		// an absolute value here, only as a guarded delta (see below), so two
 		// concurrent edits compose instead of last-write-wins.
-		const { name, description, price, category, imageUrl, available, isActive, minOrderQuantity, stockQuantity } = req.body;
+		const { name, description, price, category, imageUrl, available, salesChannel, minOrderQuantity, stockQuantity } = req.body;
+
+		if (!isValidSalesChannel(salesChannel)) {
+			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
+		}
 
 		if (stockQuantity !== undefined && !isValidStockQuantity(stockQuantity)) {
 			return res.status(400).json({
@@ -181,7 +205,7 @@ router.put('/:id', async (req, res) => {
 			...(category !== undefined && { category }),
 			...(imageUrl && { imageUrl }), // empty string: let existing value remain
 			...(available !== undefined && { available }),
-			...(isActive !== undefined && { isActive }),
+			...(salesChannel !== undefined && { salesChannel }),
 			...(minOrderQuantity !== undefined && { minOrderQuantity })
 		};
 

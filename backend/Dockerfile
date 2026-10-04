@@ -4,15 +4,17 @@ ARG NODE_IMAGE=node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff15
 
 # ── deps: production dependencies only ──────────────────────────────────────
 FROM ${NODE_IMAGE} AS deps
+# The version must match `packageManager` in package.json.
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
-COPY package.json yarn.lock ./
-# `--production=true` is explicit on purpose: the deploy platform injects every
+COPY package.json pnpm-lock.yaml ./
+# `--prod` is explicit on purpose: the deploy platform injects every
 # environment variable (NODE_ENV included) as an ARG into every stage, so the
 # install must not depend on what NODE_ENV happens to be at build time. The cache
-# mount keeps the yarn cache across builds, so a retry after a flaky download
+# mount keeps the pnpm store across builds, so a retry after a flaky download
 # resumes instead of starting over.
-RUN --mount=type=cache,target=/usr/local/share/.cache/yarn \
-	yarn install --frozen-lockfile --production=true --non-interactive
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+	pnpm install --frozen-lockfile --prod
 
 # ── runner ───────────────────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS runner
@@ -34,6 +36,6 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 	CMD curl -f http://localhost:5000/health || exit 1
 
-# node directly (not `yarn start`): one process fewer between the container and
-# the app, so SIGTERM from `docker stop` reaches Node instead of yarn.
+# node directly (not `pnpm start`): one process fewer between the container and
+# the app, so SIGTERM from `docker stop` reaches Node instead of pnpm.
 CMD ["node", "start.js"]
