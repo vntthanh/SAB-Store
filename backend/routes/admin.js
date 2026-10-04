@@ -5,6 +5,7 @@ const { authenticateAdmin } = require('../middleware/better-auth');
 const dashboardRoutes = require('./admin/dashboard');
 const ordersRoutes = require('./admin/orders');
 const productsRoutes = require('./admin/products');
+const stockRoutes = require('./admin/stock');
 const exportsRoutes = require('./admin/exports');
 const databaseRoutes = require('./admin/database');
 
@@ -17,6 +18,8 @@ router.use(authenticateAdmin);
 router.use('/dashboard', dashboardRoutes);
 router.use('/orders', ordersRoutes);
 router.use('/products', productsRoutes);
+// Declares its own /products/:id/... and /stock/... paths.
+router.use(stockRoutes);
 router.use('/orders/export', exportsRoutes);
 router.use('/database', databaseRoutes);
 

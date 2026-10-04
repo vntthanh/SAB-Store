@@ -35,7 +35,7 @@ services:
         # rejects a keyfile that is group/world accessible or not readable by it.
         chown 999:999 /etc/mongo/keyfile
         chmod 400 /etc/mongo/keyfile
-        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /etc/mongo/keyfile --bind_ip_all --wiredTigerCacheSizeGB 0.25
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /etc/mongo/keyfile --bind_ip_all --wiredTigerCacheSizeGB 0.25 --setParameter shutdownTimeoutMillisForSignaledShutdown=1000
     mem_limit: 512m
     logging:
       driver: json-file
@@ -77,6 +77,8 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 2s
 
   # SAB Store object storage (SeaweedFS, S3 API on :9000)
   sabstore-seaweedfs:
@@ -153,6 +155,60 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 2s
+    networks:
+      - sabstore_network
+
+  # SAB Store Redis: dispatcher for the stock-movement queue (BullMQ). It is NOT the
+  # source of truth - every stock movement is a pending document in MongoDB first, and
+  # a sweeper re-enqueues anything Redis lost - so losing this data only delays stock
+  # updates. `noeviction` is deliberate: Redis must refuse writes when full rather than
+  # silently drop queued jobs.
+  sabstore-redis:
+    image: redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    restart: unless-stopped
+    # Fail-closed on purpose: the platform turns an unset variable into an empty
+    # string, and a Redis with no password must never start. The password is
+    # embedded in REDIS_URL, so it has to be URL-safe. Every `$` is doubled:
+    # compose would otherwise interpolate it first.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        fail() { echo "$$1" >&2; exit 1; }
+        pw="$${REDIS_PASSWORD:-}"
+        case "$$pw" in
+          '' | *[!A-Za-z0-9._~-]*) fail "REDIS_PASSWORD must be non-empty and use only A-Z a-z 0-9 . _ ~ -" ;;
+        esac
+        [ "$${#pw}" -ge 16 ] || fail "REDIS_PASSWORD must be at least 16 characters"
+        exec docker-entrypoint.sh redis-server --appendonly yes --appendfsync everysec --maxmemory 64mb --maxmemory-policy noeviction --requirepass "$$pw"
+    mem_limit: 128m
+    security_opt:
+      - "no-new-privileges:true"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      # redis-cli reads this, so the healthcheck authenticates without the password in argv.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    # Never published to the host; reachable only from the project network.
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD-SHELL", "redis-cli ping | grep -q PONG" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 1s
     networks:
       - sabstore_network
 
@@ -196,6 +252,9 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
       MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-sabstore}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+      # Dispatcher for stock movements; without it the backend still records them
+      # and the sweeper applies them once Redis is back.
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD is required}@sabstore-redis:6379
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     expose:
       - "5000"
@@ -206,6 +265,9 @@ services:
       sabstore-seaweedfs:
         condition: service_healthy
         restart: true
+      sabstore-redis:
+        condition: service_healthy
+        restart: true
     volumes:
       - backend_uploads:/app/uploads
     healthcheck:
@@ -213,7 +275,9 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 40s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 2s
     # Only the frontend joins multi-domain. The backend is reachable
     # exclusively through the frontend nginx /api/ proxy.
     #
@@ -235,6 +299,8 @@ services:
     pull_policy: always
     restart: unless-stopped
     mem_limit: 128m
+    # nginx stops on SIGQUIT (waits for open connections) by default; SIGTERM is its fast shutdown.
+    stop_signal: SIGTERM
     logging:
       driver: json-file
       options:
@@ -255,10 +321,13 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 1s
 
 volumes:
   mongodb_data:
   seaweedfs_data:
+  redis_data:
   backend_uploads:
 
 

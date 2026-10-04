@@ -11,7 +11,7 @@ số file, thời gian chạy) cũng không sống ở đây: chạy lệnh và 
 | Tạo `CLAUDE.md` / `CLAUDE.local.md` trong repo hoặc thư mục cha                    | Claude Code sẽ đọc nó và bỏ qua `AGENTS.md` này                                         |
 | Commit / push / merge vào `main` khi user chưa yêu cầu thẳng                       | `main` là production: Coolify deploy từ `main`. Làm việc trên `dev` (§5)                |
 | Gọi dịch vụ ngoài (App Script, email, QR) bên trong transaction MongoDB            | Transaction có thể thử lại hoặc huỷ; tác dụng phụ bên ngoài thì không huỷ được (§3)     |
-| Ghi `Product.stockQuantity` ngoài `backend/services/stock.js`                      | Chỉ đường atomic đó chống oversell và bù trừ khi đơn hỏng giữa chừng (§3)               |
+| Ghi `Product.stockQuantity` ngoài worker của stock ledger                          | Chỉ worker ghi cache; mọi thay đổi khác tạo `StockMovement` để truy vết và tính lại được (§3) |
 | Tin giá / tổng tiền / combo do client gửi                                          | Giá luôn tính lại server-side trong `backend/services/pricing.js` (§3)                  |
 | Dùng `${VAR:?message}` trong `coolify.compose.yml`                                 | Coolify thay biến bằng chính chuỗi message, không fail (§2)                             |
 | Thêm `networks:` / `container_name:` / named volume vào `coolify.compose.yml`      | Coolify tự quản và đổi tên volume → tách DB khỏi dữ liệu (§2)                           |
@@ -99,8 +99,9 @@ Version và tên image nằm ở `package.json`, `pnpm-lock.yaml`, `Dockerfile`,
 
 - **Zero-trust**: không tin client. Validate input và kiểm quyền (admin/seller) **server-side**; client chỉ để UX.
 - **Transaction MongoDB được dùng.** Từ 04/10/2026 production là replica set 1 node `rs0` (`coolify.compose.yml`); backend từ chối khởi động nếu mongo không phải replica set (`backend/lib/require-replica-set.js`), nên "xanh ở test, throw ở production" không còn xảy ra âm thầm. Thao tác nhiều bước (đơn + kho) chạy trong một transaction; service nhận `session` và dùng nó cho mọi query. Gọi dịch vụ ngoài chỉ **sau** khi commit. Rollback hạ tầng về standalone phải đi cùng revert phần kiểm replica set của backend.
-- **Tồn kho**: mọi thay đổi `stockQuantity` từ đường có tiền/hàng đi qua `backend/services/stock.js`. Không `save()` product với stock đọc trước rồi cộng trừ trong JS — hai request đồng thời sẽ ghi đè nhau.
+- **Tồn kho**: `Product.stockQuantity` chỉ được ghi bởi worker của stock ledger (`backend/services/stock-ledger.js`), trừ lúc tạo sản phẩm (tạo/import) — khi đó ghi kèm movement `opening` đã áp, cùng transaction; mọi thay đổi khác (đơn, huỷ, điều chỉnh) tạo một `StockMovement` — đơn ghi movement trong cùng transaction với đơn. Không `save()` product với stock đọc trước rồi cộng trừ trong JS. Hết hàng không bao giờ chặn đơn; tồn có thể âm.
 - **Giá**: tổng tiền, giá combo, giảm giá luôn tính lại trong `backend/services/pricing.js` từ dữ liệu DB; payload client chỉ mang id + số lượng. Hiển thị và thanh toán dùng cùng một hàm tính.
+- **Sửa sản phẩm trong đơn** chỉ đi qua `backend/services/order-edit.js`: tổng tiền của đơn không bao giờ đổi, bộ mới phải tính ra đúng `totalAmount` đã lưu, chênh lệch kho ghi bằng movement `order_edit` trong cùng transaction.
 - **Query string** không đưa thẳng vào filter Mongo: đi qua helper trong `backend/utils/query-guard.js` (Express có thể giao object như `{ $ne: null }` — operator injection).
 - **Mass-assignment**: không đưa nguyên `req.body` vào `create`/`update`/`findOneAndUpdate`; chọn field tường minh. Import/export database không bao giờ ghi hay xuất credential.
 - **Mã lỗi** dùng hằng trong `backend/constants/errorCodes.js`, không viết chuỗi rải rác. Không nuốt lỗi im lặng.

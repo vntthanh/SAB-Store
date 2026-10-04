@@ -55,3 +55,19 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
   `docker exec coolify-db psql -U coolify -d coolify -At -c "select logs from application_deployment_queues where id=<id>"`;
   log chứa lệnh build với tên build-arg (giá trị secret nằm ở file, không in ra) — vẫn lọc/redact khi đọc.
 - Coolify UI: chỉ đọc qua claude-in-chrome; dòng lịch sử deploy trong UI có thể không bấm mở được → dùng DB.
+
+- Chuỗi proxy production (đo 04/10): host :80/:443 → Traefik v3.6 `coolify-proxy` (mạng project `10.0.10.0/24`, Traefik `.5`) →
+  nginx frontend (`.6`) → backend. `$remote_addr` của nginx = IP Traefik cho MỌI request; IP khách ở X-Forwarded-For (trường
+  cuối của log). Traefik GHI ĐÈ XFF client gửi (probe `X-Forwarded-For: 9.9.9.9` → nginx chỉ thấy IP thật) — khác
+  proxy-manager của JudgeHub (nối thêm). Đếm khách: dùng trường XFF, không dùng trường đầu (thấy "1 IP" là sai).
+- Cổng deploy của user (04/10): downtime < 30 s → deploy ngay (đo bằng probe 1 req/s suốt lần deploy); không bảo đảm
+  được thì chỉ deploy khi 15 phút không ai xem sản phẩm — script đọc log `activity-check.sh` (thư mục plan kênh bán).
+  Trước deploy: verify bằng Playwright MCP trên localhost với catalog clone từ production (products/combos/settings, không dữ liệu khách).
+- **Downtime một lần deploy Coolify ≈ 100 s** (đo 04/10 20:44:06→20:45:47, deploy 78, probe 1 req/s: 84 mẫu 502/503):
+  Coolify xoá CẢ stack compose (kể cả mongo, seaweedfs không đổi cấu hình) rồi mới `up`. Phân rã đo được: ~30 s nginx
+  dừng (SIGQUIT chờ keep-alive), ~21 s mongod dừng, ~27 s build ảnh lần hai ở `up` (`pull_policy: build`), ~16 s
+  SeaweedFS khởi động (backend chờ `service_healthy`), ~5 s probe health đầu.
+  Đã chỉnh trong `coolify.compose.yml` (comment đầu file): `pull_policy: never`, nginx `stop_signal: SIGTERM`, mongod
+  `shutdownTimeoutMillisForSignaledShutdown`, `start_interval`, backend chờ deps `service_started`. **Chưa đo lại** →
+  tới khi probe 1 req/s chứng minh < 30 s, vẫn chỉ deploy trong cửa sổ "15 phút không ai xem sản phẩm" (`activity-check.sh`).
+  `pull_policy: never` + `build:` vẫn build khi ảnh vắng (compose `build.go`: chỉ bỏ build khi ảnh có sẵn).

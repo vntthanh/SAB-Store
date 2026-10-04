@@ -15,8 +15,13 @@ const ERROR_CODES = {
 	PRICE_CHANGED: 'PRICE_CHANGED',
 	CART_TOO_MANY_UNITS: 'CART_TOO_MANY_UNITS',
 	CART_TOO_COMPLEX: 'CART_TOO_COMPLEX',
+	QUANTITY_OUT_OF_RANGE: 'QUANTITY_OUT_OF_RANGE',
+	QUANTITY_OVER_MAX: 'QUANTITY_OVER_MAX',
 	STOCK_ADJUSTMENT_INVALID: 'STOCK_ADJUSTMENT_INVALID',
 	ORDER_PROCESSING_ERROR: 'ORDER_PROCESSING_ERROR',
+	ORDER_FINAL: 'ORDER_FINAL',
+	ORDER_TOTAL_CHANGED: 'ORDER_TOTAL_CHANGED',
+	ORDER_CHANGED: 'ORDER_CHANGED',
 	COMBO_ERROR: 'COMBO_ERROR',
 	AUTH_ERROR: 'AUTH_ERROR',
 	RATE_LIMIT_ERROR: 'RATE_LIMIT_ERROR',
@@ -88,6 +93,14 @@ const ERROR_MESSAGES = {
 		vi: 'Giỏ hàng quá phức tạp để tính giá',
 		en: 'Cart is too complex to price'
 	},
+	[ERROR_CODES.QUANTITY_OUT_OF_RANGE]: {
+		vi: 'Số lượng nằm ngoài giới hạn cho phép',
+		en: 'Quantity is outside the allowed range'
+	},
+	[ERROR_CODES.QUANTITY_OVER_MAX]: {
+		vi: 'Số lượng vượt mức tối đa, cần xác nhận',
+		en: 'Quantity exceeds the maximum and needs confirmation'
+	},
 	[ERROR_CODES.STOCK_ADJUSTMENT_INVALID]: {
 		vi: 'Điều chỉnh tồn kho không hợp lệ',
 		en: 'Invalid stock adjustment'
@@ -95,6 +108,18 @@ const ERROR_MESSAGES = {
 	[ERROR_CODES.ORDER_PROCESSING_ERROR]: {
 		vi: 'Lỗi xử lý đơn hàng',
 		en: 'Order processing error'
+	},
+	[ERROR_CODES.ORDER_FINAL]: {
+		vi: 'Đơn đã ở trạng thái cuối, chỉ sửa được ghi chú',
+		en: 'Order is in a final status, only notes can be edited'
+	},
+	[ERROR_CODES.ORDER_TOTAL_CHANGED]: {
+		vi: 'Tổng tiền sau khi sửa khác tổng tiền của đơn',
+		en: 'The edited items do not add up to the order total'
+	},
+	[ERROR_CODES.ORDER_CHANGED]: {
+		vi: 'Đơn vừa được cập nhật, vui lòng tải lại',
+		en: 'The order was just updated, please reload'
 	},
 	[ERROR_CODES.COMBO_ERROR]: {
 		vi: 'Lỗi xử lý combo',
@@ -147,8 +172,13 @@ const ERROR_CODE_TO_HTTP_STATUS = {
 	[ERROR_CODES.PRICE_CHANGED]: HTTP_STATUS.CONFLICT,
 	[ERROR_CODES.CART_TOO_MANY_UNITS]: HTTP_STATUS.BAD_REQUEST,
 	[ERROR_CODES.CART_TOO_COMPLEX]: HTTP_STATUS.BAD_REQUEST,
+	[ERROR_CODES.QUANTITY_OUT_OF_RANGE]: HTTP_STATUS.BAD_REQUEST,
+	[ERROR_CODES.QUANTITY_OVER_MAX]: HTTP_STATUS.CONFLICT,
 	[ERROR_CODES.STOCK_ADJUSTMENT_INVALID]: HTTP_STATUS.BAD_REQUEST,
 	[ERROR_CODES.ORDER_PROCESSING_ERROR]: HTTP_STATUS.UNPROCESSABLE_ENTITY,
+	[ERROR_CODES.ORDER_FINAL]: HTTP_STATUS.CONFLICT,
+	[ERROR_CODES.ORDER_TOTAL_CHANGED]: HTTP_STATUS.CONFLICT,
+	[ERROR_CODES.ORDER_CHANGED]: HTTP_STATUS.CONFLICT,
 	[ERROR_CODES.COMBO_ERROR]: HTTP_STATUS.UNPROCESSABLE_ENTITY,
 	[ERROR_CODES.AUTH_ERROR]: HTTP_STATUS.UNAUTHORIZED,
 	[ERROR_CODES.RATE_LIMIT_ERROR]: HTTP_STATUS.TOO_MANY_REQUESTS,

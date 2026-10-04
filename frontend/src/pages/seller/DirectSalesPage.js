@@ -3,6 +3,10 @@ import { toast } from 'react-toastify';
 import { productService, sellerService, comboService, PRICE_CHANGED } from '../../services/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
 
+// The server answers a counter sale over a product's maximum with this code and
+// the lines concerned; the cashier decides whether to sell anyway.
+const QUANTITY_OVER_MAX = 'QUANTITY_OVER_MAX';
+
 const DirectSalesPage = () => {
 	const [products, setProducts] = useState([]);
 	const [quantities, setQuantities] = useState({});
@@ -12,6 +16,8 @@ const DirectSalesPage = () => {
 	const [paymentQR, setPaymentQR] = useState('');
 	const [pricingInfo, setPricingInfo] = useState(null);
 	const [loadingPricing, setLoadingPricing] = useState(false);
+	// Lines the server flagged as over their maximum, while the cashier decides.
+	const [overMaxLines, setOverMaxLines] = useState(null);
 	// Only the newest preview may set the total: an older response landing late
 	// would show (and be echoed as expectedTotal) a stale amount.
 	const pricingRequestId = useRef(0);
@@ -149,7 +155,10 @@ const DirectSalesPage = () => {
 		}
 	};
 
-	const handleCreateOrder = async () => {
+	const handleCreateOrder = async ({ allowOverMax = false } = {}) => {
+		// Enter in a quantity box fires this too; one order at a time.
+		if (processing) return;
+
 		// Check if any products are selected
 		const selectedItems = Object.entries(quantities)
 			.filter(([_, qty]) => qty > 0)
@@ -179,12 +188,14 @@ const DirectSalesPage = () => {
 			// recomputes the price and answers 409 if it differs.
 			const orderData = {
 				items: selectedItems.map(({ productId, quantity }) => ({ productId, quantity })),
-				expectedTotal: pricingInfo.totalAmount
+				expectedTotal: pricingInfo.totalAmount,
+				...(allowOverMax && { allowOverMax: true })
 			};
 
 			const response = await sellerService.createDirectOrder(orderData);
 
 			if (response.success) {
+				setOverMaxLines(null);
 				const order = response.data;
 				setCurrentOrder(order);
 				setPaymentQR(order.qrUrl || '');
@@ -198,10 +209,14 @@ const DirectSalesPage = () => {
 				}
 			}
 		} catch (error) {
-			if (error.code === PRICE_CHANGED) {
+			if (error.code === QUANTITY_OVER_MAX) {
+				setOverMaxLines(error.details?.lines || []);
+			} else if (error.code === PRICE_CHANGED) {
+				setOverMaxLines(null);
 				toast.warning('Giá vừa thay đổi, vui lòng xem lại tổng tiền');
 				calculatePricing();
 			} else {
+				setOverMaxLines(null);
 				toast.error('Lỗi khi tạo đơn hàng: ' + error.message);
 			}
 		} finally {
@@ -412,7 +427,7 @@ const DirectSalesPage = () => {
 
 							<div className="flex justify-center">
 								<button
-									onClick={handleCreateOrder}
+									onClick={() => handleCreateOrder()}
 									disabled={getTotalAmount() === 0 || processing || loadingPricing || !pricingInfo}
 									className="btn-primary px-8 py-3 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
 								>
@@ -507,6 +522,52 @@ const DirectSalesPage = () => {
 					</div>
 				)}
 			</div>
+			{overMaxLines && (
+				<div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+					<div
+						role="dialog"
+						aria-modal="true"
+						aria-labelledby="over-max-title"
+						className="bg-white rounded-lg shadow-xl max-w-md w-full p-6"
+					>
+						<h2 id="over-max-title" className="text-xl font-bold text-gray-900 mb-2">
+							<i className="fas fa-exclamation-triangle mr-2 text-yellow-600"></i>
+							Số lượng vượt mức tối đa
+						</h2>
+						<p className="text-gray-600 mb-3">Các sản phẩm sau vượt số lượng tối đa mỗi đơn:</p>
+						<ul className="mb-5 space-y-1 text-gray-900">
+							{overMaxLines.map((line) => (
+								<li key={line.productId}>
+									{line.productName}: {line.quantity} &gt; tối đa {line.max}
+								</li>
+							))}
+						</ul>
+						<div className="flex justify-end space-x-3">
+							<button
+								onClick={() => setOverMaxLines(null)}
+								disabled={processing}
+								className="btn-secondary px-6 py-3"
+							>
+								Huỷ
+							</button>
+							<button
+								onClick={() => handleCreateOrder({ allowOverMax: true })}
+								disabled={processing}
+								className="btn-warning px-6 py-3 disabled:opacity-50 disabled:cursor-not-allowed"
+							>
+								{processing ? (
+									<>
+										<LoadingSpinner size="small" />
+										<span className="ml-2">Đang bán...</span>
+									</>
+								) : (
+									'Vẫn bán'
+								)}
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 };

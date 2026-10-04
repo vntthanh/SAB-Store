@@ -5,6 +5,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
+const { applyPendingMovements } = require('../helpers/stock');
 const Product = require('../../models/Product');
 const Order = require('../../models/Order');
 
@@ -85,7 +86,7 @@ describe('POST /api/seller/orders/direct (offline channel)', () => {
 		({ cookies } = await makeAdminSession(app)); // admin role passes authenticateSeller too
 	});
 
-	it('accepts an offline-only product and deducts its stock', async () => {
+	it('accepts an offline-only product and records its stock deduction', async () => {
 		const product = await makeProduct({ salesChannel: 'offline', price: 20000, stockQuantity: 5 });
 
 		const res = await request(app)
@@ -94,6 +95,8 @@ describe('POST /api/seller/orders/direct (offline channel)', () => {
 			.send({ items: [item(product, 2)], expectedTotal: 40000 });
 
 		expect(res.status).toBe(201);
+		// The sale only records a movement; the cache moves once it is applied.
+		await applyPendingMovements();
 		expect((await Product.findById(product._id)).stockQuantity).toBe(3);
 	});
 

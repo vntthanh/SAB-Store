@@ -62,10 +62,12 @@ const productSchema = new mongoose.Schema({
 		enum: SALES_CHANNELS,
 		default: 'all'
 	},
+	// A cache of the stock ledger, written only by the ledger worker. No `min`:
+	// an order is never refused for lack of stock, so the sum can legitimately go
+	// negative until the shelf is restocked and counted.
 	stockQuantity: {
 		type: Number,
-		default: 0,
-		min: [0, 'Số lượng tồn kho không được âm']
+		default: 0
 	},
 	minOrderQuantity: {
 		type: Number,

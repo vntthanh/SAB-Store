@@ -2,7 +2,7 @@ import React from 'react';
 import { formatCurrency, getImageUrl } from '../../utils/helpers';
 import { SALES_CHANNEL_LABELS, normalizeSalesChannel } from '../../utils/sales-channel';
 
-const ProductsTable = ({ products, onEdit, onDelete }) => {
+const ProductsTable = ({ products, onEdit, onDelete, onManageStock }) => {
 	if (products.length === 0) {
 		return (
 			<div className="text-center py-12">
@@ -71,6 +71,9 @@ const ProductsTable = ({ products, onEdit, onDelete }) => {
 								<span className={`${product.stockQuantity <= 5 ? 'text-danger-600 font-semibold' : 'text-gray-900'}`}>
 									{product.stockQuantity || 0} sản phẩm
 								</span>
+								{product.pendingMovements > 0 && (
+									<div className="text-xs text-gray-500">đang cập nhật</div>
+								)}
 							</td>
 							<td className="px-6 py-4 whitespace-nowrap">
 								<span className={`badge ${product.available ? 'badge-success' : 'badge-danger'}`}>
@@ -83,6 +86,13 @@ const ProductsTable = ({ products, onEdit, onDelete }) => {
 								)}
 							</td>
 							<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+								<button
+									onClick={() => onManageStock(product)}
+									className="text-gray-700 hover:text-gray-900 mr-3"
+								>
+									<i className="fas fa-boxes mr-1"></i>
+									Tồn kho
+								</button>
 								<button
 									onClick={() => onEdit(product)}
 									className="text-primary-600 hover:text-primary-900 mr-3"

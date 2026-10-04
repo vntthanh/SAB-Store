@@ -1,6 +1,24 @@
 const ErrorLogger = require('../utils/errorLogger');
 const { monitor } = require('../utils/performanceMonitor');
 
+// logDebug is silent in production, so successful requests would leave no trace
+// of who made them. One line per API call lets visitors be counted by IP from
+// the container log. The query string is dropped: it can carry tokens.
+function logApiAccess(requestInfo, statusCode, duration) {
+	const path = requestInfo.url.split('?')[0];
+	if (!path.startsWith('/api/') || path.endsWith('/health')) {
+		return;
+	}
+	console.log(JSON.stringify({
+		type: 'access',
+		ip: requestInfo.ip,
+		method: requestInfo.method,
+		path,
+		status: statusCode,
+		ms: duration
+	}));
+}
+
 function requestLogger(req, res, next) {
 	const startTime = Date.now();
 
@@ -24,6 +42,7 @@ function requestLogger(req, res, next) {
 		// whole codebase — without this, checkHealth()'s errorRate was always
 		// computed as 0/0.
 		monitor.recordRequest();
+		logApiAccess(requestInfo, res.statusCode, duration);
 		if (res.statusCode >= 400) {
 			monitor.recordError();
 		}

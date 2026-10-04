@@ -1,7 +1,8 @@
 const express = require('express');
 const Product = require('../../models/Product');
 const { asString, asEnum, asPageLimit, safeSearch } = require('../../utils/query-guard');
-const { StockError, adjustStock } = require('../../services/stock');
+const { recordAppliedOpening, countPendingByProduct } = require('../../services/stock-ledger');
+const { withTransaction } = require('../../utils/transaction');
 const router = express.Router();
 
 /** `stockQuantity` must be a non-negative integer; anything else is rejected outright. */
@@ -53,10 +54,15 @@ router.get('/', async (req, res) => {
 
 		const products = await Product.paginate(filter, options);
 
+		// Stock changes apply asynchronously; the count lets the UI flag a stock
+		// figure that is about to change.
+		const pending = await countPendingByProduct(products.docs.map((p) => p._id));
+		const docs = products.docs.map((p) => ({ ...p.toJSON(), pendingMovements: pending.get(String(p._id)) || 0 }));
+
 		res.json({
 			success: true,
 			data: {
-				products: products.docs,
+				products: docs,
 				pagination: {
 					page: products.page,
 					pages: products.totalPages,
@@ -81,9 +87,9 @@ router.get('/', async (req, res) => {
  */
 router.post('/', async (req, res) => {
 	try {
-		// stockQuantity IS accepted here (unlike PUT below): nothing can race a
-		// product that does not exist yet, so a plain absolute write is safe —
-		// there is no concurrent editor to compose with.
+		// stockQuantity is only the opening balance of a product that did not exist
+		// until now; it is recorded as an `opening` movement below. Every later
+		// change goes through POST /:id/stock-adjustments.
 		const {
 			name,
 			description,
@@ -115,19 +121,32 @@ router.post('/', async (req, res) => {
 			});
 		}
 
-		const product = new Product({
-			name,
-			description,
-			price,
-			category,
-			imageUrl: imageUrl || undefined, // Let the schema default handle it
-			available: available !== undefined ? available : true,
-			...(salesChannel !== undefined && { salesChannel }),
-			stockQuantity: stockQuantity !== undefined ? stockQuantity : 0,
-			minOrderQuantity: minOrderQuantity || 1
-		});
+		const openingStock = stockQuantity !== undefined ? stockQuantity : 0;
 
-		await product.save();
+		// The product and its opening movement commit together, so the cache and
+		// the ledger agree from the first moment. The document is built inside the
+		// callback because withTransaction may run it again.
+		const product = await withTransaction(async (session) => {
+			const created = new Product({
+				name,
+				description,
+				price,
+				category,
+				imageUrl: imageUrl || undefined, // Let the schema default handle it
+				available: available !== undefined ? available : true,
+				...(salesChannel !== undefined && { salesChannel }),
+				stockQuantity: openingStock,
+				minOrderQuantity: minOrderQuantity || 1
+			});
+			await created.save({ session });
+			if (openingStock > 0) {
+				await recordAppliedOpening(
+					{ productId: created._id, quantity: openingStock, createdBy: req.user && req.user.email },
+					{ session }
+				);
+			}
+			return created;
+		});
 
 		res.status(201).json({
 			success: true,
@@ -174,20 +193,12 @@ router.put('/:id', async (req, res) => {
 		// unknown paths but every *real* schema path — including `sku`
 		// (unique; setting it to another product's value would 11000-block that
 		// product's own future update) and `createdAt` — was still writable.
-		// `stockQuantity` is handled separately below: it is never written as
-		// an absolute value here, only as a guarded delta (see below), so two
-		// concurrent edits compose instead of last-write-wins.
-		const { name, description, price, category, imageUrl, available, salesChannel, minOrderQuantity, stockQuantity } = req.body;
+		// `stockQuantity` is deliberately absent: it is a cache of the stock
+		// ledger and changes only through POST /:id/stock-adjustments.
+		const { name, description, price, category, imageUrl, available, salesChannel, minOrderQuantity } = req.body;
 
 		if (!isValidSalesChannel(salesChannel)) {
 			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
-		}
-
-		if (stockQuantity !== undefined && !isValidStockQuantity(stockQuantity)) {
-			return res.status(400).json({
-				success: false,
-				message: 'Số lượng tồn kho không hợp lệ'
-			});
 		}
 
 		const existing = await Product.findById(id);
@@ -210,40 +221,6 @@ router.put('/:id', async (req, res) => {
 		};
 
 		let product = existing;
-
-		// stockQuantity is applied FIRST, before updateData (F7): this is the
-		// one field in this route that can still be rejected after the
-		// request has already been validated (INSUFFICIENT_STOCK — a
-		// concurrent sale dropped stock below what this delta needs). Doing
-		// the guarded $inc before writing name/price/category/etc. means a
-		// rejected stock delta returns 400 with NOTHING written, instead of
-		// the previous order (other fields committed, then a 400) which left
-		// a partially-applied edit on a rejected request.
-		//
-		// The delta is computed from the value this admin's request actually
-		// observed (`existing`, read above, before any other field was
-		// touched), then applied as a guarded atomic $inc. Two admins
-		// concurrently reading stock=50 and both submitting 60 each compute
-		// delta=+10 independently and both apply it — the result is 70
-		// (composed), never a last-write-wins 60. A negative delta can never
-		// push stock below 0 (see services/stock.js#adjustStock).
-		if (stockQuantity !== undefined) {
-			const delta = stockQuantity - existing.stockQuantity;
-			if (delta !== 0) {
-				try {
-					product = await adjustStock(id, delta);
-				} catch (stockErr) {
-					if (stockErr instanceof StockError && stockErr.code === 'INSUFFICIENT_STOCK') {
-						return res.status(400).json({
-							success: false,
-							message: 'Không thể giảm tồn kho xuống dưới 0',
-							details: stockErr.details
-						});
-					}
-					throw stockErr;
-				}
-			}
-		}
 
 		if (Object.keys(updateData).length > 0) {
 			product = await Product.findByIdAndUpdate(

@@ -1,7 +1,7 @@
 # Lessons index — sự thật đã ĐO ĐƯỢC, theo chủ đề
 
 ## deploy
-- `mem:lessons/deploy/coolify_compose_constraints` — `${VAR:?}` bị thay bằng message; volume bị đổi tên; service name = network alias; build từ source + rollback về tag registry; đọc log deploy từ `coolify-db`.
+- `mem:lessons/deploy/coolify_compose_constraints` — deploy Coolify sập ~100 s (recreate cả stack, đo 04/10) → chỉ deploy trong cửa sổ yên tĩnh; `${VAR:?}` bị thay bằng message; volume bị đổi tên; service name = network alias; build từ source + rollback về tag registry; đọc log deploy từ `coolify-db`.
 - `mem:lessons/deploy/seaweedfs_restart_protected_regular` — `fs.protected_regular=2` + file trong `/tmp` sticky → seaweed crash-loop sau `docker restart` (502 ngày 04/10); config ở `/etc/seaweedfs`, xoá trước khi ghi.
 
 ## database

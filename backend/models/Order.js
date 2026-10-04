@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 const mongoosePaginate = require('mongoose-paginate-v2');
 
+// A cancelled or delivered order never changes status again; only notes stay editable.
+const FINAL_ORDER_STATUSES = ['cancelled', 'delivered'];
+
 // Schema for status history tracking
 const statusHistorySchema = new mongoose.Schema({
 	status: {
@@ -51,14 +54,8 @@ const orderItemSchema = new mongoose.Schema({
 		required: true,
 		min: 1
 	},
-	// Per-line combo attribution. Subdocuments are strict by default — before
-	// these three fields existed on the schema, every route that constructed
-	// an item with fromCombo/comboId/comboName (matching services/pricing.js's
-	// documented orderItems[] contract) had them silently stripped by
-	// Mongoose on save, so no order ever actually recorded which of its
-	// items came from a combo once persisted, even though comboInfo (a
-	// separate, order-level field) survived. Found while wiring
-	// computeOrderPricing's output into the direct-sale routes for this phase.
+	// Per-line combo attribution. Subdocuments are strict: a field missing from
+	// this schema is silently dropped on save.
 	fromCombo: {
 		type: Boolean,
 		default: false
@@ -150,19 +147,16 @@ const orderSchema = new mongoose.Schema({
 		// stale 'pending' value that isn't itself the field being written is
 		// never re-validated — see routes' use of findOneAndUpdate/
 		// findByIdAndUpdate instead of load-then-save for every status
-		// transition this phase owns.
+		// status transition.
 		enum: ['confirmed', 'paid', 'delivered', 'cancelled'],
 		default: 'confirmed'
 	},
-	// True only while this order currently holds a real deduction against
-	// Product.stockQuantity. Web orders never deduct stock at creation (an
-	// explicit, unchanged business decision — see plan AD-4/Q1) so they stay
-	// false for their whole lifecycle. Direct-sale orders set this true at
-	// creation; cancelling flips it back to false after restoring stock, and
-	// un-cancelling flips it back to true after re-deducting. This flag is
-	// the only thing that gates a cancel from touching stock at all — see
-	// services/stock.js#applyStatusTransitionStockEffect — so an order that
-	// never took stock can never have a cancel inflate it.
+	// True while this order holds a deduction against the stock ledger: set at
+	// creation (online and counter) and cleared when a cancel gives the units back.
+	// It alone decides whether a cancel records a movement, so a cancel never
+	// returns units that were never taken and never returns them twice. Orders
+	// created before stock was tracked per order keep `false`: cancelling them
+	// records nothing, since nothing was taken.
 	stockDeducted: {
 		type: Boolean,
 		default: false,
@@ -179,6 +173,41 @@ const orderSchema = new mongoose.Schema({
 		maxLength: [500, 'Lý do hủy không được vượt quá 500 ký tự']
 	},
 	statusHistory: [statusHistorySchema], // Track all status changes
+	// Admin-only notes, kept apart from statusHistory: both dashboards render every
+	// statusHistory entry as a status event and cancel idempotency keys use its length.
+	// Never returned to sellers or the public lookup.
+	internalNotes: [{
+		note: {
+			type: String,
+			required: true,
+			trim: true,
+			maxlength: [500, 'Ghi chú không được vượt quá 500 ký tự']
+		},
+		by: { type: String, required: true },
+		at: { type: Date, default: Date.now },
+		_id: false
+	}],
+	// Bumped by every admin edit of `items`; the edit's compare-and-set key. Orders
+	// stored before it existed lack the field, so readers treat a missing value as 0.
+	itemsRevision: {
+		type: Number,
+		default: 0
+	},
+	// One entry per admin edit of `items`, holding the set it replaced. Admin-only
+	// and heavy (whole item sets): excluded from lists and every seller read.
+	itemsHistory: [{
+		previousItems: { type: mongoose.Schema.Types.Mixed, default: [] },
+		previousComboInfo: { type: mongoose.Schema.Types.Mixed, default: null },
+		editedBy: { type: String, required: true },
+		editedAt: { type: Date, default: Date.now },
+		reason: {
+			type: String,
+			required: true,
+			trim: true,
+			maxlength: [200, 'Lý do không được vượt quá 200 ký tự']
+		},
+		_id: false
+	}],
 	lastUpdatedBy: {
 		type: String,
 		default: 'system' // Username of who last updated the order
@@ -232,4 +261,7 @@ orderSchema.pre('save', function (next) {
 });
 
 orderSchema.plugin(mongoosePaginate);
-module.exports = mongoose.model('Order', orderSchema);
+const Order = mongoose.model('Order', orderSchema);
+Order.FINAL_ORDER_STATUSES = FINAL_ORDER_STATUSES;
+
+module.exports = Order;

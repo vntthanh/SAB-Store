@@ -25,7 +25,7 @@ const ProductForm = ({
 		category: product?.category || '',
 		available: product?.available ?? true,
 		salesChannel: normalizeSalesChannel(product?.salesChannel),
-		stockQuantity: product?.stockQuantity?.toString() || ''
+		stockQuantity: ''
 	});
 
 	const [imageFile, setImageFile] = useState(null);
@@ -162,9 +162,14 @@ const ProductForm = ({
 			const productData = {
 				...formData,
 				imageUrl: finalImageUrl,
-				price: parseFloat(formData.price),
-				stockQuantity: parseInt(formData.stockQuantity) || 0
+				price: parseFloat(formData.price)
 			};
+			// Existing products change stock only through ledger adjustments.
+			if (product) {
+				delete productData.stockQuantity;
+			} else {
+				productData.stockQuantity = parseInt(formData.stockQuantity, 10) || 0;
+			}
 
 			await onSubmit(productData);
 		} catch (error) {
@@ -222,19 +227,21 @@ const ProductForm = ({
 					/>
 				</div>
 
-				<div>
-					<label className="block text-sm font-medium text-gray-700 mb-1">
-						Số lượng tồn kho
-					</label>
-					<input
-						type="number"
-						name="stockQuantity"
-						value={formData.stockQuantity}
-						onChange={handleInputChange}
-						className="form-input"
-						min="0"
-					/>
-				</div>
+				{!product && (
+					<div>
+						<label className="block text-sm font-medium text-gray-700 mb-1">
+							Tồn ban đầu
+						</label>
+						<input
+							type="number"
+							name="stockQuantity"
+							value={formData.stockQuantity}
+							onChange={handleInputChange}
+							className="form-input"
+							min="0"
+						/>
+					</div>
+				)}
 			</div>
 
 			<div>
