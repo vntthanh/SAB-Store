@@ -9,6 +9,8 @@
 # Tests and the build run under the machine-wide heavy lock (lib/heavy-lock.sh),
 # which is only taken when there is work to do.
 . "$(dirname "$0")/lib/require-bash.sh"
+# shellcheck source=lib/hook-env.sh
+. "$(dirname "$0")/lib/hook-env.sh"
 set -Eeuo pipefail
 
 MAX_STAGED=29
@@ -55,6 +57,8 @@ if [[ "$backend_full" == false && ${#backend_files[@]} -eq 0 && "$frontend_chang
 	exit 0
 fi
 
+# shellcheck source=lib/yarn-path.sh
+source "$ROOT/.husky/lib/yarn-path.sh"
 # shellcheck source=lib/heavy-lock.sh
 source "$ROOT/.husky/lib/heavy-lock.sh"
 heavy_lock_hook SAB-Store pre-commit "$0" "$@"

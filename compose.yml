@@ -4,6 +4,37 @@ services:
     image: mongo:6.0
     container_name: sabstore_mongodb
     restart: unless-stopped
+    # Replica set (not standalone) so multi-document transactions work. The keyfile
+    # is generated from the runtime env at every start, so nothing has to exist on
+    # the host beforehand. It lives in /etc/mongo, not /tmp: the host sets
+    # fs.protected_regular=2, which forbids even root from re-creating a file owned
+    # by another user in a sticky directory, and a restarted (not recreated)
+    # container still holds last run's mongodb-owned file - hence the `rm -f`.
+    # Every `$` is doubled: compose would otherwise interpolate it first.
+    #
+    # Fail-closed on purpose: the platform turns an unset variable into an empty
+    # string, and a mongod with no usable keyfile must never start.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        fail() { echo "$$1" >&2; exit 1; }
+        key="$${MONGO_REPLICA_KEY:-}"
+        case "$$key" in
+          '' | *[!A-Za-z0-9+/=]*) fail "MONGO_REPLICA_KEY must be non-empty base64 characters only (no newlines)" ;;
+        esac
+        [ "$${#key}" -ge 6 ] && [ "$${#key}" -le 1024 ] || fail "MONGO_REPLICA_KEY must be 6-1024 characters"
+        umask 077
+        mkdir -p /etc/mongo
+        # umask 077 would leave the directory 0700 root: mongod (uid 999) could not reach its keyfile.
+        chmod 755 /etc/mongo
+        rm -f /etc/mongo/keyfile
+        printf '%s' "$$key" > /etc/mongo/keyfile
+        # mongod runs as uid 999 after the image entrypoint drops privileges; it
+        # rejects a keyfile that is group/world accessible or not readable by it.
+        chown 999:999 /etc/mongo/keyfile
+        chmod 400 /etc/mongo/keyfile
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /etc/mongo/keyfile --bind_ip_all --wiredTigerCacheSizeGB 0.25
     mem_limit: 512m
     logging:
       driver: json-file
@@ -14,6 +45,8 @@ services:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-password123}
       MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE:-minipreorder}
+      # Dev-only key (base64 of a fixed phrase); never reuse it outside a local stack.
+      MONGO_REPLICA_KEY: ${MONGO_REPLICA_KEY:-ZGV2LW9ubHktcmVwbGljYS1rZXktc2FiLXN0b3Jl}
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     ports:
       # Bound to loopback only: dev still needs host access (GUI clients,
@@ -23,10 +56,27 @@ services:
       - mongodb_data:/data/db
     networks:
       - sabstore_network
+    # Idempotent bootstrap: the first probe that finds the set uninitialised
+    # (fresh or just-converted data dir) initiates it; afterwards it only reports
+    # whether this node is primary. Credentials come from the container env via
+    # process.env, so they never appear in argv or output.
     healthcheck:
-      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+      test:
+        - CMD-SHELL
+        - |
+          mongosh --quiet --eval '
+            const admin = db.getSiblingDB("admin");
+            if (!admin.auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD)) quit(1);
+            try {
+              admin.runCommand({ replSetGetStatus: 1 });
+            } catch (e) {
+              if (e.code !== 94 && e.codeName !== "NotYetInitialized") quit(1);
+              rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongodb:27017" }] });
+            }
+            quit(admin.hello().isWritablePrimary ? 0 : 1);
+          '
       interval: 10s
-      timeout: 5s
+      timeout: 10s
       retries: 5
       start_period: 30s
 
@@ -134,7 +184,7 @@ services:
       # prod.compose.yml uses `:?` to fail fast instead.
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
       BASE_URL: ${PUBLIC_URL:-http://localhost}
-      MONGODB_URI: ${MONGODB_URI:-mongodb://admin:password123@mongodb:27017/minipreorder?authSource=admin}
+      MONGODB_URI: ${MONGODB_URI:-mongodb://admin:password123@mongodb:27017/minipreorder?authSource=admin&replicaSet=rs0}
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-here}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-sab@fit.hcmus.edu.vn}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
