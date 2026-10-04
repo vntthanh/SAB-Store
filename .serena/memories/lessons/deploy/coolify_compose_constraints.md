@@ -55,3 +55,11 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
   `docker exec coolify-db psql -U coolify -d coolify -At -c "select logs from application_deployment_queues where id=<id>"`;
   log chứa lệnh build với tên build-arg (giá trị secret nằm ở file, không in ra) — vẫn lọc/redact khi đọc.
 - Coolify UI: chỉ đọc qua claude-in-chrome; dòng lịch sử deploy trong UI có thể không bấm mở được → dùng DB.
+
+- Chuỗi proxy production (đo 04/10): host :80/:443 → Traefik v3.6 `coolify-proxy` (mạng project `10.0.10.0/24`, Traefik `.5`) →
+  nginx frontend (`.6`) → backend. `$remote_addr` của nginx = IP Traefik cho MỌI request; IP khách ở X-Forwarded-For (trường
+  cuối của log). Traefik GHI ĐÈ XFF client gửi (probe `X-Forwarded-For: 9.9.9.9` → nginx chỉ thấy IP thật) — khác
+  proxy-manager của JudgeHub (nối thêm). Đếm khách: dùng trường XFF, không dùng trường đầu (thấy "1 IP" là sai).
+- Cổng deploy của user (04/10): downtime < 30 s → deploy ngay (đo bằng probe 1 req/s suốt lần deploy); không bảo đảm
+  được thì chỉ deploy khi 15 phút không ai xem sản phẩm — script đọc log `activity-check.sh` (thư mục plan kênh bán).
+  Trước deploy: verify bằng Playwright MCP trên localhost với catalog clone từ production (products/combos/settings, không dữ liệu khách).
