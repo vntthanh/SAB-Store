@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatCurrency, getImageUrl } from '../../utils/helpers';
+import { SALES_CHANNEL_LABELS, normalizeSalesChannel } from '../../utils/sales-channel';
 
 const ProductsTable = ({ products, onEdit, onDelete }) => {
 	if (products.length === 0) {
@@ -75,6 +76,11 @@ const ProductsTable = ({ products, onEdit, onDelete }) => {
 								<span className={`badge ${product.available ? 'badge-success' : 'badge-danger'}`}>
 									{product.available ? 'Đang bán' : 'Ngừng bán'}
 								</span>
+								{product.available && normalizeSalesChannel(product.salesChannel) !== 'all' && (
+									<span className="badge badge-primary ml-2">
+										{SALES_CHANNEL_LABELS[normalizeSalesChannel(product.salesChannel)]}
+									</span>
+								)}
 							</td>
 							<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
 								<button

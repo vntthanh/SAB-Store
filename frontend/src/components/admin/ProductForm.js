@@ -9,6 +9,7 @@ import {
 	needsCropping
 } from '../../utils/imageUtils';
 import { getImageUrl } from '../../utils/helpers';
+import { SALES_CHANNELS, SALES_CHANNEL_LABELS, normalizeSalesChannel } from '../../utils/sales-channel';
 
 const ProductForm = ({
 	product,
@@ -23,6 +24,7 @@ const ProductForm = ({
 		imageUrl: product?.imageUrl || '',
 		category: product?.category || '',
 		available: product?.available ?? true,
+		salesChannel: normalizeSalesChannel(product?.salesChannel),
 		stockQuantity: product?.stockQuantity?.toString() || ''
 	});
 
@@ -39,6 +41,7 @@ const ProductForm = ({
 	const [uploading, setUploading] = useState(false);
 	const [processingImage, setProcessingImage] = useState(false);
 	const [imageInfo, setImageInfo] = useState(null);
+	const [submitting, setSubmitting] = useState(false);
 
 	const handleInputChange = (e) => {
 		const { name, value, type, checked } = e.target;
@@ -141,6 +144,8 @@ const ProductForm = ({
 
 	const handleSubmit = async (e) => {
 		e.preventDefault();
+		if (submitting) return;
+		setSubmitting(true);
 		try {
 			let finalImageUrl = formData.imageUrl;
 
@@ -165,6 +170,8 @@ const ProductForm = ({
 		} catch (error) {
 			console.error('Error saving product:', error);
 			toast.error('Lỗi khi lưu sản phẩm');
+		} finally {
+			setSubmitting(false);
 		}
 	};
 
@@ -395,6 +402,28 @@ const ProductForm = ({
 				</label>
 			</div>
 
+			<fieldset className={formData.available ? '' : 'opacity-50'}>
+				<legend className="block text-sm font-medium text-gray-700 mb-1">Kênh bán</legend>
+				<div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:gap-x-6">
+					{SALES_CHANNELS.map((channel) => (
+						<label key={channel} className="inline-flex items-center min-h-[2rem] text-sm text-gray-700">
+							<input
+								type="radio"
+								className="form-radio"
+								name="salesChannel"
+								value={channel}
+								checked={formData.salesChannel === channel}
+								onChange={handleInputChange}
+							/>
+							<span className="ml-2">{SALES_CHANNEL_LABELS[channel]}</span>
+						</label>
+					))}
+				</div>
+				{!formData.available && (
+					<p className="text-xs text-gray-500 mt-1">Ngừng bán ở mọi kênh</p>
+				)}
+			</fieldset>
+
 			<div className="flex justify-end space-x-3 pt-4">
 				<button
 					type="button"
@@ -403,8 +432,8 @@ const ProductForm = ({
 				>
 					Hủy
 				</button>
-				<button type="submit" className="btn-primary">
-					{product ? 'Cập nhật' : 'Thêm mới'}
+				<button type="submit" className="btn-primary" disabled={submitting}>
+					{submitting ? 'Đang lưu...' : product ? 'Cập nhật' : 'Thêm mới'}
 				</button>
 			</div>
 		</form>

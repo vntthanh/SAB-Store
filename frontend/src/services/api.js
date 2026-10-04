@@ -258,17 +258,6 @@ export const adminService = {
 		}
 	},
 
-	// Create direct sale order (admin)
-	createDirectOrder: async (orderData) => {
-		try {
-			const response = await api.post('/admin/orders/direct', orderData);
-			return response.data;
-		} catch (error) {
-			console.error('API Error - createDirectOrder:', error.response?.data || error.message);
-			throw error;
-		}
-	},
-
 	// Delete all orders (admin only - DANGEROUS)
 	deleteAllOrders: async () => {
 		try {
@@ -580,9 +569,11 @@ export const comboService = {
 	},
 
 	// Calculate optimal pricing for items
-	calculatePricing: async (items) => {
+	// `channel` is omitted when unset so the server applies its own default (online).
+	calculatePricing: async (items, { channel } = {}) => {
 		try {
-			const response = await api.post('/combos/pricing', { items });
+			const body = channel ? { items, channel } : { items };
+			const response = await api.post('/combos/pricing', body);
 			return response.data;
 		} catch (error) {
 			throw new Error(error.response?.data?.message || 'Lỗi khi tính toán giá tối ưu');

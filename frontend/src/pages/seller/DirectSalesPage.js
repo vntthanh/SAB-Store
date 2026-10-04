@@ -83,7 +83,7 @@ const DirectSalesPage = () => {
 
 		setLoadingPricing(true);
 		try {
-			const result = await comboService.calculatePricing(items);
+			const result = await comboService.calculatePricing(items, { channel: 'offline' });
 
 			if (result.success) {
 				setPricingInfo(result.data);

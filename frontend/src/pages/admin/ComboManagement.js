@@ -4,6 +4,7 @@ import Swal from 'sweetalert2';
 import { adminService } from '../../services/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
+import { SALES_CHANNELS, SALES_CHANNEL_LABELS, normalizeSalesChannel } from '../../utils/sales-channel';
 
 const ComboManagement = () => {
 	const [combos, setCombos] = useState([]);
@@ -17,8 +18,10 @@ const ComboManagement = () => {
 		price: '',
 		priority: 0,
 		categoryRequirements: [{ category: '', quantity: 1 }],
-		isActive: true
+		isActive: true,
+		salesChannel: 'all'
 	});
+	const [submitting, setSubmitting] = useState(false);
 
 	// Fetch combos and categories
 	useEffect(() => {
@@ -84,6 +87,8 @@ const ComboManagement = () => {
 			return;
 		}
 
+		if (submitting) return;
+		setSubmitting(true);
 		try {
 			const comboData = {
 				...formData,
@@ -115,6 +120,8 @@ const ComboManagement = () => {
 		} catch (error) {
 			console.error('[COMBO] Error:', error);
 			toast.error(error.message || 'Có lỗi xảy ra');
+		} finally {
+			setSubmitting(false);
 		}
 	};
 
@@ -129,7 +136,8 @@ const ComboManagement = () => {
 				category: req.category,
 				quantity: req.quantity
 			})),
-			isActive: combo.isActive
+			isActive: combo.isActive,
+			salesChannel: normalizeSalesChannel(combo.salesChannel)
 		});
 		setShowModal(true);
 	};
@@ -181,7 +189,8 @@ const ComboManagement = () => {
 			price: '',
 			priority: 0,
 			categoryRequirements: [{ category: '', quantity: 1 }],
-			isActive: true
+			isActive: true,
+			salesChannel: 'all'
 		});
 	};
 
@@ -287,6 +296,9 @@ const ComboManagement = () => {
 												Ưu tiên
 											</th>
 											<th className="text-left py-3 px-4 font-semibold text-gray-900">
+												Kênh áp dụng
+											</th>
+											<th className="text-left py-3 px-4 font-semibold text-gray-900">
 												Trạng thái
 											</th>
 											<th className="text-left py-3 px-4 font-semibold text-gray-900">
@@ -328,6 +340,11 @@ const ComboManagement = () => {
 												<td className="py-3 px-4">
 													<span className="text-gray-600">
 														{combo.priority}
+													</span>
+												</td>
+												<td className="py-3 px-4">
+													<span className="inline-block bg-blue-50 text-blue-800 px-2 py-1 rounded text-xs whitespace-nowrap">
+														{SALES_CHANNEL_LABELS[normalizeSalesChannel(combo.salesChannel)]}
 													</span>
 												</td>
 												<td className="py-3 px-4">
@@ -454,6 +471,23 @@ const ComboManagement = () => {
 								</div>
 							</div>
 
+							<div>
+								<label className="block text-sm font-medium text-gray-700 mb-2">
+									Kênh áp dụng
+								</label>
+								<select
+									value={formData.salesChannel}
+									onChange={(e) => setFormData(prev => ({ ...prev, salesChannel: e.target.value }))}
+									className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+								>
+									{SALES_CHANNELS.map(channel => (
+										<option key={channel} value={channel}>
+											{SALES_CHANNEL_LABELS[channel]}
+										</option>
+									))}
+								</select>
+							</div>
+
 							{/* Category Requirements */}
 							<div>
 								<div className="flex justify-between items-center mb-3">
@@ -517,8 +551,8 @@ const ComboManagement = () => {
 								>
 									Hủy
 								</button>
-								<button type="submit" className="btn-primary">
-									{editingCombo ? 'Cập nhật' : 'Tạo combo'}
+								<button type="submit" className="btn-primary" disabled={submitting}>
+									{submitting ? 'Đang lưu...' : editingCombo ? 'Cập nhật' : 'Tạo combo'}
 								</button>
 							</div>
 						</form>
