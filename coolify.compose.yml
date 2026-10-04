@@ -313,10 +313,10 @@ services:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     expose:
       - "5000"
-    # service_started, not service_healthy: start.js already retries MongoDB and the
-    # object store (30 x 2 s) before it listens, and Redis is optional. Waiting for health
-    # here only serialised the slowest dependency (SeaweedFS, ~16 s) in front of the
-    # backend and frontend during the window the site is down.
+    # service_started, not service_healthy: start.js retries MongoDB (30 x 2 s) before
+    # it listens and creates the storage bucket in the background after, and Redis is
+    # optional. Waiting for health here only serialised the slowest dependency
+    # (SeaweedFS) in front of the backend and frontend during the window the site is down.
     depends_on:
       mongodb:
         condition: service_started

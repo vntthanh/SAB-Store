@@ -46,14 +46,6 @@ const ProductCard = ({ product }) => {
 						{product.category}
 					</span>
 				</div>
-				{/* Availability Badge */}
-				{!product.available && (
-					<div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-						<span className="badge-danger text-white">
-							Hết hàng
-						</span>
-					</div>
-				)}
 			</div>
 			{/* Product Info */}
 			<div className="p-4 flex flex-col flex-1">
@@ -106,15 +98,6 @@ const ProductCard = ({ product }) => {
 							</div>
 						)}
 					</div>
-				)}
-				{/* Out of Stock Button */}
-				{!product.available && (
-					<button
-						disabled
-						className="btn-secondary w-full opacity-50 cursor-not-allowed mt-4"
-					>
-						Hết hàng
-					</button>
 				)}
 			</div>
 		</div>

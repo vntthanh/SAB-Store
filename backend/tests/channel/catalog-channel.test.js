@@ -77,6 +77,20 @@ describe('product catalog by sales channel', () => {
 		expect(namesOf(res)).toEqual([match.name]);
 	});
 
+	it('never tells online customers the stock level', async () => {
+		await makeProduct({ name: 'Counted', salesChannel: 'online', sku: 'SKU-LIST-1', stockQuantity: 3 });
+
+		const res = await request(app).get('/api/products');
+
+		const listed = res.body.data.products.find((p) => p.name === 'Counted');
+		expect(listed).toBeDefined();
+		expect(listed).not.toHaveProperty('stockQuantity');
+		expect(listed).not.toHaveProperty('sku');
+		expect(listed).not.toHaveProperty('isActive');
+		const grouped = Object.values(res.body.data.groupedProducts).flat();
+		expect(grouped.every((p) => !('stockQuantity' in p))).toBe(true);
+	});
+
 	it('ignores ?available=false: the public list never shows stopped products', async () => {
 		const stopped = await makeProduct({ name: 'Explicit False Target', available: false });
 		const selling = await makeProduct({ name: 'Selling Online', available: true });

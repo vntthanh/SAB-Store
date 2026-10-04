@@ -4,6 +4,11 @@ const { asString, safeSearch } = require('../utils/query-guard');
 const { authenticateSeller } = require('../middleware/better-auth');
 const router = express.Router();
 
+// Online customers never learn stock levels: out of stock never blocks an
+// order, so the number would only mislead. SKU and the retired isActive flag
+// are internal too.
+const PUBLIC_PRODUCT_HIDDEN_FIELDS = '-stockQuantity -sku -isActive';
+
 /**
  * @route   GET /api/products
  * @desc    Get all products
@@ -24,6 +29,7 @@ router.get('/', async (req, res) => {
 
 		// Get products with sorting
 		const products = await Product.findSellable('online', filter)
+			.select(PUBLIC_PRODUCT_HIDDEN_FIELDS)
 			.sort({ category: 1, name: 1 })
 			.lean();
 
@@ -109,10 +115,8 @@ router.get('/direct-sales', authenticateSeller, async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
 	try {
-		// Stock level, SKU and the deprecated isActive flag are internal; the
-		// public detail page has no use for them.
 		const [product] = await Product.findSellable('online', { _id: req.params.id })
-			.select('-stockQuantity -sku -isActive')
+			.select(PUBLIC_PRODUCT_HIDDEN_FIELDS)
 			.limit(1)
 			.lean();
 
