@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useState, useCallback, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { comboService } from '../services/api';
 
@@ -90,8 +90,16 @@ export const CartProvider = ({ children }) => {
 		savings: 0,
 		message: null,
 		isChecking: false,
+		combos: [],
 		optimalPricing: null
 	});
+
+	// Only the newest preview request may update state: an older response that
+	// lands late would show a total the server no longer computes.
+	const pricingRequestId = useRef(0);
+	// True while the latest preview failed: the total on screen is then only a
+	// retail estimate, so checkout must not offer it as an expectedTotal.
+	const [pricingError, setPricingError] = useState(false);
 
 	// Store previous combo state for comparison
 	const [previousComboState, setPreviousComboState] = useState({
@@ -122,9 +130,12 @@ export const CartProvider = ({ children }) => {
 		if (cart.items.length > 0) {
 			checkForCombos();
 		} else {
+			pricingRequestId.current++;
+			setPricingError(false);
 			setComboDetection({
 				hasCombo: false,
 				combo: null,
+				combos: [],
 				savings: 0,
 				message: null,
 				isChecking: false,
@@ -167,6 +178,8 @@ export const CartProvider = ({ children }) => {
 	const checkForCombos = useCallback(async () => {
 		if (cart.items.length === 0) return;
 
+		const requestId = ++pricingRequestId.current;
+		setPricingError(false);
 		setComboDetection(prev => ({ ...prev, isChecking: true }));
 
 		try {
@@ -176,15 +189,18 @@ export const CartProvider = ({ children }) => {
 			}));
 
 			const result = await comboService.calculatePricing(items);
+			if (requestId !== pricingRequestId.current) return;
 
 			if (!result.success) {
 				throw new Error(result.message || 'Failed to calculate pricing');
 			}
 
+			// Server shape: { originalTotal, totalAmount, savings, orderItems, comboInfo }.
+			// comboInfo.combos lists every combo applied, each with its own savings.
+			const combos = result.data.comboInfo ? result.data.comboInfo.combos : [];
 			const newComboData = {
-				hasCombo: result.success && result.data.summary.totalSavings > 0,
-				savings: result.success ? result.data.summary.totalSavings : 0,
-				combos: result.success ? result.data.combos : []
+				hasCombo: result.data.savings > 0,
+				savings: result.data.savings
 			};
 
 			// Check if combo state has actually changed
@@ -193,7 +209,8 @@ export const CartProvider = ({ children }) => {
 			if (newComboData.hasCombo) {
 				setComboDetection({
 					hasCombo: true,
-					combo: newComboData.combos.length > 0 ? newComboData.combos[0] : null,
+					combo: combos.length > 0 ? combos[0] : null,
+					combos,
 					savings: newComboData.savings,
 					message: `Tiết kiệm ${formatCurrency(newComboData.savings)} với combo tối ưu`,
 					isChecking: false,
@@ -217,17 +234,18 @@ export const CartProvider = ({ children }) => {
 				// Update previous combo state
 				setPreviousComboState({
 					hasCombo: true,
-					comboIds: newComboData.combos.map(combo => combo._id || combo.id),
+					comboIds: combos.map(combo => combo.comboId),
 					totalSavings: newComboData.savings
 				});
 			} else {
 				setComboDetection({
 					hasCombo: false,
 					combo: null,
+					combos: [],
 					savings: 0,
 					message: null,
 					isChecking: false,
-					optimalPricing: result.success ? result.data : null
+					optimalPricing: result.data
 				});
 
 				// Update previous combo state
@@ -238,10 +256,13 @@ export const CartProvider = ({ children }) => {
 				});
 			}
 		} catch (error) {
+			if (requestId !== pricingRequestId.current) return;
 			console.error('Combo detection error:', error.message || error);
+			setPricingError(true);
 			setComboDetection({
 				hasCombo: false,
 				combo: null,
+				combos: [],
 				savings: 0,
 				message: null,
 				isChecking: false,
@@ -326,7 +347,7 @@ export const CartProvider = ({ children }) => {
 	const getCartTotal = () => {
 		// Use optimal pricing if available
 		if (comboDetection.optimalPricing) {
-			return comboDetection.optimalPricing.summary.finalTotal;
+			return comboDetection.optimalPricing.totalAmount;
 		}
 
 		// Fallback to base total from individual items
@@ -354,41 +375,17 @@ export const CartProvider = ({ children }) => {
 		}).format(amount);
 	};
 
-	// Get pricing breakdown for display
+	// Pricing figures for display. Without a server preview (still loading, or it
+	// failed) they fall back to the plain sum; the checkout waits for the preview
+	// before it lets an order be submitted.
 	const getPricingBreakdown = () => {
 		if (comboDetection.optimalPricing) {
-			return comboDetection.optimalPricing;
+			const { originalTotal, totalAmount, savings } = comboDetection.optimalPricing;
+			return { originalTotal, totalAmount, savings, combos: comboDetection.combos };
 		}
 
-		// Return basic breakdown if no optimal pricing
 		const total = cart.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-		return {
-			summary: {
-				originalTotal: total,
-				finalTotal: total,
-				totalSavings: 0,
-				savingsPercentage: '0'
-			},
-			combos: [],
-			individualItems: cart.items.map(item => ({
-				productId: item.productId,
-				productName: item.productName,
-				price: item.price,
-				quantity: item.quantity,
-				subtotal: item.price * item.quantity
-			})),
-			breakdown: [{
-				type: 'individual',
-				items: cart.items.map(item => ({
-					productId: item.productId,
-					productName: item.productName,
-					price: item.price,
-					quantity: item.quantity,
-					subtotal: item.price * item.quantity
-				})),
-				totalPrice: total
-			}]
-		};
+		return { originalTotal: total, totalAmount: total, savings: 0, combos: [] };
 	};
 
 	const value = {
@@ -405,6 +402,7 @@ export const CartProvider = ({ children }) => {
 		isInCart,
 		formatCurrency,
 		comboDetection,
+		pricingError,
 		checkForCombos,
 		getPricingBreakdown
 	};

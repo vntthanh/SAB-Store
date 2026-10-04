@@ -121,11 +121,11 @@ const HomePage = () => {
 									<p className="text-green-700 text-sm">
 										{comboDetection.message}
 									</p>
-									{comboDetection.optimalPricing && comboDetection.optimalPricing.combos.length > 0 && (
+									{comboDetection.combos.length > 0 && (
 										<div className="mt-2 text-xs text-green-600">
-											{comboDetection.optimalPricing.combos.map((combo, index) => (
+											{comboDetection.combos.map((combo, index) => (
 												<div key={index} className="flex justify-between">
-													<span>{combo.name} x{combo.applications}</span>
+													<span>{combo.comboName} x{combo.applications}</span>
 													<span>-{formatCurrency(combo.savings)}</span>
 												</div>
 											))}
