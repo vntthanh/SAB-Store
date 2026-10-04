@@ -123,7 +123,7 @@ router.get('/dashboard/stats', async (req, res) => {
 
 		// Get recent orders
 		const recentOrders = await Order.find()
-			.select('-internalNotes')
+			.select('-internalNotes -itemsHistory')
 			.populate('items.productId', 'name imageUrl')
 			.sort({ createdAt: -1 })
 			.limit(5)
@@ -222,7 +222,7 @@ router.get('/orders', async (req, res) => {
 			page: pageNum,
 			limit: limitNum,
 			sort,
-			select: '-internalNotes',
+			select: '-internalNotes -itemsHistory',
 			populate: [
 				{
 					path: 'items.productId',
@@ -362,8 +362,8 @@ router.put('/orders/:id/status', validateOrderUpdate, async (req, res) => {
 			});
 		});
 
-		// Internal notes are admin-only.
-		const { internalNotes: _adminOnly, ...visibleOrder } = transitioned.toObject();
+		// Internal notes and the edit history (whole previous item sets) are admin-only.
+		const { internalNotes: _adminOnly, itemsHistory: _adminHistory, ...visibleOrder } = transitioned.toObject();
 		res.json({
 			success: true,
 			message: 'Cập nhật trạng thái đơn hàng thành công',
@@ -396,7 +396,7 @@ router.get('/orders/:id', async (req, res) => {
 		const { id } = req.params;
 
 		const order = await Order.findById(id)
-			.select('-internalNotes')
+			.select('-internalNotes -itemsHistory')
 			.populate('items.productId', 'name imageUrl price category')
 			.lean();
 
@@ -559,7 +559,7 @@ router.post('/orders/direct', validateDirectOrder, async (req, res) => {
 
 		// Populate order for response
 		const populatedOrder = await Order.findById(order._id)
-			.select('-internalNotes')
+			.select('-internalNotes -itemsHistory')
 			.populate('items.productId', 'name imageUrl')
 			.lean();
 

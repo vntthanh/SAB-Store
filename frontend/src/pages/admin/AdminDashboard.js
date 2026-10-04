@@ -6,6 +6,7 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
 import ChangePassword from '../../components/ChangePassword';
 import OrderNotesPanel from '../../components/admin/OrderNotesPanel';
+import OrderItemsEditor from '../../components/admin/OrderItemsEditor';
 import { isFinalOrderStatus } from '../../utils/order-status';
 
 const AdminDashboard = () => {
@@ -103,7 +104,9 @@ const AdminDashboard = () => {
 	// Keep the open modal and the list row in sync with the saved order
 	const handleNotesSaved = (updatedOrder) => {
 		setSelectedOrderStatus(prev => (prev && prev._id === updatedOrder._id ? { ...prev, ...updatedOrder } : prev));
-		setOrders(prev => prev.map(o => (o._id === updatedOrder._id ? { ...o, ...updatedOrder } : o)));
+		// The list never carries the edit history (the list endpoint omits it too).
+		const { itemsHistory: _history, ...listFields } = updatedOrder;
+		setOrders(prev => prev.map(o => (o._id === updatedOrder._id ? { ...o, ...listFields } : o)));
 	};
 
 	// Handle order status update
@@ -258,9 +261,29 @@ const AdminDashboard = () => {
 		}
 	};
 
+	// The list omits itemsHistory, so the modal loads the full order. The row
+	// opens immediately; the full copy is merged in only if the same order is still open.
+	const loadFullOrder = async (orderId) => {
+		try {
+			const response = await adminService.getOrder(orderId);
+			if (response.data) {
+				setSelectedOrderStatus(prev => (prev && prev._id === orderId ? { ...prev, ...response.data } : prev));
+				return response.data;
+			}
+		} catch (error) {
+			toast.error(error.message || 'Lỗi khi tải chi tiết đơn hàng');
+		}
+		return null;
+	};
+
 	// Show status details
 	const showStatusDetails = (order) => {
 		setSelectedOrderStatus(order);
+		loadFullOrder(order._id);
+	};
+
+	const handleItemsSaved = (updatedOrder) => {
+		handleNotesSaved(updatedOrder);
 	};
 
 	// Handle export to Excel
@@ -896,6 +919,15 @@ const AdminDashboard = () => {
 								<p className="text-sm"><strong>Email:</strong> {selectedOrderStatus.email}</p>
 							</div>
 						</div>
+
+						<OrderItemsEditor
+							order={selectedOrderStatus}
+							onSaved={handleItemsSaved}
+							onReload={async () => {
+								const fresh = await loadFullOrder(selectedOrderStatus._id);
+								if (fresh) handleNotesSaved(fresh);
+							}}
+						/>
 
 						<OrderNotesPanel order={selectedOrderStatus} onSaved={handleNotesSaved} />
 

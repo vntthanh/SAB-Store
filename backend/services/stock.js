@@ -132,4 +132,4 @@ function transitionOrderWithStock({ orderId, status, setFields, historyEntry, ac
 	});
 }
 
-module.exports = { recordOrderMovements, stockEffectOfTransition, transitionOrderWithStock };
+module.exports = { unitsByProduct, recordOrderMovements, stockEffectOfTransition, transitionOrderWithStock };

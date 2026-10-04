@@ -1,7 +1,9 @@
 const express = require('express');
 const Order = require('../../models/Order');
 const { ERROR_CODES, ERROR_MESSAGES } = require('../../constants/errorCodes');
-const { validateOrderUpdate, validateOrderNotes } = require('../../middleware/validation');
+const { validateOrderUpdate, validateOrderNotes, validateOrderItemsEdit } = require('../../middleware/validation');
+const { editOrderItems } = require('../../services/order-edit');
+const { PricingError, pricingErrorBody } = require('../../services/pricing');
 const { getPaginationInfo } = require('../../utils/helpers');
 const { sendOrderToAppScript } = require('../../utils/appscript');
 const { transitionOrderWithStock } = require('../../services/stock');
@@ -45,6 +47,7 @@ router.get('/', async (req, res) => {
 				.sort(sortOptions)
 				.skip(skip)
 				.limit(limitNum)
+				.select('-itemsHistory')
 				.lean(),
 			Order.countDocuments(query)
 		]);
@@ -234,6 +237,77 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi cập nhật đơn hàng'
+		});
+	}
+});
+
+/**
+ * @route   PUT /api/admin/orders/:id/items
+ * @desc    Replace the products of a confirmed/paid order without changing its total
+ * @access  Private (Admin)
+ *
+ * The total is a rule enforced in services/order-edit.js, not something this
+ * route reads from the request. Nothing is pushed to App Script: the sheet is
+ * keyed by order code and this repo cannot tell whether a resend would overwrite
+ * the row or append another, so `itemsHistory` is the record of the change.
+ */
+router.put('/:id/items', validateOrderItemsEdit, async (req, res) => {
+	try {
+		const { items, expectedRevision, reason } = req.body;
+
+		const result = await editOrderItems({
+			orderId: req.params.id,
+			items: items.map(({ productId, quantity }) => ({ productId, quantity })),
+			expectedRevision,
+			reason,
+			actor: req.admin.username
+		});
+
+		switch (result.outcome) {
+			case 'not_found':
+				return res.status(404).json({ success: false, message: 'Không tìm thấy đơn hàng' });
+			case 'final':
+				return res.status(409).json({
+					success: false,
+					code: ERROR_CODES.ORDER_FINAL,
+					message: ERROR_MESSAGES[ERROR_CODES.ORDER_FINAL].vi
+				});
+			case 'changed':
+				return res.status(409).json({
+					success: false,
+					code: ERROR_CODES.ORDER_CHANGED,
+					message: ERROR_MESSAGES[ERROR_CODES.ORDER_CHANGED].vi
+				});
+			case 'total_changed':
+				return res.status(409).json({
+					success: false,
+					code: ERROR_CODES.ORDER_TOTAL_CHANGED,
+					message: ERROR_MESSAGES[ERROR_CODES.ORDER_TOTAL_CHANGED].vi,
+					details: { expected: result.expected, actual: result.actual }
+				});
+			case 'unchanged':
+				return res.json({ success: true, unchanged: true, data: result.order });
+			default:
+				break;
+		}
+
+		// The edit is durable; only now may stock work be queued.
+		await enqueueMovements(result.movements);
+
+		res.json({
+			success: true,
+			message: 'Cập nhật sản phẩm trong đơn hàng thành công',
+			data: result.order
+		});
+
+	} catch (error) {
+		if (error instanceof PricingError) {
+			return res.status(error.httpStatus).json(pricingErrorBody(error));
+		}
+		console.error('Error editing order items:', error);
+		res.status(500).json({
+			success: false,
+			message: 'Lỗi server khi sửa sản phẩm trong đơn hàng'
 		});
 	}
 });

@@ -136,6 +136,38 @@ const validateOrderUpdate = [
 ];
 
 // `additionalNote` may be empty (clears the customer note); `note` may not.
+const validateOrderItemsEdit = [
+	param('id').isMongoId().withMessage('ID đơn hàng không hợp lệ'),
+
+	body('items')
+		.isArray({ min: 1, max: 50 })
+		.withMessage('Danh sách sản phẩm phải có từ 1 đến 50 dòng'),
+	body('items.*.productId')
+		.isMongoId()
+		.withMessage('ID sản phẩm không hợp lệ'),
+	body('items.*.quantity')
+		.isInt({ min: 1 })
+		.withMessage('Số lượng phải là số nguyên từ 1 trở lên')
+		.bail()
+		.toInt(),
+
+	body('expectedRevision')
+		.isInt({ min: 0 })
+		.withMessage('expectedRevision phải là số nguyên không âm')
+		.bail()
+		.toInt(),
+
+	body('reason')
+		.isString()
+		.withMessage('Lý do không hợp lệ')
+		.bail()
+		.trim()
+		.isLength({ min: 1, max: 200 })
+		.withMessage('Lý do phải từ 1 đến 200 ký tự'),
+
+	handleValidationErrors
+];
+
 const validateOrderNotes = [
 	param('id').isMongoId().withMessage('ID đơn hàng không hợp lệ'),
 
@@ -262,6 +294,7 @@ module.exports = {
 	validateDirectOrder,
 	validateOrderUpdate,
 	validateOrderNotes,
+	validateOrderItemsEdit,
 	validateComboItems,
 	validatePasswordChange,
 	validateUserRegistration,

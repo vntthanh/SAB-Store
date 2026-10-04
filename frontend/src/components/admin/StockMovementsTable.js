@@ -10,6 +10,7 @@ const TYPE_LABELS = {
 	opening: 'Tồn đầu',
 	order: 'Đơn hàng',
 	order_cancel: 'Huỷ đơn',
+	order_edit: 'Sửa đơn',
 	adjust: 'Thêm/bớt',
 	set_target: 'Đặt tồn'
 };

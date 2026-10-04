@@ -215,6 +215,17 @@ export const adminService = {
 		}
 	},
 
+	// Replace an order's product lines; the server keeps the total unchanged.
+	// Errors carry `code`/`details` (ORDER_TOTAL_CHANGED, ORDER_CHANGED, ORDER_FINAL).
+	updateOrderItems: async (id, data) => {
+		try {
+			const response = await api.put(`/admin/orders/${id}/items`, data);
+			return response.data;
+		} catch (error) {
+			throw toApiError(error, 'Lỗi khi sửa sản phẩm trong đơn hàng');
+		}
+	},
+
 	// Product management
 	getProducts: async () => {
 		try {

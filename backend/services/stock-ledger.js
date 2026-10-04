@@ -42,6 +42,8 @@ const DELTA_RULES = {
 	opening: () => true,
 	order: (d) => d < 0,
 	order_cancel: (d) => d > 0,
+	// An edit moves units either way between products, so only a zero delta is meaningless.
+	order_edit: (d) => d !== 0,
 	adjust: (d) => d !== 0
 };
 

@@ -187,6 +187,27 @@ const orderSchema = new mongoose.Schema({
 		at: { type: Date, default: Date.now },
 		_id: false
 	}],
+	// Bumped by every admin edit of `items`; the edit's compare-and-set key. Orders
+	// stored before it existed lack the field, so readers treat a missing value as 0.
+	itemsRevision: {
+		type: Number,
+		default: 0
+	},
+	// One entry per admin edit of `items`, holding the set it replaced. Admin-only
+	// and heavy (whole item sets): excluded from lists and every seller read.
+	itemsHistory: [{
+		previousItems: { type: mongoose.Schema.Types.Mixed, default: [] },
+		previousComboInfo: { type: mongoose.Schema.Types.Mixed, default: null },
+		editedBy: { type: String, required: true },
+		editedAt: { type: Date, default: Date.now },
+		reason: {
+			type: String,
+			required: true,
+			trim: true,
+			maxlength: [200, 'Lý do không được vượt quá 200 ký tự']
+		},
+		_id: false
+	}],
 	lastUpdatedBy: {
 		type: String,
 		default: 'system' // Username of who last updated the order
