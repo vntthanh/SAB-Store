@@ -257,6 +257,19 @@ export const CartProvider = ({ children }) => {
 			}
 		} catch (error) {
 			if (requestId !== pricingRequestId.current) return;
+			// A cart kept in localStorage outlives the catalog: a product switched off
+			// (or moved to the counter only) would otherwise block checkout forever.
+			// Drop exactly the lines the server named; the cart change re-runs pricing.
+			const goneIds = error.details?.missingIds || [];
+			const gone = cart.items.filter(item => goneIds.includes(item.productId));
+			if (gone.length > 0) {
+				gone.forEach(item => dispatch({ type: CART_ACTIONS.REMOVE_ITEM, payload: item.productId }));
+				toast.warning(
+					`Đã bỏ khỏi giỏ vì không còn bán: ${gone.map(item => item.productName).join(', ')}`,
+					{ position: "bottom-right", autoClose: 5000 }
+				);
+				return;
+			}
 			console.error('Combo detection error:', error.message || error);
 			setPricingError(true);
 			setComboDetection({
