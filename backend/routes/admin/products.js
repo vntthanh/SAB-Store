@@ -1,8 +1,8 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const Product = require('../../models/Product');
 const { asString, asEnum, asPageLimit, safeSearch } = require('../../utils/query-guard');
 const { recordAppliedOpening, countPendingByProduct } = require('../../services/stock-ledger');
+const { withTransaction } = require('../../utils/transaction');
 const router = express.Router();
 
 /** `stockQuantity` must be a non-negative integer; anything else is rejected outright. */
@@ -126,32 +126,27 @@ router.post('/', async (req, res) => {
 		// The product and its opening movement commit together, so the cache and
 		// the ledger agree from the first moment. The document is built inside the
 		// callback because withTransaction may run it again.
-		let product;
-		const session = await mongoose.startSession();
-		try {
-			await session.withTransaction(async () => {
-				product = new Product({
-					name,
-					description,
-					price,
-					category,
-					imageUrl: imageUrl || undefined, // Let the schema default handle it
-					available: available !== undefined ? available : true,
-					...(salesChannel !== undefined && { salesChannel }),
-					stockQuantity: openingStock,
-					minOrderQuantity: minOrderQuantity || 1
-				});
-				await product.save({ session });
-				if (openingStock > 0) {
-					await recordAppliedOpening(
-						{ productId: product._id, quantity: openingStock, createdBy: req.user && req.user.email },
-						{ session }
-					);
-				}
+		const product = await withTransaction(async (session) => {
+			const created = new Product({
+				name,
+				description,
+				price,
+				category,
+				imageUrl: imageUrl || undefined, // Let the schema default handle it
+				available: available !== undefined ? available : true,
+				...(salesChannel !== undefined && { salesChannel }),
+				stockQuantity: openingStock,
+				minOrderQuantity: minOrderQuantity || 1
 			});
-		} finally {
-			await session.endSession();
-		}
+			await created.save({ session });
+			if (openingStock > 0) {
+				await recordAppliedOpening(
+					{ productId: created._id, quantity: openingStock, createdBy: req.user && req.user.email },
+					{ session }
+				);
+			}
+			return created;
+		});
 
 		res.status(201).json({
 			success: true,

@@ -10,6 +10,8 @@ const Account = require('../../models/Account');
 const Combo = require('../../models/Combo');
 
 const { asString } = require('../../utils/query-guard');
+const { withTransaction } = require('../../utils/transaction');
+const { recordAppliedOpening } = require('../../services/stock-ledger');
 
 const router = express.Router();
 
@@ -346,7 +348,17 @@ router.post('/import', upload.single('dataFile'), async (req, res) => {
 						importResults.products.skipped++;
 						continue;
 					}
-					await Product.create(pick(raw, IMPORT_WHITELIST.products));
+					// The imported stock enters the ledger as its opening movement, in the
+					// same transaction, so the cache stays equal to the sum of movements.
+					await withTransaction(async (session) => {
+						const [product] = await Product.create([pick(raw, IMPORT_WHITELIST.products)], { session });
+						if (product.stockQuantity !== 0) {
+							await recordAppliedOpening(
+								{ productId: product._id, quantity: product.stockQuantity, createdBy: req.user && req.user.email, reason: 'import' },
+								{ session }
+							);
+						}
+					});
 					importResults.products.imported++;
 				} catch (error) {
 					importResults.products.errors++;

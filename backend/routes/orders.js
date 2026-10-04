@@ -5,7 +5,12 @@ const { generateOrderCode } = require('../utils/helpers');
 const { sendOrderToAppScript } = require('../utils/appscript');
 const { generateOrderPaymentQR, formatOrderPaymentDescription } = require('../utils/paymentHelper');
 const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError } = require('../services/pricing');
+const { recordOrderMovements } = require('../services/stock');
+const { enqueueMovements } = require('../services/stock-ledger');
+const { withTransaction } = require('../utils/transaction');
 const router = express.Router();
+
+const MAX_ORDER_CODE_ATTEMPTS = 10;
 
 /**
  * @route   POST /api/orders
@@ -23,80 +28,85 @@ router.post('/', validateOrder, async (req, res) => {
 
 		console.log('🔍 Processing items:', items.map(item => ({ productId: item.productId, quantity: item.quantity })));
 
-		// totalAmount, orderItems and comboInfo always come from the DB via
-		// computeOrderPricing — nothing the client sends about price is read.
-		// expectedTotal is only compared: a mismatch means the price moved since
-		// the customer saw it, so no order is created.
-		let totalAmount, orderItems, comboInfo;
-		try {
-			({ totalAmount, orderItems, comboInfo } = await computeOrderPricing(items, { channel: 'online' }));
-			assertExpectedTotal(expectedTotal, totalAmount);
-		} catch (pricingError) {
-			if (pricingError instanceof PricingError) {
-				console.error('❌ Pricing rejected order:', pricingError.code, pricingError.details);
-				return res.status(pricingError.httpStatus).json(pricingErrorBody(pricingError));
-			}
-			throw pricingError;
-		}
-
-		console.log('💾 Creating order in database...');
-		// Generate a unique order code and create the order. Retries cover two
-		// distinct collision windows: generateOrderCode() picking a code another
-		// order already has (checked below via findOne) and the rarer race
-		// where two requests pick the same fresh code between that check and
-		// the insert — that one only surfaces as a Mongo E11000 on save().
-		let order;
-		let attempts = 0;
-		const maxAttempts = 10;
-
-		while (!order) {
-			attempts++;
-			if (attempts > maxAttempts) {
-				console.error('❌ Failed to create order after', maxAttempts, 'attempts (orderCode collisions)');
-				return res.status(500).json({
-					success: false,
-					message: 'Không thể tạo mã đơn hàng duy nhất'
-				});
-			}
-
-			const orderCode = generateOrderCode();
-			const existingOrder = await Order.findOne({ orderCode });
-			if (existingOrder) {
-				continue;
-			}
-
+		// Price, order and stock movements are one transaction: nothing the client
+		// sends about price is read (expectedTotal is only compared — a mismatch
+		// means the price moved since the customer saw it), and a failure at any
+		// step leaves no order and no movement behind. Stock is never checked, so
+		// an order for a product that has none is accepted.
+		//
+		// A duplicate orderCode (another order already has it, or two requests drew
+		// the same fresh code) is an E11000 that aborts the transaction, so the
+		// whole transaction runs again with a new code.
+		let created;
+		for (let attempt = 1; !created; attempt++) {
 			try {
-				order = await new Order({
-					orderCode,
-					studentId,
-					fullName,
-					email,
-					phoneNumber,
-					additionalNote,
-					items: orderItems,
-					totalAmount,
-					status: 'confirmed',
-					lastUpdatedBy: 'system',
-					comboInfo,
-					statusHistory: [
-						{
-							status: 'confirmed',
-							updatedBy: 'system',
-							updatedAt: new Date(),
-							note: 'Đơn hàng được tạo từ hệ thống'
-						}
-					]
-				}).save();
-			} catch (saveError) {
-				if (saveError.code === 11000) {
-					console.warn('⚠️ orderCode collision on save, retrying:', orderCode);
-					continue; // another request took this code between findOne and save
+				created = await withTransaction(async (session) => {
+					const pricing = await computeOrderPricing(items, {
+						channel: 'online',
+						session,
+						enforceQuantityLimits: true
+					});
+					assertExpectedTotal(expectedTotal, pricing.totalAmount);
+
+					const order = await new Order({
+						orderCode: generateOrderCode(),
+						studentId,
+						fullName,
+						email,
+						phoneNumber,
+						additionalNote,
+						items: pricing.orderItems,
+						totalAmount: pricing.totalAmount,
+						status: 'confirmed',
+						stockDeducted: true,
+						lastUpdatedBy: 'system',
+						comboInfo: pricing.comboInfo,
+						statusHistory: [
+							{
+								status: 'confirmed',
+								updatedBy: 'system',
+								updatedAt: new Date(),
+								note: 'Đơn hàng được tạo từ hệ thống'
+							}
+						]
+					}).save({ session });
+
+					const movements = await recordOrderMovements({
+						orderId: order._id,
+						items: pricing.orderItems,
+						type: 'order',
+						keyTag: 'create',
+						createdBy: 'system',
+						reason: `Đơn hàng ${order.orderCode}`
+					}, { session });
+
+					return { order, pricing, movements };
+				});
+			} catch (error) {
+				if (error instanceof PricingError) {
+					console.error('❌ Pricing rejected order:', error.code, error.details);
+					return res.status(error.httpStatus).json(pricingErrorBody(error));
 				}
-				throw saveError;
+				if (error.code === 11000 && attempt < MAX_ORDER_CODE_ATTEMPTS) {
+					console.warn('⚠️ orderCode collision, retrying transaction');
+					continue;
+				}
+				if (error.code === 11000) {
+					console.error('❌ Failed to create order after', MAX_ORDER_CODE_ATTEMPTS, 'attempts (orderCode collisions)');
+					return res.status(500).json({
+						success: false,
+						message: 'Không thể tạo mã đơn hàng duy nhất'
+					});
+				}
+				throw error;
 			}
 		}
 
+		const { order, pricing: { totalAmount, orderItems, comboInfo }, movements } = created;
 		console.log('✅ Order saved successfully:', order._id);
+
+		// The order is durable; only now may anything leave the transaction.
+		await enqueueMovements(movements);
 
 		// Generate payment QR URL and description
 		let qrUrl = null;

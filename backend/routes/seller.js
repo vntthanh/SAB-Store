@@ -9,11 +9,13 @@ const { sendOrderToAppScript } = require('../utils/appscript');
 const { generateDirectSalePaymentQR } = require('../utils/paymentHelper');
 const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError } = require('../services/pricing');
 const { auth } = require('../lib/auth');
-const { StockError, deductStockForItems, restoreStockForItems, applyStatusTransitionStockEffect } = require('../services/stock');
-const ErrorLogger = require('../utils/errorLogger');
+const { recordOrderMovements, transitionOrderWithStock } = require('../services/stock');
+const { enqueueMovements } = require('../services/stock-ledger');
+const { withTransaction } = require('../utils/transaction');
 const { asEnum, asSort, asDate, safeSearch, asPageLimit } = require('../utils/query-guard');
 const router = express.Router();
 
+const MAX_ORDER_CODE_ATTEMPTS = 10;
 const ORDER_STATUSES = ['confirmed', 'paid', 'delivered', 'cancelled'];
 const ORDER_SORTABLE_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode', 'orderNumber'];
 
@@ -263,42 +265,14 @@ router.get('/orders', async (req, res) => {
  * @desc    Update order status
  * @access  Private (Seller)
  *
- * validateOrderUpdate (F9): the admin PUT /:id route already ran this; this
- * route didn't. Mongoose 8's `runValidators` DOES validate a `$push`-ed
- * statusHistory entry (verified directly — an over-length note throws a real
- * ValidationError here), so an oversized note was never actually stored; the
- * defect was that this route's catch-all `catch` block has no `ValidationError`
- * branch (unlike the admin route's), so that rejection surfaced as an opaque
- * 500 instead of the clean 400 every other rejection on this API returns.
- * Running the same express-validator chain admin's route already uses closes
- * that gap the same way admin's route closes it — the request is now
- * rejected before it ever reaches Mongoose. Also folds in the status-enum
- * check the manual `if` below used to do, from the same list.
+ * Runs validateOrderUpdate, as the admin route does: Mongoose would reject an
+ * over-length note too, but this route's catch-all would turn that into a 500
+ * instead of a 400. The validator also checks the status against the enum.
  */
 router.put('/orders/:id/status', validateOrderUpdate, async (req, res) => {
 	const { id } = req.params;
 	try {
 		const { status, transactionCode, cancelReason, note } = req.body;
-
-		const existing = await Order.findById(id).lean();
-		if (!existing) {
-			return res.status(404).json({
-				success: false,
-				message: 'Không tìm thấy đơn hàng'
-			});
-		}
-
-		const previousStatus = existing.status;
-
-		// See routes/admin/orders.js PUT /:id for why a same-status transition
-		// is rejected outright instead of falling through to a same-value
-		// conditional update that would trivially match and "succeed" again.
-		if (status === previousStatus) {
-			return res.status(409).json({
-				success: false,
-				message: 'Đơn hàng đã ở trạng thái này'
-			});
-		}
 
 		const historyEntry = {
 			status,
@@ -322,75 +296,42 @@ router.put('/orders/:id/status', validateOrderUpdate, async (req, res) => {
 			historyEntry.note = note;
 		}
 
-		// Conditional transition (see routes/admin/orders.js PUT /:id for the
-		// full rationale): only the request whose read of previousStatus still
-		// matches at write time wins. This is the seller-facing route the POS
-		// UI (DirectSalesPage) actually calls to cancel a direct sale — this
-		// route never touched stock at all on cancel before, which left the
-		// same asymmetric-accounting bug this phase closes in the admin route,
-		// just reachable from the seller UI instead.
-		const transitioned = await Order.findOneAndUpdate(
-			{ _id: id, status: previousStatus },
-			{ $set: setFields, $push: { statusHistory: historyEntry } },
-			{ new: true, runValidators: true }
-		).populate('items.productId', 'name imageUrl price');
+		// Status and stock movement commit together (see transitionOrderWithStock),
+		// and a request that lost a race for the same order is told so instead of
+		// transitioning it a second time.
+		const result = await transitionOrderWithStock({
+			orderId: id,
+			status,
+			setFields,
+			historyEntry,
+			actor: req.seller.username
+		});
 
-		if (!transitioned) {
+		if (result.outcome === 'not_found') {
+			return res.status(404).json({
+				success: false,
+				message: 'Không tìm thấy đơn hàng'
+			});
+		}
+		if (result.outcome === 'unchanged') {
+			return res.status(409).json({
+				success: false,
+				message: 'Đơn hàng đã ở trạng thái này'
+			});
+		}
+		if (result.outcome === 'conflict') {
 			return res.status(409).json({
 				success: false,
 				message: 'Đơn hàng vừa được người khác cập nhật, vui lòng tải lại và thử lại'
 			});
 		}
 
-		try {
-			const newStockDeducted = await applyStatusTransitionStockEffect({
-				items: transitioned.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
-				isDirectSale: transitioned.isDirectSale,
-				stockDeducted: transitioned.stockDeducted,
-				previousStatus,
-				newStatus: status
-			});
+		await enqueueMovements(result.movements);
 
-			if (newStockDeducted !== null) {
-				// F8: guard on the exact (status, stockDeducted) pair this
-				// request's decision was based on — see the identical comment
-				// in routes/admin/orders.js PUT /:id for the full race and why
-				// an unguarded write here could clobber a concurrent
-				// cancel/un-cancel's already-correct flag.
-				const flagResult = await Order.updateOne(
-					{ _id: id, status, stockDeducted: transitioned.stockDeducted },
-					{ $set: { stockDeducted: newStockDeducted } }
-				);
-				if (flagResult.matchedCount > 0) {
-					transitioned.stockDeducted = newStockDeducted;
-				} else {
-					ErrorLogger.logCritical(
-						'stockDeducted không được ghi vì đơn hàng đã bị thay đổi bởi yêu cầu khác — cần đối soát thủ công',
-						new Error('STOCK_DEDUCTED_FLAG_RACE'),
-						{ orderId: id, previousStatus, status, intendedStockDeducted: newStockDeducted }
-					);
-				}
-			}
-		} catch (stockErr) {
-			await Order.updateOne(
-				{ _id: id, status },
-				{ $set: { status: previousStatus, statusUpdatedAt: new Date() }, $pop: { statusHistory: 1 } }
-			);
-
-			if (stockErr instanceof StockError && stockErr.code === 'INSUFFICIENT_STOCK') {
-				return res.status(400).json({
-					success: false,
-					message: 'Không đủ hàng trong kho để khôi phục đơn hàng này',
-					details: stockErr.details
-				});
-			}
-
-			ErrorLogger.logCritical('Cập nhật kho thất bại khi seller đổi trạng thái đơn hàng', stockErr, { orderId: id, previousStatus, status });
-			return res.status(500).json({
-				success: false,
-				message: 'Lỗi khi cập nhật kho hàng'
-			});
-		}
+		// The transaction's session has ended; populate must not reuse it.
+		const transitioned = result.order;
+		transitioned.$session(null);
+		await transitioned.populate('items.productId', 'name imageUrl price');
 
 		const appscriptData = {
 			orderCode: transitioned.orderCode,
@@ -484,6 +425,10 @@ router.get('/orders/:id', async (req, res) => {
  * preview, so a counter sale can ring up a cart that qualifies for several
  * different combos. The client sends only ids, quantities and the
  * `expectedTotal` it displayed; a stale total is refused with 409.
+ *
+ * A product's `maxOrderQuantity` is a limit the cashier may override: over it,
+ * the sale is refused with 409 QUANTITY_OVER_MAX until the client resends with
+ * `allowOverMax: true`, and the order's history then records who confirmed it.
  */
 router.post('/orders/direct', validateDirectOrder, async (req, res) => {
 	try {
@@ -505,115 +450,96 @@ router.post('/orders/direct', validateDirectOrder, async (req, res) => {
 			}
 		}
 
-		let pricing;
-		try {
-			pricing = await computeOrderPricing(items, { channel: 'offline' });
-			assertExpectedTotal(expectedTotal, pricing.totalAmount);
-		} catch (pricingError) {
-			if (pricingError instanceof PricingError) {
-				return res.status(pricingError.httpStatus).json(pricingErrorBody(pricingError));
-			}
-			throw pricingError;
-		}
+		const username = req.seller?.username || 'unknown';
 
-		const { orderItems, comboInfo, totalAmount } = pricing;
+		// Price, order and stock movements are one transaction; stock is never
+		// checked, so a counter sale for a product with none left goes through.
+		// A duplicate orderNumber / orderCode (E11000) aborts the transaction and
+		// the whole thing runs again: orderNumber is read from the latest order
+		// each time, orderCode is drawn afresh.
+		let created;
+		for (let attempt = 1; !created; attempt++) {
+			try {
+				created = await withTransaction(async (session) => {
+					const pricing = await computeOrderPricing(items, {
+						channel: 'offline',
+						session,
+						enforceQuantityLimits: true,
+						allowOverMax: req.body.allowOverMax === true
+					});
+					assertExpectedTotal(expectedTotal, pricing.totalAmount);
 
-		const stockLines = orderItems.map(item => ({ productId: item.productId, quantity: item.quantity }));
+					const lastOrder = await Order.findOne(
+						{ orderNumber: { $regex: /^SAB\d{6}$/ } },
+						{ orderNumber: 1 }
+					).sort({ orderNumber: -1 }).session(session).lean();
+					const nextNumber = lastOrder && lastOrder.orderNumber
+						? parseInt(lastOrder.orderNumber.replace('SAB', ''), 10) + 1
+						: 1;
 
-		// Deduct stock atomically before persisting the order. A mid-loop
-		// failure (a later line short on stock) compensates every line
-		// already deducted, so a rejected direct sale never leaves stock
-		// short — this replaces the old read-modify-write
-		// `product.stockQuantity -= qty; await product.save()`, which two
-		// sellers racing the last unit could both pass unharmed.
-		try {
-			await deductStockForItems(stockLines);
-		} catch (stockErr) {
-			if (stockErr instanceof StockError && stockErr.code === 'INSUFFICIENT_STOCK') {
-				return res.status(400).json({
-					success: false,
-					message: 'Một hoặc nhiều sản phẩm không đủ số lượng trong kho',
-					details: stockErr.details
-				});
-			}
-			throw stockErr;
-		}
+					// D100000-D999999 (900,000 values); old D#### codes on existing
+					// orders remain valid.
+					const orderCode = `D${String(Math.floor(Math.random() * 900000) + 100000)}`;
 
-		// orderNumber's base comes from a single pre-read; orderCode is
-		// re-randomized every attempt. Either colliding on save() (E11000)
-		// retries with a fresh pair — the pre-read only narrows the race, the
-		// actual uniqueness guarantee is the retry loop below.
-		const lastOrder = await Order.findOne(
-			{ orderNumber: { $regex: /^SAB\d{6}$/ } },
-			{ orderNumber: 1 }
-		).sort({ orderNumber: -1 }).lean();
-		const baseOrderNumber = lastOrder && lastOrder.orderNumber
-			? parseInt(lastOrder.orderNumber.replace('SAB', ''), 10) + 1
-			: 1;
-
-		let order;
-		let attempts = 0;
-		const maxAttempts = 10;
-		try {
-			while (!order) {
-				attempts++;
-				if (attempts > maxAttempts) {
-					throw Object.assign(new Error('ORDER_CODE_EXHAUSTED'), { code: 'ORDER_CODE_EXHAUSTED' });
-				}
-
-				const orderNumber = `SAB${String(baseOrderNumber + attempts - 1).padStart(6, '0')}`;
-				// D100000-D999999 (900,000 values). Widened from the old
-				// D1000-D9999 (9,000 values) format, which a handful of direct
-				// sales a day could exhaust the practical collision-free space
-				// of; old D#### codes already on real orders remain valid.
-				const orderCode = `D${String(Math.floor(Math.random() * 900000) + 100000)}`;
-
-				try {
-					order = await new Order({
-						orderNumber,
+					const order = await new Order({
+						orderNumber: `SAB${String(nextNumber).padStart(6, '0')}`,
 						orderCode,
 						// For direct sales, don't include customer data fields
 						fullName: `NB: ${req.seller.username}`,
-						items: orderItems,
-						totalAmount,
+						items: pricing.orderItems,
+						totalAmount: pricing.totalAmount,
 						status: 'confirmed',
 						isDirectSale: true,
 						stockDeducted: true,
 						createdBy: req.seller?.id || null,
-						lastUpdatedBy: req.seller?.username || 'unknown',
-						comboInfo,
+						lastUpdatedBy: username,
+						comboInfo: pricing.comboInfo,
 						statusHistory: [{
 							status: 'confirmed',
-							updatedBy: req.seller?.username || 'unknown',
-							updatedAt: new Date()
+							updatedBy: username,
+							updatedAt: new Date(),
+							// What the cashier confirmed, kept on the order for reconciliation.
+							...(pricing.overMaxLines.length > 0 && {
+								note: `Bán vượt số lượng tối đa — xác nhận bởi ${username}`
+							})
 						}]
-					}).save();
-				} catch (saveError) {
-					if (saveError.code === 11000) continue; // orderNumber/orderCode collision, retry
-					throw saveError;
-				}
-			}
-		} catch (orderCreationError) {
-			// Order never persisted — compensate the stock deducted above so a
-			// failed direct sale never leaves stock permanently short.
-			await restoreStockForItems(stockLines).catch(compensationError => {
-				ErrorLogger.logCritical('Bù kho thất bại sau khi tạo đơn bán trực tiếp (seller) thất bại', compensationError, { stockLines });
-			});
+					}).save({ session });
 
-			if (orderCreationError.code === 'ORDER_CODE_EXHAUSTED') {
-				return res.status(500).json({
-					success: false,
-					message: 'Không thể tạo mã đơn hàng duy nhất sau nhiều lần thử'
+					const movements = await recordOrderMovements({
+						orderId: order._id,
+						items: pricing.orderItems,
+						type: 'order',
+						keyTag: 'create',
+						createdBy: username,
+						reason: `Bán trực tiếp ${order.orderCode}`
+					}, { session });
+
+					return { order, pricing, movements };
 				});
+			} catch (error) {
+				if (error instanceof PricingError) {
+					return res.status(error.httpStatus).json(pricingErrorBody(error));
+				}
+				if (error.code === 11000 && attempt < MAX_ORDER_CODE_ATTEMPTS) continue;
+				if (error.code === 11000) {
+					return res.status(500).json({
+						success: false,
+						message: 'Không thể tạo mã đơn hàng duy nhất sau nhiều lần thử'
+					});
+				}
+				throw error;
 			}
-			throw orderCreationError;
 		}
+
+		const { order, pricing: { comboInfo, totalAmount }, movements } = created;
+
+		// The order is durable; only now may anything leave the transaction.
+		await enqueueMovements(movements);
 
 		// Generate payment QR URL for direct sales
 		let qrUrl = null;
 		try {
-			const username = req.seller?.username || 'seller';
-			qrUrl = await generateDirectSalePaymentQR(totalAmount, order.orderCode, username);
+			qrUrl = await generateDirectSalePaymentQR(totalAmount, order.orderCode, req.seller?.username || 'seller');
 		} catch (qrError) {
 			console.error('❌ Failed to generate direct sale QR URL:', qrError.message);
 		}

@@ -1,227 +1,136 @@
 /**
- * Atomic stock mutation path — the single place `Product.stockQuantity` is
- * ever written from a code path that handles money or inventory.
+ * What an order does to stock, expressed as stock-ledger movements.
  *
- * No replica set exists in production (AD-4 — the required `rs.initiate`
- * command crashes mongo without a keyfile; verified experimentally, see the
- * plan). Every invariant here is therefore enforced with a single guarded
- * `findOneAndUpdate` instead of a multi-document transaction:
- *   - No overselling: the update's filter requires
- *     `stockQuantity >= quantity` for a deduction, so two concurrent buyers
- *     of the last unit race the same atomic operation and exactly one wins —
- *     the loser gets `null` back, never a negative stock value.
- *   - A multi-item order that fails partway through never leaves stock
- *     deducted for the lines that already succeeded: `deductStockForItems`
- *     tracks what it applied and compensates (restores) it in reverse order
- *     inside `catch` before re-throwing.
+ * `Product.stockQuantity` is never written here: an order records pending
+ * movements in the SAME transaction that creates or changes it, and the queue
+ * worker applies them later (see services/stock-ledger.js). Stock is never
+ * checked, so an order for a product with none left is accepted and the cache
+ * simply goes negative.
  *
- * Every function accepts an optional, nullable `session` so enabling a
- * transaction later (if a replica set is ever introduced) needs no call-site
- * changes — passing `session: null` today is a fully supported mode, not a
- * degraded one.
+ * `Order.stockDeducted` is the only thing that says whether an order currently
+ * holds stock, which is what keeps a cancel from returning units that were
+ * never taken (orders created before stock was tracked per order) and keeps two
+ * cancels from returning them twice.
  */
+const Order = require('../models/Order');
+const { recordMovement } = require('./stock-ledger');
+const { withTransaction } = require('../utils/transaction');
 
-const Product = require('../models/Product');
-const ErrorLogger = require('../utils/errorLogger');
+const MOVEMENT_SIGN = { order: -1, order_cancel: 1, order_restore: -1 };
 
-/** Error thrown for every rejected stock mutation. Always maps to an HTTP 4xx. */
-class StockError extends Error {
-	/**
-	 * @param {'INVALID_QUANTITY'|'INVALID_DELTA'|'INSUFFICIENT_STOCK'|'PRODUCT_NOT_FOUND'} code
-	 * @param {{productId?: string, quantity?: number, delta?: number, requested?: number}} [details]
-	 */
-	constructor(code, details = {}) {
-		super(code);
-		this.name = 'StockError';
-		this.code = code;
-		this.httpStatus = code === 'INSUFFICIENT_STOCK' || code === 'INVALID_QUANTITY' || code === 'INVALID_DELTA' ? 400 : 404;
-		this.details = details;
+/** Units per product across all lines: a combo line and a retail line of one product count together. */
+function unitsByProduct(items) {
+	const units = new Map();
+	for (const item of items) {
+		const key = String(item.productId);
+		units.set(key, (units.get(key) || 0) + item.quantity);
 	}
-}
-
-function assertPositiveInt(quantity, productId) {
-	if (!Number.isInteger(quantity) || quantity <= 0) {
-		throw new StockError('INVALID_QUANTITY', { productId, quantity });
-	}
+	return units;
 }
 
 /**
- * Apply an arbitrary non-zero integer delta to a product's `stockQuantity`
- * as a single atomic operation.
+ * Record one pending movement per product of an order. Call inside the
+ * transaction that writes the order, then `enqueueMovements` after it commits.
  *
- * A negative delta is guarded directly in the query filter
- * (`stockQuantity >= -delta`), so the write can never take stock below zero
- * even when many requests race the same document — Mongo evaluates the
- * filter and the update as one atomic step per document, so only writers
- * whose delta still fits the stock available *at the instant they run* can
- * succeed. This is also why schema-level `min: 0` validation cannot be
- * relied on here: Mongoose update validators explicitly ignore `$inc`
- * operations (verified against the Mongoose docs), so the filter guard is
- * the only enforcement that actually runs.
+ * `keyTag` makes the idempotency key unique per event of the order: creating is
+ * `create`, while every cancel / restore carries the order's status-history
+ * length so cancelling, restoring and cancelling again do not collide.
  *
- * @param {string|import('mongoose').Types.ObjectId} productId
- * @param {number} delta
- * @param {{session?: import('mongoose').ClientSession|null}} [opts]
- * @returns {Promise<import('mongoose').Document>} the updated product
- * @throws {StockError} INSUFFICIENT_STOCK (delta < 0, not enough stock) or
- *         PRODUCT_NOT_FOUND (delta >= 0, product does not exist)
+ * @param {{orderId: *, items: Array<{productId: *, quantity: number}>, type: 'order'|'order_cancel'|'order_restore',
+ *          keyTag: string, createdBy: string, reason: string}} movement
+ * @param {{session: import('mongoose').ClientSession}} opts
+ * @returns {Promise<Array<import('mongoose').Document>>}
  */
-async function adjustStock(productId, delta, opts = {}) {
-	const session = opts.session || null;
-
-	if (!Number.isInteger(delta) || delta === 0) {
-		throw new StockError('INVALID_DELTA', { productId, delta });
+async function recordOrderMovements({ orderId, items, type, keyTag, createdBy, reason }, { session }) {
+	const sign = MOVEMENT_SIGN[type];
+	const recorded = [];
+	// Sequential: one transaction session cannot run concurrent operations.
+	for (const [productId, quantity] of unitsByProduct(items)) {
+		recorded.push(await recordMovement({
+			productId,
+			type,
+			delta: sign * quantity,
+			orderId,
+			reason,
+			createdBy,
+			idempotencyKey: `order:${orderId}:${productId}:${keyTag}`
+		}, { session }));
 	}
-
-	const filter = { _id: productId };
-	if (delta < 0) {
-		filter.stockQuantity = { $gte: -delta };
-	}
-
-	let query = Product.findOneAndUpdate(
-		filter,
-		{ $inc: { stockQuantity: delta } },
-		{ new: true, runValidators: true }
-	);
-	if (session) query = query.session(session);
-	const updated = await query;
-
-	if (!updated) {
-		if (delta < 0) {
-			throw new StockError('INSUFFICIENT_STOCK', { productId, requested: -delta });
-		}
-		throw new StockError('PRODUCT_NOT_FOUND', { productId });
-	}
-	return updated;
-}
-
-/** Atomically decrement stock by `quantity` (must be a positive integer). */
-async function deductStock(productId, quantity, opts = {}) {
-	assertPositiveInt(quantity, productId);
-	return adjustStock(productId, -quantity, opts);
-}
-
-/** Atomically increment stock by `quantity` (must be a positive integer). */
-async function restoreStock(productId, quantity, opts = {}) {
-	assertPositiveInt(quantity, productId);
-	return adjustStock(productId, quantity, opts);
+	return recorded;
 }
 
 /**
- * Apply `sign * item.quantity` to every item in sequence. If any item fails,
- * every item already applied is compensated (the opposite sign) in reverse
- * order before the original error is re-thrown — an order that cannot be
- * fully deducted (or fully restored) must never leave a partial mutation
- * behind.
+ * Decide the stock effect of an order status change from the order's own state.
  *
- * A compensation failure itself (e.g. the product was deleted between the
- * forward and the reverse write) cannot be un-done automatically — it is
- * logged as critical for manual reconciliation rather than silently
- * swallowed, and the original error still propagates.
+ * - cancelling an order that holds stock gives it back;
+ * - un-cancelling an order that holds none takes it again (any order, web or
+ *   counter: both hold stock from creation now);
+ * - anything else, including cancelling an order that never held stock, does
+ *   nothing.
  *
- * `tolerateMissingProduct` (F5): when restoring stock for an order whose
- * product was hard-deleted after the sale, `adjustStock` has nothing to
- * increment and throws PRODUCT_NOT_FOUND. Without this, that line's whole
- * cancel/status-transition fails, the caller reverts the order's status, and
- * the order becomes permanently un-cancellable — every future cancel attempt
- * hits the same missing product. With it, a missing product on a *restore*
- * is logged and skipped (nothing to compensate for that line either: the
- * item never applied) instead of failing the whole operation. Only
- * `restoreStockForItems` opts into this — `deductStockForItems` (selling
- * stock of a product that no longer exists) must still fail hard.
+ * @returns {{type: 'order_cancel'|'order_restore', stockDeducted: boolean}|null}
+ *          the movement to record and the new `stockDeducted` to store, or null
  */
-async function applyStockDeltaForItems(items, sign, opts = {}) {
-	const { tolerateMissingProduct = false, ...adjustOpts } = opts;
-	const applied = [];
-	try {
-		for (const item of items) {
-			try {
-				await adjustStock(item.productId, sign * item.quantity, adjustOpts);
-				applied.push(item);
-			} catch (err) {
-				if (tolerateMissingProduct && err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') {
-					ErrorLogger.logCritical(
-						'Sản phẩm đã bị xóa — bỏ qua hoàn kho cho dòng này, cần đối soát thủ công nếu cần',
-						err,
-						{ productId: item.productId, quantity: item.quantity, sign }
-					);
-					continue; // nothing was applied for this line, so nothing to compensate
-				}
-				throw err;
-			}
-		}
-		return applied;
-	} catch (err) {
-		for (const item of applied.reverse()) {
-			try {
-				await adjustStock(item.productId, -sign * item.quantity, adjustOpts);
-			} catch (compensationError) {
-				ErrorLogger.logCritical(
-					'Bù kho thất bại sau khi trừ/hoàn một phần — cần sửa tay',
-					compensationError,
-					{ productId: item.productId, quantity: item.quantity, sign }
-				);
-			}
-		}
-		throw err;
-	}
-}
-
-/** Deduct stock for every `{productId, quantity}` line; compensates on partial failure. */
-function deductStockForItems(items, opts = {}) {
-	return applyStockDeltaForItems(items, -1, opts);
-}
-
-/**
- * Restore stock for every `{productId, quantity}` line; compensates on
- * partial failure. Tolerates a hard-deleted product (F5) — see
- * `applyStockDeltaForItems`'s doc comment.
- */
-function restoreStockForItems(items, opts = {}) {
-	return applyStockDeltaForItems(items, 1, { ...opts, tolerateMissingProduct: true });
-}
-
-/**
- * Decide and perform the stock side effect (if any) for an order status
- * transition, given the order's current stock-accounting state. Shared by
- * every route that can change an order's status (seller and admin), so the
- * "only deduct/restore for orders that actually deducted stock" rule lives
- * in exactly one place.
- *
- * - cancelling an order that had stock deducted restores it.
- * - un-cancelling a *direct-sale* order that no longer has stock deducted
- *   re-deducts it (guarded — insufficient stock rejects the transition).
- * - a web order (`isDirectSale: false`) never had stock deducted at
- *   creation (business decision, unchanged by this phase) and this function
- *   never deducts it on any transition either, cancel or un-cancel.
- *
- * @returns {Promise<boolean|null>} the new `stockDeducted` value the caller
- *          should persist on the order, or `null` if no stock action applied.
- * @throws {StockError} if a required re-deduction cannot be satisfied.
- */
-async function applyStatusTransitionStockEffect(
-	{ items, isDirectSale, stockDeducted, previousStatus, newStatus },
-	opts = {}
-) {
+function stockEffectOfTransition({ stockDeducted, previousStatus, newStatus }) {
 	if (newStatus === 'cancelled' && previousStatus !== 'cancelled' && stockDeducted) {
-		await restoreStockForItems(items, opts);
-		return false;
+		return { type: 'order_cancel', stockDeducted: false };
 	}
-
-	if (previousStatus === 'cancelled' && newStatus !== 'cancelled' && isDirectSale && !stockDeducted) {
-		await deductStockForItems(items, opts);
-		return true;
+	if (previousStatus === 'cancelled' && newStatus !== 'cancelled' && !stockDeducted) {
+		return { type: 'order_restore', stockDeducted: true };
 	}
-
 	return null;
 }
 
-module.exports = {
-	StockError,
-	adjustStock,
-	deductStock,
-	restoreStock,
-	deductStockForItems,
-	restoreStockForItems,
-	applyStatusTransitionStockEffect,
-};
+/**
+ * Change an order's status and, in the same transaction, record the stock
+ * movement the change calls for (see `stockEffectOfTransition`). Either both are
+ * stored or neither is, so an order never claims a status its stock cannot back.
+ *
+ * Two requests racing the same order cannot both win: a write conflict makes the
+ * driver re-run the loser, which then reads the winner's status. Call
+ * `enqueueMovements(result.movements)` after this resolves.
+ *
+ * @param {{orderId: string, status: string, setFields: object, historyEntry: object, actor: string}} change
+ *        `setFields` / `historyEntry` carry the status and whatever else the
+ *        route records (transaction code, cancel reason, note, who).
+ * @returns {Promise<{outcome: 'not_found'|'unchanged'|'conflict'|'ok', order?: import('mongoose').Document,
+ *                    movements?: Array<import('mongoose').Document>}>}
+ *          `unchanged` means the order already has `status`.
+ */
+function transitionOrderWithStock({ orderId, status, setFields, historyEntry, actor }) {
+	return withTransaction(async (session) => {
+		const existing = await Order.findById(orderId).session(session).lean();
+		if (!existing) return { outcome: 'not_found' };
+		if (existing.status === status) return { outcome: 'unchanged' };
+
+		const effect = stockEffectOfTransition({
+			stockDeducted: existing.stockDeducted === true,
+			previousStatus: existing.status,
+			newStatus: status
+		});
+
+		const order = await Order.findOneAndUpdate(
+			{ _id: orderId, status: existing.status },
+			{
+				$set: { ...setFields, ...(effect && { stockDeducted: effect.stockDeducted }) },
+				$push: { statusHistory: historyEntry }
+			},
+			{ new: true, runValidators: true, session }
+		);
+		if (!order) return { outcome: 'conflict' };
+		if (!effect) return { outcome: 'ok', order, movements: [] };
+
+		const tag = effect.type === 'order_cancel' ? 'cancel' : 'restore';
+		const movements = await recordOrderMovements({
+			orderId: order._id,
+			items: order.items,
+			type: effect.type,
+			keyTag: `${tag}:${order.statusHistory.length}`,
+			createdBy: actor,
+			reason: `${effect.type === 'order_cancel' ? 'Huỷ' : 'Bỏ huỷ'} đơn ${order.orderCode}`
+		}, { session });
+		return { outcome: 'ok', order, movements };
+	});
+}
+
+module.exports = { recordOrderMovements, stockEffectOfTransition, transitionOrderWithStock };

@@ -6,6 +6,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
+const { applyPendingMovements } = require('../helpers/stock');
 const Product = require('../../models/Product');
 const Order = require('../../models/Order');
 
@@ -45,6 +46,7 @@ describe('POST /api/seller/orders/direct — cart input handling', () => {
 		const totalQuantity = res.body.data.items.reduce((sum, item) => sum + item.quantity, 0);
 		expect(totalQuantity).toBe(2); // exactly the 2 units the cart asked for, not 3
 
+		await applyPendingMovements();
 		const afterProduct = await Product.findById(product._id);
 		expect(afterProduct.stockQuantity).toBe(8); // 10 - 2, never 10 - 3
 
@@ -66,6 +68,7 @@ describe('POST /api/seller/orders/direct — cart input handling', () => {
 
 		expect(res.status).toBe(201);
 
+		await applyPendingMovements();
 		const afterProduct = await Product.findById(product._id);
 		expect(afterProduct.stockQuantity).toBe(4);
 	});

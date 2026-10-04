@@ -1,28 +1,25 @@
 /**
- * Backfill `Order.stockDeducted` for the 430 production orders that predate
- * this field (added this phase). DOES NOT RUN AUTOMATICALLY — the lead runs
- * this by hand after reviewing the rule below and the dry-run output.
+ * Backfill `Order.stockDeducted` for orders created before the field existed.
+ * DOES NOT RUN AUTOMATICALLY — run it by hand after reviewing the rule below
+ * and the dry-run output.
  *
  * The rule: `stockDeducted = order.isDirectSale === true`.
  *
- * Why that rule is correct for every historical order, derived from reading
- * the route code (not from querying the real database, which this worktree
- * has no access to):
+ * Why that rule is correct for every order older than the field, derived
+ * from reading the route code of that time:
  *
  *   - Web orders (`isDirectSale: false`, created by routes/orders.js) never
- *     issued a single `stockQuantity` write anywhere in that route, before
- *     or after this phase (Q1 — an explicit, unchanged business decision).
+ *     wrote `stockQuantity` back then; stock is not deducted retroactively.
  *     -> stockDeducted must be false.
  *
  *   - Direct-sale orders created through backend/routes/seller.js
- *     POST /orders/direct DID deduct stock in the pre-this-phase code
+ *     POST /orders/direct DID deduct stock before the ledger
  *     (`product.stockQuantity -= item.quantity; await product.save();`, run
  *     for every line before the order document was even written).
  *     -> stockDeducted must be true.
  *
  *   - Direct-sale orders created through backend/routes/admin/orders.js
- *     POST /direct: this route was broken on every single call before this
- *     phase — `createdBy: req.admin.username` (a String) was assigned to a
+ *     POST /direct: this route failed on every call back then — `createdBy: req.admin.username` (a String) was assigned to a
  *     schema path typed `ObjectId`, which Mongoose rejects with a CastError
  *     on `order.save()`. Since the document is only written by that final
  *     `.save()` call, and it always threw, no order was ever actually

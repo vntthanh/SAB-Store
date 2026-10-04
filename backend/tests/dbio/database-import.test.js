@@ -6,6 +6,7 @@ const Combo = require('../../models/Combo');
 const Order = require('../../models/Order');
 const User = require('../../models/User');
 const Account = require('../../models/Account');
+const StockMovement = require('../../models/StockMovement');
 
 function attachImport(app, cookies, payload) {
 	const buffer = Buffer.from(JSON.stringify(payload));
@@ -183,6 +184,21 @@ describe('POST /api/admin/database/import', () => {
 		expect(second.body.results.orders.imported).toBe(0);
 		expect(second.body.results.orders.skipped).toBe(1);
 		expect(await Order.countDocuments({ orderCode: 'ORDDUP1' })).toBe(1);
+	});
+
+	it('records an imported product\'s stock as an applied opening movement', async () => {
+		const { cookies } = await makeAdminSession(app);
+
+		const res = await attachImport(app, cookies, {
+			data: { products: [{ name: 'Imported Strap', price: 20000, category: 'lanyard', stockQuantity: 7 }] }
+		});
+
+		expect(res.status).toBe(200);
+		expect(res.body.results.products.imported).toBe(1);
+		const product = await Product.findOne({ name: 'Imported Strap' });
+		const movements = await StockMovement.find({ productId: product._id }).lean();
+		expect(product.stockQuantity).toBe(7);
+		expect(movements).toEqual([expect.objectContaining({ type: 'opening', delta: 7, status: 'applied', stockAfter: 7 })]);
 	});
 
 	it('rejects an unauthenticated request', async () => {

@@ -15,20 +15,23 @@ const { ERROR_CODES } = require('../constants/errorCodes');
 /**
  * Error thrown for every rejected pricing request.
  *
- * HTTP 400 for every code except PRICE_CHANGED (409): each 400 describes a cart
- * the caller could have validated before sending, never a server fault.
+ * HTTP 400 for every code except PRICE_CHANGED and QUANTITY_OVER_MAX (409, both
+ * answered by the caller confirming and resending): each 400 describes a cart the
+ * caller could have validated before sending, never a server fault.
  */
 class PricingError extends Error {
 	/**
-	 * @param {'EMPTY_CART'|'PRODUCT_UNAVAILABLE'|'PRODUCT_CHANNEL_MISMATCH'|'INVALID_QUANTITY'|'CART_TOO_MANY_UNITS'|'CART_TOO_COMPLEX'|'PRICE_CHANGED'} code
+	 * @param {'EMPTY_CART'|'PRODUCT_UNAVAILABLE'|'PRODUCT_CHANNEL_MISMATCH'|'INVALID_QUANTITY'|'CART_TOO_MANY_UNITS'|'CART_TOO_COMPLEX'|'PRICE_CHANGED'|'QUANTITY_OUT_OF_RANGE'|'QUANTITY_OVER_MAX'} code
 	 * @param {{missingIds?: string[], productId?: string, productNames?: string[], channel?: string,
-	 *          expectedTotal?: number, totalAmount?: number}} [details]
+	 *          expectedTotal?: number, totalAmount?: number, productName?: string, quantity?: number,
+	 *          min?: number, max?: number|null, reason?: 'below_min'|'above_max',
+	 *          lines?: Array<{productId: string, productName: string, quantity: number, max: number}>}} [details]
 	 */
 	constructor(code, details = {}) {
 		super(code);
 		this.name = 'PricingError';
 		this.code = code;
-		this.httpStatus = code === ERROR_CODES.PRICE_CHANGED ? 409 : 400;
+		this.httpStatus = code === ERROR_CODES.PRICE_CHANGED || code === ERROR_CODES.QUANTITY_OVER_MAX ? 409 : 400;
 		this.details = details;
 	}
 }
@@ -50,6 +53,7 @@ const PRICING_ERROR_MESSAGES = {
 	[ERROR_CODES.CART_TOO_MANY_UNITS]: `Mỗi đơn hàng tối đa ${MAX_UNITS_PER_ORDER} sản phẩm`,
 	[ERROR_CODES.CART_TOO_COMPLEX]: 'Giỏ hàng quá phức tạp để tính giá, vui lòng tách thành nhiều đơn',
 	[ERROR_CODES.PRICE_CHANGED]: 'Giá vừa thay đổi, vui lòng xem lại giỏ hàng',
+	[ERROR_CODES.QUANTITY_OVER_MAX]: 'Số lượng vượt mức tối đa, cần xác nhận để bán',
 	EMPTY_CART: 'Danh sách sản phẩm không hợp lệ',
 	PRODUCT_UNAVAILABLE: 'Một hoặc nhiều sản phẩm không tồn tại hoặc không khả dụng',
 	INVALID_QUANTITY: 'Số lượng sản phẩm không hợp lệ',
@@ -70,6 +74,12 @@ function describePricingError(error) {
 	if (error.code === ERROR_CODES.PRODUCT_CHANNEL_MISMATCH) {
 		const names = (error.details.productNames || []).join(', ');
 		return `Sản phẩm không bán ${CHANNEL_LABELS[error.details.channel] || 'ở kênh này'}: ${names}`;
+	}
+	if (error.code === ERROR_CODES.QUANTITY_OUT_OF_RANGE) {
+		const { productName, reason, min, max } = error.details;
+		return reason === 'below_min'
+			? `${productName}: số lượng tối thiểu là ${min}`
+			: `${productName}: số lượng tối đa là ${max}`;
 	}
 	return PRICING_ERROR_MESSAGES[error.code] || 'Không thể tính giá đơn hàng';
 }
@@ -113,6 +123,40 @@ async function loadSellableProducts(ids, channel, session = null) {
 	throw new PricingError('PRODUCT_UNAVAILABLE', { missingIds });
 }
 
+/**
+ * Check each merged line against its product's `minOrderQuantity` /
+ * `maxOrderQuantity`. The minimum is a hard limit everywhere. The maximum is
+ * hard too, except that a counter sale may exceed it once the cashier has
+ * confirmed (`allowOverMax`); the lines that did exceed it are returned so the
+ * caller can leave an audit note on the order.
+ *
+ * @returns {Array<{productId: string, productName: string, quantity: number, max: number}>}
+ *          lines over their maximum that `allowOverMax` let through
+ * @throws {PricingError} QUANTITY_OUT_OF_RANGE (below min, or over max without
+ *         `allowOverMax` on the online channel), QUANTITY_OVER_MAX (counter sale
+ *         over max, not yet confirmed — carries every such line)
+ */
+function checkQuantityLimits(lines, { channel, allowOverMax }) {
+	const overMax = [];
+	for (const { id, product, quantity } of lines) {
+		const min = product.minOrderQuantity || 1;
+		const max = product.maxOrderQuantity;
+		const details = { productId: id, productName: product.name, quantity, min, max: max ?? null };
+		if (quantity < min) {
+			throw new PricingError(ERROR_CODES.QUANTITY_OUT_OF_RANGE, { ...details, reason: 'below_min' });
+		}
+		if (max == null || quantity <= max) continue;
+		if (channel !== 'offline') {
+			throw new PricingError(ERROR_CODES.QUANTITY_OUT_OF_RANGE, { ...details, reason: 'above_max' });
+		}
+		overMax.push({ productId: id, productName: product.name, quantity, max });
+	}
+
+	if (overMax.length > 0 && !allowOverMax) {
+		throw new PricingError(ERROR_CODES.QUANTITY_OVER_MAX, { lines: overMax });
+	}
+	return overMax;
+}
 
 /**
  * Compute an order's totals from the database, ignoring any client-supplied price.
@@ -141,6 +185,12 @@ async function loadSellableProducts(ids, channel, session = null) {
  *        Pass when called inside a transaction; every query issued here must
  *        then run with `.session(session)`. Null runs outside a transaction
  *        (read-only previews).
+ * @param {boolean} [opts.enforceQuantityLimits=false] Enforce each product's
+ *        min/max order quantity. Order routes set it; the read-only previews
+ *        do not, so a counter cart over a maximum still shows its total and the
+ *        cashier gets to the confirmation instead of a blank price.
+ * @param {boolean} [opts.allowOverMax=false] Counter sales only: the cashier
+ *        confirmed selling above a maximum. Ignored on the online channel.
  * @param {number} [opts.stateBudget] Combo search limit; tests lower it to
  *        reach CART_TOO_COMPLEX cheaply. Defaults to the optimizer's own.
  * @returns {Promise<{
@@ -162,6 +212,7 @@ async function loadSellableProducts(ids, channel, session = null) {
  *     finalTotal: number,
  *     combos: Array<{comboId: import('mongoose').Types.ObjectId, comboName: string, applications: number, savings: number}>
  *   }|null,
+ *   overMaxLines: Array<{productId: string, productName: string, quantity: number, max: number}>,
  *   products: Map<string, object>
  * }>}
  *        `orderItems[].productId` is an ObjectId, not a string, so the result
@@ -171,6 +222,8 @@ async function loadSellableProducts(ids, channel, session = null) {
  *        value and `finalTotal` what the combos charge for them, so
  *        `totalAmount = comboInfo.finalTotal + retail lines` — the identity the
  *        database importer relies on to rebuild a stored order's total.
+ *        `overMaxLines` lists the lines sold above their maximum on the cashier's
+ *        confirmation; empty otherwise.
  *        `products` is keyed by `productId.toString()` so callers can reuse the
  *        already-loaded objects instead of querying again.
  * @throws {TypeError} `opts.channel` is missing or not 'online'/'offline'.
@@ -219,6 +272,9 @@ async function computeOrderPricing(items, opts = {}) {
 	// Query 1/2 — products, filtered by the single sellable-on-channel rule.
 	const productMap = await loadSellableProducts(ids, channel, session);
 	const lines = ids.map((id) => ({ id, product: productMap.get(id), quantity: qtyByProductId.get(id) }));
+	const overMaxLines = opts.enforceQuantityLimits
+		? checkQuantityLimits(lines, { channel, allowOverMax: opts.allowOverMax === true })
+		: [];
 
 	// Query 2/2 — combos that apply on this channel.
 	let comboQuery = Combo.findSellable(channel).select(COMBO_FIELDS).lean();
@@ -335,7 +391,7 @@ async function computeOrderPricing(items, opts = {}) {
 		combos: comboSummaries,
 	};
 
-	return { originalTotal, totalAmount, savings, orderItems, comboInfo, products: productMap };
+	return { originalTotal, totalAmount, savings, orderItems, comboInfo, overMaxLines, products: productMap };
 }
 
 /**

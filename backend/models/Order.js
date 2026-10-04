@@ -51,14 +51,8 @@ const orderItemSchema = new mongoose.Schema({
 		required: true,
 		min: 1
 	},
-	// Per-line combo attribution. Subdocuments are strict by default — before
-	// these three fields existed on the schema, every route that constructed
-	// an item with fromCombo/comboId/comboName (matching services/pricing.js's
-	// documented orderItems[] contract) had them silently stripped by
-	// Mongoose on save, so no order ever actually recorded which of its
-	// items came from a combo once persisted, even though comboInfo (a
-	// separate, order-level field) survived. Found while wiring
-	// computeOrderPricing's output into the direct-sale routes for this phase.
+	// Per-line combo attribution. Subdocuments are strict: a field missing from
+	// this schema is silently dropped on save.
 	fromCombo: {
 		type: Boolean,
 		default: false
@@ -150,19 +144,16 @@ const orderSchema = new mongoose.Schema({
 		// stale 'pending' value that isn't itself the field being written is
 		// never re-validated — see routes' use of findOneAndUpdate/
 		// findByIdAndUpdate instead of load-then-save for every status
-		// transition this phase owns.
+		// status transition.
 		enum: ['confirmed', 'paid', 'delivered', 'cancelled'],
 		default: 'confirmed'
 	},
-	// True only while this order currently holds a real deduction against
-	// Product.stockQuantity. Web orders never deduct stock at creation (an
-	// explicit, unchanged business decision — see plan AD-4/Q1) so they stay
-	// false for their whole lifecycle. Direct-sale orders set this true at
-	// creation; cancelling flips it back to false after restoring stock, and
-	// un-cancelling flips it back to true after re-deducting. This flag is
-	// the only thing that gates a cancel from touching stock at all — see
-	// services/stock.js#applyStatusTransitionStockEffect — so an order that
-	// never took stock can never have a cancel inflate it.
+	// True while this order holds a deduction against the stock ledger: set at
+	// creation (online and counter), cleared when a cancel gives the units back,
+	// set again when the order is un-cancelled. It alone decides whether a cancel
+	// records a movement, so a cancel never returns units that were never taken
+	// and never returns them twice. Orders created before stock was tracked per
+	// order keep `false`: cancelling them records nothing, since nothing was taken.
 	stockDeducted: {
 		type: Boolean,
 		default: false,

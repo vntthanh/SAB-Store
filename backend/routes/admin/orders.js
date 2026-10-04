@@ -3,8 +3,8 @@ const Order = require('../../models/Order');
 const { validateOrderUpdate } = require('../../middleware/validation');
 const { getPaginationInfo } = require('../../utils/helpers');
 const { sendOrderToAppScript } = require('../../utils/appscript');
-const { StockError, applyStatusTransitionStockEffect } = require('../../services/stock');
-const ErrorLogger = require('../../utils/errorLogger');
+const { transitionOrderWithStock } = require('../../services/stock');
+const { enqueueMovements } = require('../../services/stock-ledger');
 const { asEnum, asSort, safeSearch, asPageLimit } = require('../../utils/query-guard');
 const router = express.Router();
 
@@ -122,32 +122,6 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
 	try {
 		const { status, transactionCode, cancelReason, note } = req.body;
 
-		const existing = await Order.findById(id).lean();
-		if (!existing) {
-			return res.status(404).json({
-				success: false,
-				message: 'Không tìm thấy đơn hàng'
-			});
-		}
-
-		const previousStatus = existing.status;
-
-		// Reject a transition to the order's own current status outright,
-		// rather than letting it fall through to a same-value conditional
-		// update that would trivially match and "succeed" again. Without
-		// this, two admins racing the same cancel where the second request's
-		// read happens to land *after* the first one's write (common outside
-		// a perfectly simultaneous race, not just possible under it) would
-		// both see 200 — the second one silently re-cancelling an
-		// already-cancelled order — instead of the second one being told
-		// nothing was left to do.
-		if (status === previousStatus) {
-			return res.status(409).json({
-				success: false,
-				message: 'Đơn hàng đã ở trạng thái này'
-			});
-		}
-
 		const historyEntry = {
 			status,
 			updatedAt: new Date(),
@@ -171,84 +145,38 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
 			historyEntry.note = note;
 		}
 
-		const transitioned = await Order.findOneAndUpdate(
-			{ _id: id, status: previousStatus },
-			{ $set: setFields, $push: { statusHistory: historyEntry } },
-			{ new: true, runValidators: true }
-		);
+		// Status and stock movement commit together (see transitionOrderWithStock).
+		// A same-status request is refused rather than re-applied, so the second of
+		// two racing cancels is told nothing was left to do.
+		const result = await transitionOrderWithStock({
+			orderId: id,
+			status,
+			setFields,
+			historyEntry,
+			actor: req.admin.username
+		});
 
-		if (!transitioned) {
+		if (result.outcome === 'not_found') {
+			return res.status(404).json({
+				success: false,
+				message: 'Không tìm thấy đơn hàng'
+			});
+		}
+		if (result.outcome === 'unchanged') {
+			return res.status(409).json({
+				success: false,
+				message: 'Đơn hàng đã ở trạng thái này'
+			});
+		}
+		if (result.outcome === 'conflict') {
 			return res.status(409).json({
 				success: false,
 				message: 'Đơn hàng vừa được người khác cập nhật, vui lòng tải lại và thử lại'
 			});
 		}
 
-		// Stock side effect for the winning request only — see
-		// services/stock.js#applyStatusTransitionStockEffect for the rules
-		// (restore on cancel iff stock was deducted; re-deduct on un-cancel
-		// iff this is a direct sale that currently has no deduction).
-		try {
-			const newStockDeducted = await applyStatusTransitionStockEffect({
-				items: transitioned.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
-				isDirectSale: transitioned.isDirectSale,
-				stockDeducted: transitioned.stockDeducted,
-				previousStatus,
-				newStatus: status
-			});
-
-			if (newStockDeducted !== null) {
-				// F8: guard this write on the exact (status, stockDeducted) pair
-				// this request's own decision was based on — the same shape as
-				// the status transition's own conditional match above. Without
-				// the guard, an interleaved cancel + immediate un-cancel (two
-				// requests racing the same order) could have this write land
-				// *after* a second request already transitioned the order
-				// further, unconditionally clobbering the flag the second
-				// request had already set correctly. If the guard misses (0
-				// matched), someone else changed the order first — leave the
-				// flag alone rather than overwrite it and log for reconciliation
-				// instead of silently losing which write "won".
-				const flagResult = await Order.updateOne(
-					{ _id: id, status, stockDeducted: transitioned.stockDeducted },
-					{ $set: { stockDeducted: newStockDeducted } }
-				);
-				if (flagResult.matchedCount > 0) {
-					transitioned.stockDeducted = newStockDeducted;
-				} else {
-					ErrorLogger.logCritical(
-						'stockDeducted không được ghi vì đơn hàng đã bị thay đổi bởi yêu cầu khác — cần đối soát thủ công',
-						new Error('STOCK_DEDUCTED_FLAG_RACE'),
-						{ orderId: id, previousStatus, status, intendedStockDeducted: newStockDeducted }
-					);
-				}
-			}
-		} catch (stockErr) {
-			// The status transition already committed; since there is no
-			// replica set / transaction to roll both writes back together,
-			// best-effort revert the status so the order doesn't end up
-			// claiming a status its stock state cannot support. The
-			// conditional match protects this from racing a concurrent
-			// change to the same order.
-			await Order.updateOne(
-				{ _id: id, status },
-				{ $set: { status: previousStatus, statusUpdatedAt: new Date() }, $pop: { statusHistory: 1 } }
-			);
-
-			if (stockErr instanceof StockError && stockErr.code === 'INSUFFICIENT_STOCK') {
-				return res.status(400).json({
-					success: false,
-					message: 'Không đủ hàng trong kho để khôi phục đơn hàng này',
-					details: stockErr.details
-				});
-			}
-
-			ErrorLogger.logCritical('Cập nhật kho thất bại khi đổi trạng thái đơn hàng', stockErr, { orderId: id, previousStatus, status });
-			return res.status(500).json({
-				success: false,
-				message: 'Lỗi khi cập nhật kho hàng'
-			});
-		}
+		await enqueueMovements(result.movements);
+		const transitioned = result.order;
 
 		// Tự động push lên App Script mỗi lần cập nhật trạng thái
 		const appscriptData = {
