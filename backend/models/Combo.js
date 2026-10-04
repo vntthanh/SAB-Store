@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const mongoosePaginate = require('mongoose-paginate-v2');
+const Product = require('./Product');
 
 const categoryRequirementSchema = new mongoose.Schema({
 	category: {
@@ -45,6 +46,11 @@ const comboSchema = new mongoose.Schema({
 		type: Boolean,
 		default: true
 	},
+	salesChannel: {
+		type: String,
+		enum: Product.SALES_CHANNELS,
+		default: 'all'
+	},
 	priority: {
 		type: Number,
 		default: 0,
@@ -67,6 +73,13 @@ comboSchema.virtual('totalRequiredQuantity').get(function () {
 // Static method to find active combos
 comboSchema.statics.findActive = function (filter = {}) {
 	return this.find({ ...filter, isActive: true }).sort({ priority: -1, createdAt: -1 });
+};
+
+// Combos that may discount an order placed on `channel`. The products inside a
+// combo must still be sellable on that channel; pricing checks that separately.
+comboSchema.statics.findSellable = function (channel) {
+	return this.find({ $and: [{ isActive: true }, Product.channelClause(channel)] })
+		.sort({ priority: -1, createdAt: -1 });
 };
 
 // Method to check if products can satisfy this combo

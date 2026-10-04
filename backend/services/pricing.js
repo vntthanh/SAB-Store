@@ -4,17 +4,13 @@
  * Every monetary figure an order is stored with must come from this module.
  * Prices, totals and combo savings sent by a client are advisory at best and
  * hostile at worst, so they are read from the database instead of trusted.
- *
- * Phase 00 ships the contract only. Phase 05 supplies the implementation;
- * Phase 06 calls it from inside the stock flow. The stub throws rather than
- * returning a plausible-looking zero so that a consumer wired up before the
- * implementation lands fails loudly instead of silently writing free orders.
  */
 
 const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const Combo = require('../models/Combo');
 const ComboService = require('./ComboService');
+const { ERROR_CODES } = require('../constants/errorCodes');
 
 /**
  * Error thrown for every rejected pricing request.
@@ -24,8 +20,8 @@ const ComboService = require('./ComboService');
  */
 class PricingError extends Error {
 	/**
-	 * @param {'EMPTY_CART'|'PRODUCT_UNAVAILABLE'|'INVALID_QUANTITY'} code
-	 * @param {{missingIds?: string[], productId?: string}} [details]
+	 * @param {'EMPTY_CART'|'PRODUCT_UNAVAILABLE'|'PRODUCT_CHANNEL_MISMATCH'|'INVALID_QUANTITY'} code
+	 * @param {{missingIds?: string[], productId?: string, productNames?: string[], channel?: string}} [details]
 	 */
 	constructor(code, details = {}) {
 		super(code);
@@ -36,13 +32,70 @@ class PricingError extends Error {
 	}
 }
 
+const CHANNEL_LABELS = { online: 'online', offline: 'tại quầy' };
+
+const PRICING_ERROR_MESSAGES = {
+	EMPTY_CART: 'Danh sách sản phẩm không hợp lệ',
+	PRODUCT_UNAVAILABLE: 'Một hoặc nhiều sản phẩm không tồn tại hoặc không khả dụng',
+	INVALID_QUANTITY: 'Số lượng sản phẩm không hợp lệ',
+};
+
+/** Vietnamese, client-facing message for a PricingError. */
+function describePricingError(error) {
+	if (error.code === ERROR_CODES.PRODUCT_CHANNEL_MISMATCH) {
+		const names = (error.details.productNames || []).join(', ');
+		return `Sản phẩm không bán ${CHANNEL_LABELS[error.details.channel] || 'ở kênh này'}: ${names}`;
+	}
+	return PRICING_ERROR_MESSAGES[error.code] || 'Không thể tính giá đơn hàng';
+}
+
+/**
+ * Load the products with `ids` that can be sold on `channel`, or reject.
+ *
+ * A product that exists and is switched on but belongs to the other channel is
+ * reported as PRODUCT_CHANNEL_MISMATCH with its name, so a cashier or customer
+ * learns why; a missing or switched-off one stays PRODUCT_UNAVAILABLE. When a
+ * cart has both kinds, UNAVAILABLE wins because the cart is unfixable by
+ * switching channel.
+ *
+ * @param {string[]} ids canonical (lowercase) ObjectId strings
+ * @param {'online'|'offline'} channel
+ * @param {import('mongoose').ClientSession|null} [session]
+ * @returns {Promise<Map<string, import('mongoose').Document>>} keyed by `_id.toString()`
+ * @throws {TypeError} channel missing or unknown (a programming error, not a bad cart)
+ * @throws {PricingError}
+ */
+async function loadSellableProducts(ids, channel, session = null) {
+	let query = Product.findSellable(channel, { _id: { $in: ids } });
+	if (session) query = query.session(session);
+	const products = await query;
+
+	const productMap = new Map(products.map((product) => [product._id.toString(), product]));
+	const missingIds = ids.filter((id) => !productMap.has(id));
+	if (missingIds.length === 0) return productMap;
+
+	let otherChannelQuery = Product.find({ _id: { $in: missingIds }, available: true }).select('name').lean();
+	if (session) otherChannelQuery = otherChannelQuery.session(session);
+	const otherChannel = await otherChannelQuery;
+
+	if (otherChannel.length === missingIds.length) {
+		throw new PricingError(ERROR_CODES.PRODUCT_CHANNEL_MISMATCH, {
+			missingIds,
+			productNames: otherChannel.map((product) => product.name),
+			channel,
+		});
+	}
+	throw new PricingError('PRODUCT_UNAVAILABLE', { missingIds });
+}
+
 /**
  * Compute an order's totals from the database, ignoring any client-supplied price.
  *
- * Availability is a single rule: a product counts only when `isActive` AND
- * `available` are both true, matching `Product.findAvailable()`. There is
- * deliberately no flag to relax it — an earlier draft of this contract offered
- * one and would have let direct sales sell `available: false` stock.
+ * Availability is a single rule, `Product.findSellable(channel)`: a product
+ * counts only when `available` is true and its `salesChannel` allows `channel`.
+ * There is deliberately no flag to relax it — it would let a direct sale sell
+ * `available: false` stock. `channel` has no default: a caller that forgets it
+ * would silently sell on the wrong channel, so it throws instead.
  *
  * Duplicate `productId` lines are merged rather than rejected, because a cart
  * legitimately reaches this point with the same product added twice.
@@ -50,10 +103,11 @@ class PricingError extends Error {
  * @param {Array<{productId: string, quantity: number}>} items
  *        Cart lines. Lines sharing a productId are summed.
  * @param {object} [opts]
+ * @param {'online'|'offline'} opts.channel Required. Where the order is placed.
  * @param {import('mongoose').ClientSession|null} [opts.session=null]
  *        Pass when called inside a transaction; every query issued here must
- *        then run with `.session(session)`. Null is a supported mode, not a
- *        degraded one — the deployment has no replica set (see plan AD-4).
+ *        then run with `.session(session)`. Null runs outside a transaction
+ *        (read-only previews).
  * @returns {Promise<{
  *   totalAmount: number,
  *   orderItems: Array<{
@@ -78,11 +132,16 @@ class PricingError extends Error {
  *        can be written to an Order without re-casting.
  *        `products` is keyed by `productId.toString()` so callers can reuse the
  *        already-loaded documents instead of querying again.
+ * @throws {TypeError} `opts.channel` is missing or not 'online'/'offline'.
  * @throws {PricingError} An empty cart throws EMPTY_CART; it never returns a
  *        zero total, which would otherwise be indistinguishable from a free order.
  */
 async function computeOrderPricing(items, opts = {}) {
 	const session = opts.session || null;
+	const channel = opts.channel;
+	// Fail before any query: this is the check that makes a forgotten channel
+	// impossible to ship, and it must not depend on the cart being valid.
+	Product.sellableQuery(channel);
 
 	if (!Array.isArray(items) || items.length === 0) {
 		throw new PricingError('EMPTY_CART');
@@ -111,23 +170,8 @@ async function computeOrderPricing(items, opts = {}) {
 
 	const ids = [...qtyByProductId.keys()];
 
-	// Query 1/2 — products, filtered by the single availability rule
-	// (isActive AND available), matching Product.findAvailable(). There is
-	// deliberately no flag to relax this: it would let a caller (e.g. a
-	// direct sale) sell stock marked `available: false`.
-	let productQuery = Product.find({ _id: { $in: ids }, isActive: true, available: true });
-	if (session) productQuery = productQuery.session(session);
-	const products = await productQuery;
-
-	const productMap = new Map();
-	for (const product of products) {
-		productMap.set(product._id.toString(), product);
-	}
-
-	const missingIds = ids.filter((id) => !productMap.has(id));
-	if (missingIds.length > 0) {
-		throw new PricingError('PRODUCT_UNAVAILABLE', { missingIds });
-	}
+	// Query 1/2 — products, filtered by the single sellable-on-channel rule.
+	const productMap = await loadSellableProducts(ids, channel, session);
 
 	let cartLines = ids.map((id) => ({
 		productId: id,
@@ -135,10 +179,9 @@ async function computeOrderPricing(items, opts = {}) {
 		quantity: qtyByProductId.get(id),
 	}));
 
-	// Query 2/2 — active combos, loaded once and reused for the single combo
-	// application below. The pre-fix code (ComboService.calculateOptimalPricing)
-	// re-queried Combo.findActive() on every loop iteration.
-	let comboQuery = Combo.findActive();
+	// Query 2/2 — combos that apply on this channel, loaded once and reused for
+	// the single combo application below.
+	let comboQuery = Combo.findSellable(channel);
 	if (session) comboQuery = comboQuery.session(session);
 	const activeCombos = await comboQuery;
 
@@ -211,4 +254,4 @@ async function computeOrderPricing(items, opts = {}) {
 	return { totalAmount, orderItems, comboInfo, products: productMap };
 }
 
-module.exports = { computeOrderPricing, PricingError };
+module.exports = { computeOrderPricing, loadSellableProducts, describePricingError, PricingError };

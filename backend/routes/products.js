@@ -1,6 +1,7 @@
 const express = require('express');
 const Product = require('../models/Product');
-const { asString, asEnum, safeSearch } = require('../utils/query-guard');
+const { asString, safeSearch } = require('../utils/query-guard');
+const { authenticateSeller } = require('../middleware/better-auth');
 const router = express.Router();
 
 /**
@@ -14,17 +15,15 @@ router.get('/', async (req, res) => {
 		const safeCategory = category !== 'all' ? asString(category, 100) : undefined;
 		const searchMatch = safeSearch(search);
 
-		// Filter by availability. `?available=all` used to bypass this filter
-		// entirely (Q4, plan Phase 00 §B) — removed: every caller that wants
-		// everything can query both values and merge, but nothing does.
-		const query = {
-			available: asEnum(available, ['false']) ? false : true,
+		// The public storefront is the online channel; no query parameter
+		// widens it (a stopped product must never be listed publicly).
+		const filter = {
 			...(safeCategory && { category: safeCategory }),
 			...(searchMatch && { $or: [{ name: searchMatch }, { description: searchMatch }] })
 		};
 
 		// Get products with sorting
-		const products = await Product.find(query)
+		const products = await Product.findSellable('online', filter)
 			.sort({ category: 1, name: 1 })
 			.lean();
 
@@ -56,24 +55,24 @@ router.get('/', async (req, res) => {
 
 /**
  * @route   GET /api/products/direct-sales
- * @desc    Get products available for direct sales (filters by isActive instead of available)
+ * @desc    Get products sellable at the counter (offline channel)
  * @access  Public
  */
-router.get('/direct-sales', async (req, res) => {
+// Seller/admin only: the counter list includes offline-only products, which
+// the storefront hides, plus stock counts and SKUs.
+router.get('/direct-sales', authenticateSeller, async (req, res) => {
 	try {
 		const { category, search } = req.query;
 		const safeCategory = category !== 'all' ? asString(category, 100) : undefined;
 		const searchMatch = safeSearch(search);
 
-		// Build query - for direct sales, only filter by isActive (not available)
-		const query = {
-			isActive: true,  // Only active products can be sold in direct sales
+		const filter = {
 			...(safeCategory && { category: safeCategory }),
 			...(searchMatch && { $or: [{ name: searchMatch }, { description: searchMatch }] })
 		};
 
 		// Get products with sorting
-		const products = await Product.find(query)
+		const products = await Product.findSellable('offline', filter)
 			.sort({ category: 1, name: 1 })
 			.lean();
 
@@ -105,12 +104,17 @@ router.get('/direct-sales', async (req, res) => {
 
 /**
  * @route   GET /api/products/:id
- * @desc    Get single product by ID
+ * @desc    Get a product sellable online (storefront detail)
  * @access  Public
  */
 router.get('/:id', async (req, res) => {
 	try {
-		const product = await Product.findById(req.params.id);
+		// Stock level, SKU and the deprecated isActive flag are internal; the
+		// public detail page has no use for them.
+		const [product] = await Product.findSellable('online', { _id: req.params.id })
+			.select('-stockQuantity -sku -isActive')
+			.limit(1)
+			.lean();
 
 		if (!product) {
 			return res.status(404).json({

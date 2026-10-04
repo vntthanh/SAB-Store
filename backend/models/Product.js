@@ -1,6 +1,24 @@
 const mongoose = require('mongoose');
 const mongoosePaginate = require('mongoose-paginate-v2');
 
+// Where a product (or combo) may be sold. 'all' is not a channel a sale happens
+// on; it is a product allowing every channel.
+const SALES_CHANNELS = ['all', 'online', 'offline'];
+const SALE_CHANNELS = ['online', 'offline'];
+
+function assertSaleChannel(channel) {
+	if (!SALE_CHANNELS.includes(channel)) {
+		throw new TypeError(`channel must be one of ${SALE_CHANNELS.join(', ')}; got ${String(channel)}`);
+	}
+}
+
+// Documents written before salesChannel existed have no such key, and Mongoose
+// defaults do not apply to queries, so a bare $in would silently drop them.
+function channelClause(channel) {
+	assertSaleChannel(channel);
+	return { $or: [{ salesChannel: { $in: ['all', channel] } }, { salesChannel: { $exists: false } }] };
+}
+
 const productSchema = new mongoose.Schema({
 	name: {
 		type: String,
@@ -30,9 +48,16 @@ const productSchema = new mongoose.Schema({
 		type: Boolean,
 		default: true
 	},
+	// Deprecated: nothing reads this any more; `available` is the only on/off
+	// switch. Kept so existing documents and old backup files still load.
 	isActive: {
 		type: Boolean,
 		default: true
+	},
+	salesChannel: {
+		type: String,
+		enum: SALES_CHANNELS,
+		default: 'all'
 	},
 	stockQuantity: {
 		type: Number,
@@ -89,7 +114,7 @@ const productSchema = new mongoose.Schema({
 productSchema.index({ name: 'text', description: 'text' });
 productSchema.index({ category: 1 });
 productSchema.index({ available: 1 });
-productSchema.index({ isActive: 1 });
+productSchema.index({ salesChannel: 1 });
 productSchema.index({ featured: 1 });
 productSchema.index({ createdAt: -1 });
 
@@ -121,21 +146,27 @@ productSchema.virtual('inStock').get(function () {
 	return this.stockQuantity > 0;
 });
 
-// Static method to find active products
-productSchema.statics.findActive = function (filter = {}) {
-	return this.find({ ...filter, isActive: true, available: true });
+// The one rule for "can be sold on this channel". Every list or lookup that
+// feeds a sale or a storefront goes through here so the channels cannot drift.
+productSchema.statics.sellableQuery = function (channel) {
+	return { available: true, ...channelClause(channel) };
 };
 
-// Static method to find featured products
-productSchema.statics.findFeatured = function (limit = 6) {
-	return this.find({
-		isActive: true,
-		available: true,
-		featured: true
-	}).limit(limit);
+// $and keeps a caller filter's own $or (e.g. text search) from colliding with
+// the channel $or.
+productSchema.statics.findSellable = function (channel, filter = {}) {
+	return this.find({ $and: [filter, this.sellableQuery(channel)] });
+};
+
+productSchema.statics.findFeatured = function (channel, limit = 6) {
+	return this.findSellable(channel, { featured: true }).limit(limit);
 };
 
 // Add pagination plugin
 productSchema.plugin(mongoosePaginate);
 
-module.exports = mongoose.model('Product', productSchema);
+const Product = mongoose.model('Product', productSchema);
+Product.SALES_CHANNELS = SALES_CHANNELS;
+Product.channelClause = channelClause;
+
+module.exports = Product;

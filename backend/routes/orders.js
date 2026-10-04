@@ -4,17 +4,8 @@ const { validateOrder } = require('../middleware/validation');
 const { generateOrderCode } = require('../utils/helpers');
 const { sendOrderToAppScript } = require('../utils/appscript');
 const { generateOrderPaymentQR, formatOrderPaymentDescription } = require('../utils/paymentHelper');
-const { computeOrderPricing, PricingError } = require('../services/pricing');
+const { computeOrderPricing, describePricingError, PricingError } = require('../services/pricing');
 const router = express.Router();
-
-// Vietnamese messages for each PricingError code. All are 400s — see
-// PricingError's own doc comment for why (each describes a cart the caller
-// could have validated before sending, never a server fault).
-const PRICING_ERROR_MESSAGES = {
-	EMPTY_CART: 'Danh sách sản phẩm không hợp lệ',
-	PRODUCT_UNAVAILABLE: 'Một hoặc nhiều sản phẩm không tồn tại hoặc không khả dụng',
-	INVALID_QUANTITY: 'Số lượng sản phẩm không hợp lệ',
-};
 
 /**
  * @route   POST /api/orders
@@ -39,13 +30,13 @@ router.post('/', validateOrder, async (req, res) => {
 		// feed a mismatch warning, never the stored total.
 		let totalAmount, orderItems, comboInfo;
 		try {
-			({ totalAmount, orderItems, comboInfo } = await computeOrderPricing(items));
+			({ totalAmount, orderItems, comboInfo } = await computeOrderPricing(items, { channel: 'online' }));
 		} catch (pricingError) {
 			if (pricingError instanceof PricingError) {
 				console.error('❌ Pricing rejected order:', pricingError.code, pricingError.details);
 				return res.status(pricingError.httpStatus).json({
 					success: false,
-					message: PRICING_ERROR_MESSAGES[pricingError.code] || 'Không thể tính giá đơn hàng',
+					message: describePricingError(pricingError),
 					...(Object.keys(pricingError.details || {}).length > 0 && { details: pricingError.details })
 				});
 			}

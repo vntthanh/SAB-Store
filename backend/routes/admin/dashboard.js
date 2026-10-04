@@ -52,7 +52,7 @@ router.get('/stats', async (req, res) => {
 		]);
 
 		// Get all products for complete statistics
-		const allProducts = await Product.find({}, 'name category available');
+		const allProducts = await Product.find({}, 'name category available salesChannel');
 
 		// Calculate product statistics
 		const productsByCategory = allProducts.reduce((acc, product) => {
@@ -63,6 +63,13 @@ router.get('/stats', async (req, res) => {
 
 		const availableProducts = allProducts.filter(p => p.available).length;
 		const unavailableProducts = allProducts.filter(p => !p.available).length;
+
+		// Products written before salesChannel existed have no value: they sell
+		// everywhere, so they count as 'all'.
+		const byChannel = { all: 0, online: 0, offline: 0 };
+		for (const product of allProducts) {
+			byChannel[product.salesChannel || 'all'] += 1;
+		}
 
 		res.json({
 			success: true,
@@ -79,6 +86,7 @@ router.get('/stats', async (req, res) => {
 					available: availableProducts,
 					unavailable: unavailableProducts,
 					byCategory: productsByCategory,
+					byChannel,
 					topSelling: productStats.map(item => ({
 						productId: item._id.productId,
 						productName: item._id.productName,

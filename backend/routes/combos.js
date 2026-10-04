@@ -4,8 +4,16 @@ const Product = require('../models/Product');
 const ComboService = require('../services/ComboService');
 const { authenticateAdmin, authenticateSeller, authenticateUser } = require('../middleware/better-auth');
 const { validateComboItems } = require('../middleware/validation');
+const { asEnum } = require('../utils/query-guard');
 const ErrorLogger = require('../utils/errorLogger');
 const router = express.Router();
+
+const SALE_CHANNELS = ['online', 'offline'];
+const INVALID_SALES_CHANNEL_MESSAGE = 'Kênh bán không hợp lệ';
+
+// An unknown channel falls back to online (the storefront) instead of erroring:
+// these are read-only previews, and the order routes enforce the channel anyway.
+const channelOf = (value) => asEnum(value, SALE_CHANNELS) || 'online';
 
 /**
  * @route   GET /api/combos
@@ -47,7 +55,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
  */
 router.get('/active', async (req, res) => {
 	try {
-		const combos = await Combo.findActive();
+		const combos = await Combo.findSellable(channelOf(req.query.channel));
 
 		res.json({
 			success: true,
@@ -70,10 +78,12 @@ router.get('/active', async (req, res) => {
 router.post('/detect', validateComboItems, async (req, res) => {
 	try {
 		const { items } = req.body;
+		const channel = channelOf(req.body.channel);
 
-		// Get product details for all items
+		// Get product details for all items; products not sellable on this
+		// channel are dropped so they cannot complete a combo there.
 		const productIds = items.map(item => item.productId);
-		const products = await Product.find({ _id: { $in: productIds } });
+		const products = await Product.findSellable(channel, { _id: { $in: productIds } });
 
 		// Create products with quantities
 		const productsWithQuantities = items.map(item => {
@@ -96,7 +106,7 @@ router.post('/detect', validateComboItems, async (req, res) => {
 		}
 
 		// Find optimal combo combination
-		const optimalCombos = await Combo.findOptimalCombination(productsWithQuantities);
+		const optimalCombos = await Combo.findOptimalCombination(productsWithQuantities, await Combo.findSellable(channel));
 
 		// Calculate optimal pricing breakdown
 		let optimalPricing = null;
@@ -214,7 +224,11 @@ router.post('/detect', validateComboItems, async (req, res) => {
  */
 router.post('/', authenticateAdmin, async (req, res) => {
 	try {
-		const { name, description, price, categoryRequirements, priority } = req.body;
+		const { name, description, price, categoryRequirements, priority, salesChannel } = req.body;
+
+		if (salesChannel !== undefined && !asEnum(salesChannel, Product.SALES_CHANNELS)) {
+			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
+		}
 
 		// Validate required fields
 		if (!name || !price || !categoryRequirements || !Array.isArray(categoryRequirements)) {
@@ -249,7 +263,8 @@ router.post('/', authenticateAdmin, async (req, res) => {
 			description,
 			price,
 			categoryRequirements,
-			priority: priority || 0
+			priority: priority || 0,
+			...(salesChannel !== undefined && { salesChannel })
 		});
 
 		await combo.save();
@@ -330,7 +345,11 @@ router.get('/pricing', async (req, res) => {
 router.put('/:id', authenticateAdmin, async (req, res) => {
 	try {
 		const { id } = req.params;
-		const { name, description, price, categoryRequirements, priority, isActive } = req.body;
+		const { name, description, price, categoryRequirements, priority, isActive, salesChannel } = req.body;
+
+		if (salesChannel !== undefined && !asEnum(salesChannel, Product.SALES_CHANNELS)) {
+			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
+		}
 
 		// Validate ObjectId format
 		if (!id.match(/^[0-9a-fA-F]{24}$/)) {
@@ -377,6 +396,7 @@ router.put('/:id', authenticateAdmin, async (req, res) => {
 		if (categoryRequirements !== undefined) combo.categoryRequirements = categoryRequirements;
 		if (priority !== undefined) combo.priority = priority;
 		if (isActive !== undefined) combo.isActive = isActive;
+		if (salesChannel !== undefined) combo.salesChannel = salesChannel;
 
 		await combo.save();
 

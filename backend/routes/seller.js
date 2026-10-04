@@ -9,6 +9,7 @@ const { getPaginationInfo, formatDate, formatCurrency } = require('../utils/help
 const { sendOrderToAppScript } = require('../utils/appscript');
 const { generateDirectSalePaymentQR } = require('../utils/paymentHelper');
 const ComboService = require('../services/ComboService');
+const { loadSellableProducts, describePricingError, PricingError } = require('../services/pricing');
 const { auth } = require('../lib/auth');
 const { StockError, deductStockForItems, restoreStockForItems, applyStatusTransitionStockEffect } = require('../services/stock');
 const ErrorLogger = require('../utils/errorLogger');
@@ -111,7 +112,7 @@ router.get('/dashboard/stats', async (req, res) => {
 						_id: null,
 						totalProducts: { $sum: 1 },
 						activeProducts: {
-							$sum: { $cond: [{ $eq: ['$isActive', true] }, 1, 0] }
+							$sum: { $cond: [{ $eq: ['$available', true] }, 1, 0] }
 						},
 						totalStock: { $sum: '$stockQuantity' }
 					}
@@ -529,15 +530,17 @@ router.post('/orders/direct', async (req, res) => {
 				.filter(id => mongoose.Types.ObjectId.isValid(id))
 				.map(id => new mongoose.Types.ObjectId(id).toString())
 		)];
-		const validProducts = await Product.find({ _id: { $in: productIds }, isActive: true, available: true });
-		const validIds = new Set(validProducts.map(p => p._id.toString()));
-		const missingIds = productIds.filter(id => !validIds.has(id));
-		if (missingIds.length > 0) {
-			return res.status(400).json({
-				success: false,
-				message: 'Một hoặc nhiều sản phẩm không tồn tại hoặc không khả dụng',
-				details: { missingIds }
-			});
+		try {
+			await loadSellableProducts(productIds, 'offline');
+		} catch (pricingError) {
+			if (pricingError instanceof PricingError) {
+				return res.status(pricingError.httpStatus).json({
+					success: false,
+					message: describePricingError(pricingError),
+					details: pricingError.details
+				});
+			}
+			throw pricingError;
 		}
 
 		const pricing = await ComboService.calculateOptimalPricing(items);
