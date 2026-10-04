@@ -12,6 +12,9 @@ import CheckoutPage from './pages/CheckoutPage';
 import OrderSuccessPage from './pages/OrderSuccessPage';
 import OrderTrackingPage from './pages/OrderTrackingPage';
 import LoginPage from './pages/LoginPage';
+import ProductDetailPage from './pages/ProductDetailPage';
+import ComboDetailPage from './pages/ComboDetailPage';
+import NotFoundPage from './pages/NotFoundPage';
 
 // Admin Pages
 import AdminDashboard from './pages/admin/AdminDashboard';
@@ -44,6 +47,9 @@ function App() {
 							<Route path="checkout" element={<CheckoutPage />} />
 							<Route path="order-success" element={<OrderSuccessPage />} />
 							<Route path="order-tracking" element={<OrderTrackingPage />} />
+							<Route path="p/:code/:slug?" element={<ProductDetailPage />} />
+							<Route path="c/:code/:slug?" element={<ComboDetailPage />} />
+							<Route path="*" element={<NotFoundPage />} />
 						</Route>
 
 						{/* Login Routes */}

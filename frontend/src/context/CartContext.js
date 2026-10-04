@@ -5,6 +5,9 @@ import { comboService } from '../services/api';
 // Cart Context
 const CartContext = createContext();
 
+// The +/- controls stop at this ceiling, so adds must too or a line could exceed what they reach.
+export const CART_MAX_QUANTITY = 99;
+
 // Cart Actions
 const CART_ACTIONS = {
 	ADD_ITEM: 'ADD_ITEM',
@@ -21,23 +24,23 @@ const cartReducer = (state, action) => {
 			return action.payload;
 
 		case CART_ACTIONS.ADD_ITEM: {
-			const existingItem = state.items.find(item => item.productId === action.payload.productId);
+			const { quantity = 1, ...line } = action.payload;
+			const existingItem = state.items.find(item => item.productId === line.productId);
 
 			if (existingItem) {
 				return {
 					...state,
 					items: state.items.map(item =>
-						item.productId === action.payload.productId
-							? { ...item, quantity: item.quantity + 1 }
+						item.productId === line.productId
+							? { ...item, quantity: Math.min(CART_MAX_QUANTITY, item.quantity + quantity) }
 							: item
 					)
 				};
-			} else {
-				return {
-					...state,
-					items: [...state.items, { ...action.payload, quantity: 1 }]
-				};
 			}
+			return {
+				...state,
+				items: [...state.items, { ...line, quantity: Math.min(CART_MAX_QUANTITY, quantity) }]
+			};
 		}
 
 		case CART_ACTIONS.REMOVE_ITEM:
@@ -292,17 +295,18 @@ export const CartProvider = ({ children }) => {
 	}, [cart, previousComboState]);
 
 	// Cart Actions
-	const addToCart = (product) => {
+	const addToCart = (product, quantity = 1) => {
 		dispatch({
 			type: CART_ACTIONS.ADD_ITEM,
 			payload: {
 				productId: product._id,
 				productName: product.name,
 				price: product.price,
-				image: product.imageUrl
+				image: product.imageUrl,
+				quantity
 			}
 		});
-		toast.success(`Đã thêm "${product.name}" vào giỏ hàng`, {
+		toast.success(`Đã thêm ${quantity > 1 ? `${quantity} × ` : ''}"${product.name}" vào giỏ hàng`, {
 			position: "bottom-right",
 			autoClose: 2000
 		});
@@ -340,7 +344,7 @@ export const CartProvider = ({ children }) => {
 
 	const increaseQuantity = (productId) => {
 		const item = cart.items.find(item => item.productId === productId);
-		if (item && item.quantity < 99) { // Maximum quantity limit
+		if (item && item.quantity < CART_MAX_QUANTITY) {
 			updateQuantity(productId, item.quantity + 1);
 		}
 	};

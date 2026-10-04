@@ -7,6 +7,8 @@ const { computeOrderPricing, pricingErrorBody, PricingError } = require('../serv
 const { asEnum } = require('../utils/query-guard');
 const { createWithPublicCodeRetry } = require('../utils/public-code');
 const ErrorLogger = require('../utils/errorLogger');
+const { ErrorResponse } = require('../utils/errorResponse');
+const { findPublicComboByCode } = require('../services/public-catalog');
 const router = express.Router();
 
 const SALE_CHANNELS = ['online', 'offline'];
@@ -67,6 +69,31 @@ router.get('/active', async (req, res) => {
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi lấy danh sách combo'
+		});
+	}
+});
+
+/**
+ * @route   GET /api/combos/by-code/:code
+ * @desc    Get a combo sold online by its public code
+ * @access  Public
+ */
+router.get('/by-code/:code', async (req, res) => {
+	try {
+		const combo = await findPublicComboByCode(req.params.code);
+		if (!combo) {
+			return res
+				.status(404)
+				.json(ErrorResponse.formatErrorResponse(ErrorResponse.notFoundError('Combo'), req));
+		}
+
+		res.set('Cache-Control', 'public, max-age=60');
+		res.json({ success: true, data: combo });
+	} catch (error) {
+		ErrorLogger.logRoute('GET /combos/by-code/:code', error, req);
+		res.status(500).json({
+			success: false,
+			message: 'Lỗi server khi lấy thông tin combo'
 		});
 	}
 });

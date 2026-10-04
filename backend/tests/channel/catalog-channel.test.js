@@ -138,9 +138,9 @@ describe('GET /api/products/:id', () => {
 		expect(res.status).toBe(404);
 	});
 
-	it('still answers 400 for a malformed id', async () => {
+	it('answers a malformed id with the same 404 as a hidden product', async () => {
 		const res = await request(app).get('/api/products/not-an-id');
 
-		expect(res.status).toBe(400);
+		expect(res.status).toBe(404);
 	});
 });

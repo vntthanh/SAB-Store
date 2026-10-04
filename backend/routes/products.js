@@ -2,7 +2,18 @@ const express = require('express');
 const Product = require('../models/Product');
 const { asString, safeSearch } = require('../utils/query-guard');
 const { authenticateSeller } = require('../middleware/better-auth');
+const { findPublicProductByCode, toPublicProduct } = require('../services/public-catalog');
+const { ErrorResponse } = require('../utils/errorResponse');
+const ErrorLogger = require('../utils/errorLogger');
 const router = express.Router();
+
+const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
+
+// One body for every "not public" reason (missing, stopped, counter-only,
+// malformed): a caller must not be able to tell a hidden product from an absent one.
+const sendProductNotFound = (req, res) => res
+	.status(404)
+	.json(ErrorResponse.formatErrorResponse(ErrorResponse.notFoundError('Sản phẩm'), req));
 
 // Online customers never learn stock levels: out of stock never blocks an
 // order, so the number would only mislead. SKU and the retired isActive flag
@@ -109,39 +120,43 @@ router.get('/direct-sales', authenticateSeller, async (req, res) => {
 });
 
 /**
+ * @route   GET /api/products/by-code/:code
+ * @desc    Get a product sellable online by its public code
+ * @access  Public
+ */
+router.get('/by-code/:code', async (req, res) => {
+	try {
+		const product = await findPublicProductByCode(req.params.code);
+		if (!product) return sendProductNotFound(req, res);
+
+		res.set('Cache-Control', 'public, max-age=60');
+		res.json({ success: true, data: product });
+	} catch (error) {
+		ErrorLogger.logRoute('GET /products/by-code/:code', error, req);
+		res.status(500).json({
+			success: false,
+			message: 'Lỗi server khi lấy thông tin sản phẩm'
+		});
+	}
+});
+
+/**
  * @route   GET /api/products/:id
- * @desc    Get a product sellable online (storefront detail)
+ * @desc    Get a product sellable online (same public shape as by-code)
  * @access  Public
  */
 router.get('/:id', async (req, res) => {
 	try {
+		if (!OBJECT_ID_PATTERN.test(req.params.id)) return sendProductNotFound(req, res);
+
 		const [product] = await Product.findSellable('online', { _id: req.params.id })
-			.select(PUBLIC_PRODUCT_HIDDEN_FIELDS)
 			.limit(1)
 			.lean();
+		if (!product) return sendProductNotFound(req, res);
 
-		if (!product) {
-			return res.status(404).json({
-				success: false,
-				message: 'Không tìm thấy sản phẩm'
-			});
-		}
-
-		res.json({
-			success: true,
-			data: product
-		});
-
+		res.json({ success: true, data: toPublicProduct(product) });
 	} catch (error) {
-		console.error('Error fetching product:', error);
-
-		if (error.name === 'CastError') {
-			return res.status(400).json({
-				success: false,
-				message: 'ID sản phẩm không hợp lệ'
-			});
-		}
-
+		ErrorLogger.logRoute('GET /products/:id', error, req);
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi lấy thông tin sản phẩm'

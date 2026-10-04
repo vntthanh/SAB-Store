@@ -6,6 +6,7 @@ import { productService, comboService } from '../services/api';
 import ProductCard from '../components/ProductCard';
 import Cart from '../components/Cart';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { comboPath } from '../utils/share-links';
 
 const HomePage = () => {
 	const [products, setProducts] = useState([]);
@@ -88,25 +89,33 @@ const HomePage = () => {
 								<h2 className="text-xl font-bold text-blue-800">Combo Ưu Đãi (Tự động áp dụng)</h2>
 							</div>
 							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-								{combos.map(combo => (
-									<div key={combo._id} className="bg-white rounded-lg p-4 border border-blue-100 shadow-sm">
-										<div className="flex justify-between items-start mb-2">
-											<h3 className="font-semibold text-gray-900">{combo.name}</h3>
-											<span className="text-lg font-bold text-blue-600">{formatCurrency(combo.price)}</span>
+								{combos.map(combo => {
+									// Docs without a public code yet (before backfill) have no detail page.
+									const detailPath = combo.path ?? comboPath(combo);
+									return (
+										<div key={combo._id} className="bg-white rounded-lg p-4 border border-blue-100 shadow-sm">
+											<div className="flex justify-between items-start mb-2">
+												<h3 className="font-semibold text-gray-900">
+													{detailPath ? (
+														<Link to={detailPath} className="hover:text-blue-700 hover:underline">{combo.name}</Link>
+													) : combo.name}
+												</h3>
+												<span className="text-lg font-bold text-blue-600">{formatCurrency(combo.price)}</span>
+											</div>
+											{combo.description && (
+												<p className="text-sm text-gray-600 mb-3">{combo.description}</p>
+											)}
+											<div className="space-y-1">
+												{combo.categoryRequirements.map((req, index) => (
+													<div key={index} className="flex justify-between text-sm">
+														<span className="text-gray-700">{req.category}</span>
+														<span className="text-blue-600 font-medium">{req.quantity} sản phẩm</span>
+													</div>
+												))}
+											</div>
 										</div>
-										{combo.description && (
-											<p className="text-sm text-gray-600 mb-3">{combo.description}</p>
-										)}
-										<div className="space-y-1">
-											{combo.categoryRequirements.map((req, index) => (
-												<div key={index} className="flex justify-between text-sm">
-													<span className="text-gray-700">{req.category}</span>
-													<span className="text-blue-600 font-medium">{req.quantity} sản phẩm</span>
-												</div>
-											))}
-										</div>
-									</div>
-								))}
+									);
+								})}
 							</div>
 						</div>
 					)}

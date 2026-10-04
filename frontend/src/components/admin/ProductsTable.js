@@ -1,6 +1,8 @@
 import React from 'react';
 import { formatCurrency, getImageUrl } from '../../utils/helpers';
 import { SALES_CHANNEL_LABELS, normalizeSalesChannel } from '../../utils/sales-channel';
+import { productPath } from '../../utils/share-links';
+import ShareButton from '../ShareButton';
 
 const ProductsTable = ({ products, onEdit, onDelete, onManageStock }) => {
 	if (products.length === 0) {
@@ -20,6 +22,9 @@ const ProductsTable = ({ products, onEdit, onDelete, onManageStock }) => {
 					<tr>
 						<th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
 							Sản phẩm
+						</th>
+						<th className="hidden md:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+							Mã
 						</th>
 						<th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
 							Danh mục
@@ -61,6 +66,9 @@ const ProductsTable = ({ products, onEdit, onDelete, onManageStock }) => {
 									</div>
 								</div>
 							</td>
+							<td className="hidden md:table-cell px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-700">
+								{product.publicCode || '—'}
+							</td>
 							<td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
 								{product.category}
 							</td>
@@ -86,6 +94,12 @@ const ProductsTable = ({ products, onEdit, onDelete, onManageStock }) => {
 								)}
 							</td>
 							<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+								<ShareButton
+									mode="copy"
+									path={productPath(product)}
+									disabledHint="Chưa có mã — chạy backfill"
+									className="px-3 py-1 text-xs mr-3 align-middle"
+								/>
 								<button
 									onClick={() => onManageStock(product)}
 									className="text-gray-700 hover:text-gray-900 mr-3"
