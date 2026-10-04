@@ -1,5 +1,5 @@
 /**
- * Combo routes honour the sales channel: /active and /detect take an optional
+ * Combo routes honour the sales channel: /active and /pricing take an optional
  * channel (default online); POST/PUT accept salesChannel from admins only.
  */
 const request = require('supertest');
@@ -63,7 +63,7 @@ describe('GET /api/combos/active', () => {
 	});
 });
 
-describe('POST /api/combos/detect', () => {
+describe('POST /api/combos/pricing (channel)', () => {
 	let app;
 
 	beforeAll(() => {
@@ -87,34 +87,60 @@ describe('POST /api/combos/detect', () => {
 		];
 	}
 
-	it('prices only products sellable on the requested channel', async () => {
+	it('defaults to online and refuses a cart holding a product not sold online', async () => {
+		const items = await cart({ salesChannel: 'offline' });
+
+		const res = await request(app).post('/api/combos/pricing').send({ items });
+
+		expect(res.status).toBe(400);
+		expect(res.body.code).toBe('PRODUCT_CHANNEL_MISMATCH');
+	});
+
+	it('prices an online-only product online, and rejects it at the counter', async () => {
 		const items = await cart({ salesChannel: 'online' });
 
-		const online = await request(app).post('/api/combos/detect').send({ items, channel: 'online' });
-		expect(online.body.data.bestCombo).not.toBeNull();
+		const online = await request(app).post('/api/combos/pricing').send({ items, channel: 'online' });
+		expect(online.body.data.totalAmount).toBe(120000);
 
-		// The online-only sticker is dropped at the counter, so the combo's
-		// sticker requirement is no longer met.
-		const offline = await request(app).post('/api/combos/detect').send({ items, channel: 'offline' });
-		expect(offline.status).toBe(200);
-		expect(offline.body.data.bestCombo).toBeNull();
+		const offline = await request(app).post('/api/combos/pricing').send({ items, channel: 'offline' });
+		expect(offline.status).toBe(400);
 	});
 
-	it('does not suggest an online-only combo for the offline channel', async () => {
+	// The order half is in expected-total.test.js.
+	it('does not apply an online-only combo to the offline preview', async () => {
 		const items = await cart({}, { salesChannel: 'online' });
 
-		const offline = await request(app).post('/api/combos/detect').send({ items, channel: 'offline' });
-		expect(offline.body.data.applicableCombos).toEqual([]);
+		const offline = await request(app).post('/api/combos/pricing').send({ items, channel: 'offline' });
+		expect(offline.body.data.comboInfo).toBeNull();
+		expect(offline.body.data.totalAmount).toBe(150000);
 
-		const defaulted = await request(app).post('/api/combos/detect').send({ items });
-		expect(defaulted.body.data.applicableCombos).toHaveLength(1);
+		const online = await request(app).post('/api/combos/pricing').send({ items });
+		expect(online.body.data.comboInfo.combos).toHaveLength(1);
+		expect(online.body.data.totalAmount).toBe(120000);
 	});
 
-	it('suggests an offline-only combo for the offline channel only', async () => {
+	it('keeps the legacy summary object that pre-deploy seller tabs read', async () => {
+		const items = await cart({}, { salesChannel: 'online' });
+
+		const res = await request(app).post('/api/combos/pricing').send({ items });
+
+		expect(res.body.data.summary).toEqual({ originalTotal: 150000, totalSavings: 30000, finalTotal: 120000 });
+	});
+
+	it('applies an offline-only combo to the offline preview only', async () => {
 		const items = await cart({}, { salesChannel: 'offline' });
 
-		expect((await request(app).post('/api/combos/detect').send({ items, channel: 'offline' })).body.data.bestCombo).not.toBeNull();
-		expect((await request(app).post('/api/combos/detect').send({ items, channel: 'online' })).body.data.bestCombo).toBeNull();
+		expect((await request(app).post('/api/combos/pricing').send({ items, channel: 'offline' })).body.data.totalAmount).toBe(120000);
+		expect((await request(app).post('/api/combos/pricing').send({ items, channel: 'online' })).body.data.totalAmount).toBe(150000);
+	});
+
+	it('treats an unknown channel as online instead of erroring', async () => {
+		const items = await cart({}, { salesChannel: 'offline' });
+
+		const res = await request(app).post('/api/combos/pricing').send({ items, channel: 'pos' });
+
+		expect(res.status).toBe(200);
+		expect(res.body.data.totalAmount).toBe(150000);
 	});
 });
 

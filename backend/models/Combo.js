@@ -30,7 +30,9 @@ const comboSchema = new mongoose.Schema({
 	price: {
 		type: Number,
 		required: [true, 'Giá combo là bắt buộc'],
-		min: [0, 'Giá không được âm']
+		min: [0, 'Giá không được âm'],
+		// Integer VND only: see the matching validator on Product.price.
+		validate: { validator: Number.isInteger, message: 'Giá phải là số nguyên (VND)' }
 	},
 	categoryRequirements: {
 		type: [categoryRequirementSchema],
@@ -61,7 +63,8 @@ const comboSchema = new mongoose.Schema({
 });
 
 // Index for better performance
-comboSchema.index({ isActive: 1 });
+// Serves the sellable-combo query: equality on isActive, ordered by priority.
+comboSchema.index({ isActive: 1, priority: -1, createdAt: -1 });
 comboSchema.index({ priority: -1 });
 comboSchema.index({ createdAt: -1 });
 
@@ -70,169 +73,11 @@ comboSchema.virtual('totalRequiredQuantity').get(function () {
 	return this.categoryRequirements.reduce((total, req) => total + req.quantity, 0);
 });
 
-// Static method to find active combos
-comboSchema.statics.findActive = function (filter = {}) {
-	return this.find({ ...filter, isActive: true }).sort({ priority: -1, createdAt: -1 });
-};
-
 // Combos that may discount an order placed on `channel`. The products inside a
 // combo must still be sellable on that channel; pricing checks that separately.
 comboSchema.statics.findSellable = function (channel) {
 	return this.find({ $and: [{ isActive: true }, Product.channelClause(channel)] })
 		.sort({ priority: -1, createdAt: -1 });
-};
-
-// Method to check if products can satisfy this combo
-comboSchema.methods.canApplyToProducts = function (products) {
-	const productsByCategory = {};
-
-	// Group products by category
-	products.forEach(item => {
-		if (!productsByCategory[item.product.category]) {
-			productsByCategory[item.product.category] = 0;
-		}
-		productsByCategory[item.product.category] += item.quantity;
-	});
-
-	// Check if all category requirements are met
-	return this.categoryRequirements.every(requirement => {
-		const availableQuantity = productsByCategory[requirement.category] || 0;
-		return availableQuantity >= requirement.quantity;
-	});
-};
-
-// Method to calculate savings compared to individual product prices
-comboSchema.methods.calculateSavings = function (products) {
-	const individualTotal = products.reduce((total, item) => {
-		return total + (item.product.price * item.quantity);
-	}, 0);
-
-	return Math.max(0, individualTotal - this.price);
-};
-
-// Method to calculate maximum number of times this combo can be applied
-//
-// Starts the running minimum at Infinity, not 0: the old code seeded it with
-// the first requirement's result, so a requirement met by 0 available items
-// set max=0 but the *next* requirement's Math.min(0, x) === 0 branch was
-// never taken — the `if (maxApplications === 0)` guard treated that 0 as
-// "unset" and overwrote it with the next requirement's count instead of
-// keeping it pinned at 0. A combo needing 1xA + 1xB with 0xA in the cart
-// would then apply as if only B was required. Breaking as soon as a 0 shows
-// up also avoids evaluating requirements that can no longer change the
-// result.
-//
-// F11: requirement quantities are summed PER CATEGORY before computing
-// possible applications. `categoryRequirements` is a plain array — nothing
-// stops an admin from creating a combo with two separate requirement entries
-// on the same category (e.g. 1x"hat" + 1x"hat" instead of a single 2x"hat").
-// Evaluating each requirement independently against the category's full
-// available quantity (the previous code) double-counts that availability:
-// with 3 hats in the cart, each 1x"hat" requirement independently computes
-// floor(3/1)=3 possible applications, so maxApplications comes back 3 even
-// though 2 applications would need 4 hats — only 3 are available.
-// ComboService.applyComboToProducts then tries to actually consume 2 hats ×
-// 3 applications = 6 from a cart that only has 3, and its own post-condition
-// check throws a plain Error, surfacing as a 500 on checkout for any cart
-// that matches such a combo.
-comboSchema.methods.getMaxApplications = function (products) {
-	const productsByCategory = {};
-
-	// Group products by category
-	products.forEach(item => {
-		if (!productsByCategory[item.product.category]) {
-			productsByCategory[item.product.category] = 0;
-		}
-		productsByCategory[item.product.category] += item.quantity;
-	});
-
-	// Merge requirements sharing a category: total quantity NEEDED per
-	// application, summed across every requirement entry for that category.
-	const neededPerCategory = {};
-	for (const requirement of this.categoryRequirements) {
-		neededPerCategory[requirement.category] = (neededPerCategory[requirement.category] || 0) + requirement.quantity;
-	}
-
-	let maxApplications = Infinity;
-
-	for (const [category, neededQuantity] of Object.entries(neededPerCategory)) {
-		const availableQuantity = productsByCategory[category] || 0;
-		const possibleApplications = Math.floor(availableQuantity / neededQuantity);
-		maxApplications = Math.min(maxApplications, possibleApplications);
-		if (maxApplications === 0) break;
-	}
-
-	// A combo with no requirements (schema forbids this, but stay defensive)
-	// must not report Infinity applications.
-	return maxApplications === Infinity ? 0 : maxApplications;
-};
-
-// Method to calculate total savings with maximum applications
-comboSchema.methods.calculateMaxSavings = function (products) {
-	const maxApplications = this.getMaxApplications(products);
-	if (maxApplications <= 0) return 0;
-
-	// Calculate cost if all applicable items are in combos
-	const comboTotal = maxApplications * this.price;
-
-	// Calculate the cost of items used in combos at individual prices
-	const productsByCategory = {};
-	products.forEach(item => {
-		if (!productsByCategory[item.product.category]) {
-			productsByCategory[item.product.category] = [];
-		}
-		productsByCategory[item.product.category].push(item);
-	});
-
-	let usedItemsCost = 0;
-	for (const requirement of this.categoryRequirements) {
-		const categoryItems = productsByCategory[requirement.category] || [];
-		let remainingNeeded = requirement.quantity * maxApplications;
-
-		// Sort by price (highest first) to use most expensive items in combo
-		categoryItems.sort((a, b) => b.product.price - a.product.price);
-
-		for (const item of categoryItems) {
-			if (remainingNeeded <= 0) break;
-
-			const useQuantity = Math.min(item.quantity, remainingNeeded);
-			usedItemsCost += useQuantity * item.product.price;
-			remainingNeeded -= useQuantity;
-		}
-	}
-
-	return Math.max(0, usedItemsCost - comboTotal);
-};
-
-// Static method to find optimal combo combination
-//
-// Accepts an optional preloaded combo list so a caller applying several
-// combos in a loop (ComboService.calculateOptimalPricing, pricing.js) can
-// query Combo.findActive() once and reuse it, instead of re-querying on
-// every iteration.
-comboSchema.statics.findOptimalCombination = async function (products, preloadedCombos = null) {
-	const activeCombos = preloadedCombos || await this.findActive();
-
-	// Calculate savings for each combo
-	const comboAnalysis = activeCombos.map(combo => ({
-		combo,
-		maxApplications: combo.getMaxApplications(products),
-		savingsPerApplication: combo.calculateSavings(products),
-		totalSavings: combo.calculateMaxSavings(products)
-	}));
-
-	// Filter out combos that can't be applied
-	const applicableCombos = comboAnalysis.filter(analysis => analysis.maxApplications > 0);
-
-	// Sort by total savings (highest first), then by priority
-	applicableCombos.sort((a, b) => {
-		if (b.totalSavings !== a.totalSavings) {
-			return b.totalSavings - a.totalSavings;
-		}
-		return b.combo.priority - a.combo.priority;
-	});
-
-	return applicableCombos;
 };
 
 // Add pagination plugin

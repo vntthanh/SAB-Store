@@ -135,7 +135,9 @@ describe('computeOrderPricing', () => {
 			], ONLINE);
 
 			expect(result.comboInfo).not.toBeNull();
-			expect(result.comboInfo.comboId.toString()).toBe(combo._id.toString());
+			expect(result.comboInfo.combos).toEqual([
+				{ comboId: combo._id, comboName: combo.name, applications: 1, savings: 30000 }
+			]);
 			expect(result.comboInfo.originalTotal).toBe(150000);
 			expect(result.comboInfo.finalTotal).toBe(120000);
 			expect(result.comboInfo.savings).toBe(30000);

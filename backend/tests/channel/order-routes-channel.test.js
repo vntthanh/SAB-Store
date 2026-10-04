@@ -8,14 +8,15 @@ const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factori
 const Product = require('../../models/Product');
 const Order = require('../../models/Order');
 
-function onlineOrderBody(items) {
+function onlineOrderBody(items, expectedTotal) {
 	return {
 		studentId: 'SV12345',
 		fullName: 'Nguyen Van A',
 		email: 'nguyenvana@example.com',
 		phoneNumber: '0987654321',
 		additionalNote: '',
-		items
+		items,
+		expectedTotal
 	};
 }
 
@@ -31,7 +32,7 @@ describe('POST /api/orders (online channel)', () => {
 	it('accepts an online-only product', async () => {
 		const product = await makeProduct({ salesChannel: 'online', price: 30000 });
 
-		const res = await request(app).post('/api/orders').send(onlineOrderBody([item(product, 2)]));
+		const res = await request(app).post('/api/orders').send(onlineOrderBody([item(product, 2)], 60000));
 
 		expect(res.status).toBe(201);
 		expect(res.body.data.totalAmount).toBe(60000);
@@ -40,7 +41,7 @@ describe('POST /api/orders (online channel)', () => {
 	it('rejects an offline-only product with 400 (never 500) and names it', async () => {
 		const product = await makeProduct({ salesChannel: 'offline', name: 'Counter Only Keychain' });
 
-		const res = await request(app).post('/api/orders').send(onlineOrderBody([item(product)]));
+		const res = await request(app).post('/api/orders').send(onlineOrderBody([item(product)], 0));
 
 		expect(res.status).toBe(400);
 		expect(res.body.success).toBe(false);
@@ -51,7 +52,7 @@ describe('POST /api/orders (online channel)', () => {
 	it('rejects an available:false product', async () => {
 		const product = await makeProduct({ available: false });
 
-		const res = await request(app).post('/api/orders').send(onlineOrderBody([item(product)]));
+		const res = await request(app).post('/api/orders').send(onlineOrderBody([item(product)], 0));
 
 		expect(res.status).toBe(400);
 	});
@@ -68,7 +69,7 @@ describe('POST /api/orders (online channel)', () => {
 			]
 		});
 
-		const res = await request(app).post('/api/orders').send(onlineOrderBody([item(a), item(b)]));
+		const res = await request(app).post('/api/orders').send(onlineOrderBody([item(a), item(b)], 150000));
 
 		expect(res.status).toBe(201);
 		expect(res.body.data.totalAmount).toBe(150000);
@@ -90,7 +91,7 @@ describe('POST /api/seller/orders/direct (offline channel)', () => {
 		const res = await request(app)
 			.post('/api/seller/orders/direct')
 			.set('Cookie', cookies)
-			.send({ items: [item(product, 2)] });
+			.send({ items: [item(product, 2)], expectedTotal: 40000 });
 
 		expect(res.status).toBe(201);
 		expect((await Product.findById(product._id)).stockQuantity).toBe(3);
@@ -102,7 +103,7 @@ describe('POST /api/seller/orders/direct (offline channel)', () => {
 		const res = await request(app)
 			.post('/api/seller/orders/direct')
 			.set('Cookie', cookies)
-			.send({ items: [item(product)] });
+			.send({ items: [item(product)], expectedTotal: 0 });
 
 		expect(res.status).toBe(400);
 		expect(res.body.message).toContain('Web Exclusive Hoodie');
@@ -116,7 +117,7 @@ describe('POST /api/seller/orders/direct (offline channel)', () => {
 		const res = await request(app)
 			.post('/api/seller/orders/direct')
 			.set('Cookie', cookies)
-			.send({ items: [item(product)] });
+			.send({ items: [item(product)], expectedTotal: 0 });
 
 		expect(res.status).toBe(400);
 		expect((await Product.findById(product._id)).stockQuantity).toBe(5);
@@ -128,7 +129,7 @@ describe('POST /api/seller/orders/direct (offline channel)', () => {
 		const res = await request(app)
 			.post('/api/seller/orders/direct')
 			.set('Cookie', cookies)
-			.send({ items: [item(product)] });
+			.send({ items: [item(product)], expectedTotal: 100000 });
 
 		expect(res.status).toBe(201);
 	});
@@ -148,7 +149,7 @@ describe('POST /api/seller/orders/direct (offline channel)', () => {
 		const res = await request(app)
 			.post('/api/seller/orders/direct')
 			.set('Cookie', cookies)
-			.send({ items: [item(a), item(b)] });
+			.send({ items: [item(a), item(b)], expectedTotal: 120000 });
 
 		expect(res.status).toBe(201);
 		expect(res.body.data.totalAmount).toBe(120000);

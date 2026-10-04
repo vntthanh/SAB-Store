@@ -1,15 +1,13 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const { authenticateSeller } = require('../middleware/better-auth');
-const { validatePasswordChange, validateOrderUpdate } = require('../middleware/validation');
+const { validatePasswordChange, validateOrderUpdate, validateDirectOrder } = require('../middleware/validation');
 const { getPaginationInfo, formatDate, formatCurrency } = require('../utils/helpers');
 const { sendOrderToAppScript } = require('../utils/appscript');
 const { generateDirectSalePaymentQR } = require('../utils/paymentHelper');
-const ComboService = require('../services/ComboService');
-const { loadSellableProducts, describePricingError, PricingError } = require('../services/pricing');
+const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError } = require('../services/pricing');
 const { auth } = require('../lib/auth');
 const { StockError, deductStockForItems, restoreStockForItems, applyStatusTransitionStockEffect } = require('../services/stock');
 const ErrorLogger = require('../utils/errorLogger');
@@ -481,23 +479,15 @@ router.get('/orders/:id', async (req, res) => {
  * @desc    Create direct sale order
  * @access  Private (Seller)
  *
- * Pricing is always computed server-side from the DB now. The previous
- * version had a branch that trusted `optimalPricing.summary.finalTotal` sent
- * by the client verbatim whenever `useOptimalPricing` was set — the same
- * class of bug Phase 05 fixed on the public POST /api/orders route, just
- * reachable here from the seller POS instead. That branch is removed.
- *
- * Pricing goes through ComboService.calculateOptimalPricing, not
- * services/pricing.js's computeOrderPricing — computeOrderPricing applies at
- * most one combo per order by contract, but the seller POS (DirectSalesPage)
- * can legitimately ring up a cart that qualifies for more than one different
- * combo (e.g. two lanyard+tag combos of different kinds in one sale), and
- * this phase does not silently drop that capability. See the phase report
- * for the full analysis of why this differs from the public order route.
+ * Pricing is always computed server-side from the DB through
+ * services/pricing.js on the offline channel — the same engine as the cart
+ * preview, so a counter sale can ring up a cart that qualifies for several
+ * different combos. The client sends only ids, quantities and the
+ * `expectedTotal` it displayed; a stale total is refused with 409.
  */
-router.post('/orders/direct', async (req, res) => {
+router.post('/orders/direct', validateDirectOrder, async (req, res) => {
 	try {
-		const { items } = req.body;
+		const { items, expectedTotal } = req.body;
 
 		if (!items || !Array.isArray(items) || items.length === 0) {
 			return res.status(400).json({
@@ -515,80 +505,18 @@ router.post('/orders/direct', async (req, res) => {
 			}
 		}
 
-		// Validate every product up front: ComboService.calculateOptimalPricing
-		// silently drops unknown/inactive products from its result instead of
-		// rejecting them, which would otherwise let a stale cart line vanish
-		// from the order without the seller noticing.
-		//
-		// Ids are normalised through ObjectId first: Mongo casts uppercase hex
-		// happily, so `$in` finds the product, but `p._id.toString()` is always
-		// canonical lowercase — comparing the raw client string against that set
-		// would report a perfectly valid product as missing and reject the sale.
-		const productIds = [...new Set(
-			items
-				.map(item => item && item.productId)
-				.filter(id => mongoose.Types.ObjectId.isValid(id))
-				.map(id => new mongoose.Types.ObjectId(id).toString())
-		)];
+		let pricing;
 		try {
-			await loadSellableProducts(productIds, 'offline');
+			pricing = await computeOrderPricing(items, { channel: 'offline' });
+			assertExpectedTotal(expectedTotal, pricing.totalAmount);
 		} catch (pricingError) {
 			if (pricingError instanceof PricingError) {
-				return res.status(pricingError.httpStatus).json({
-					success: false,
-					message: describePricingError(pricingError),
-					details: pricingError.details
-				});
+				return res.status(pricingError.httpStatus).json(pricingErrorBody(pricingError));
 			}
 			throw pricingError;
 		}
 
-		const pricing = await ComboService.calculateOptimalPricing(items);
-
-		const orderItems = [];
-		for (const applied of pricing.appliedCombos) {
-			for (const used of applied.itemsUsed) {
-				orderItems.push({
-					productId: used.productId,
-					productName: used.productName,
-					quantity: used.quantity,
-					price: used.price,
-					fromCombo: true,
-					comboId: applied.combo._id,
-					comboName: applied.combo.name
-				});
-			}
-		}
-		for (const item of pricing.remainingItems) {
-			orderItems.push({
-				productId: item.productId,
-				productName: item.product.name,
-				quantity: item.quantity,
-				price: item.product.price,
-				fromCombo: false
-			});
-		}
-
-		if (orderItems.length === 0) {
-			return res.status(400).json({
-				success: false,
-				message: 'Danh sách sản phẩm không hợp lệ'
-			});
-		}
-
-		const totalAmount = pricing.finalTotal;
-		const comboInfo = pricing.appliedCombos.length > 0 ? {
-			savings: pricing.totalSavings,
-			originalTotal: pricing.originalTotal,
-			finalTotal: pricing.finalTotal,
-			combos: pricing.appliedCombos.map(c => ({
-				comboId: c.combo._id,
-				comboName: c.combo.name,
-				applications: c.applications,
-				savings: c.savings
-			})),
-			breakdown: pricing.breakdown
-		} : null;
+		const { orderItems, comboInfo, totalAmount } = pricing;
 
 		const stockLines = orderItems.map(item => ({ productId: item.productId, quantity: item.quantity }));
 

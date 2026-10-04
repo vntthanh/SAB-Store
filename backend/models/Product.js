@@ -34,7 +34,10 @@ const productSchema = new mongoose.Schema({
 	price: {
 		type: Number,
 		required: [true, 'Giá sản phẩm là bắt buộc'],
-		min: [0, 'Giá không được âm']
+		min: [0, 'Giá không được âm'],
+		// A fractional price makes every order total fractional, and a client
+		// can only echo an integer total back, so each order would fail as 409.
+		validate: { validator: Number.isInteger, message: 'Giá phải là số nguyên (VND)' }
 	},
 	imageUrl: {
 		type: String,

@@ -2,10 +2,9 @@ const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct } = require('../helpers/factories');
 
-// Public /combos/detect and /combos/pricing take an anonymous, user-supplied
-// items array. Without bounds an attacker can force ComboService to loop a
-// DB lookup per item (unbounded array) or push quantity toward Infinity/NaN
-// in downstream pricing math.
+// Public /combos/pricing takes an anonymous, user-supplied items array.
+// Without bounds an attacker can force a product lookup per item (unbounded
+// array) or push quantity toward Infinity/NaN in downstream pricing math.
 describe('Combo item bounds — public routes', () => {
 	let app;
 
@@ -59,14 +58,31 @@ describe('Combo item bounds — public routes', () => {
 		expect(res.body.success).toBe(true);
 	});
 
-	it('POST /api/combos/detect rejects an oversized items array (>100)', async () => {
-		const items = Array.from({ length: 101 }, () => ({
-			productId: '507f1f77bcf86cd799439011',
-			quantity: 1
-		}));
+	it('POST /api/combos/pricing rejects a cart over the per-order unit cap, even when split across lines', async () => {
+		const product = await makeProduct();
+		const other = await makeProduct();
 
-		const res = await request(app).post('/api/combos/detect').send({ items });
+		const res = await request(app)
+			.post('/api/combos/pricing')
+			.send({
+				items: [
+					{ productId: product._id.toString(), quantity: 150 },
+					{ productId: other._id.toString(), quantity: 51 }
+				]
+			});
 
 		expect(res.status).toBe(400);
+		expect(res.body.code).toBe('CART_TOO_MANY_UNITS');
+	});
+
+	it('POST /api/combos/pricing accepts a cart of exactly the unit cap', async () => {
+		const product = await makeProduct({ price: 10 });
+
+		const res = await request(app)
+			.post('/api/combos/pricing')
+			.send({ items: [{ productId: product._id.toString(), quantity: 200 }] });
+
+		expect(res.status).toBe(200);
+		expect(res.body.data.totalAmount).toBe(2000);
 	});
 });

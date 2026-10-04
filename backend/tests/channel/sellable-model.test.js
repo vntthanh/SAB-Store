@@ -127,7 +127,7 @@ describe('Combo.findSellable', () => {
 		expect(idsOf(await Combo.findSellable('offline'))).toContain(insertedId.toString());
 	});
 
-	it('keeps the priority-then-newest ordering findActive used', async () => {
+	it('orders by priority, then newest', async () => {
 		const low = await makeCombo({ priority: 1 });
 		const high = await makeCombo({ priority: 5 });
 

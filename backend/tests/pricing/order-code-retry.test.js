@@ -51,7 +51,8 @@ describe('POST /api/orders — orderCode collision retry', () => {
 				fullName: 'Nguyen Van B',
 				email: 'b@example.com',
 				phoneNumber: '0987654321',
-				items: [{ productId: product._id.toString(), quantity: 1 }]
+				items: [{ productId: product._id.toString(), quantity: 1 }],
+				expectedTotal: 10000
 			});
 
 		expect(res.status).toBe(201);
@@ -83,7 +84,8 @@ describe('POST /api/orders — orderCode collision retry', () => {
 					fullName: 'Nguyen Van C',
 					email: 'c@example.com',
 					phoneNumber: '0987654322',
-					items: [{ productId: product._id.toString(), quantity: 1 }]
+					items: [{ productId: product._id.toString(), quantity: 1 }],
+					expectedTotal: 5000
 				});
 
 			expect(res.status).toBe(201);
