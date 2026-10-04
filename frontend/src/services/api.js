@@ -51,6 +51,7 @@ const toApiError = (error, fallback) => {
 	const apiError = new Error(error.response?.data?.message || fallback);
 	apiError.status = error.response?.status;
 	apiError.code = error.response?.data?.code;
+	apiError.details = error.response?.data?.details;
 	return apiError;
 };
 
