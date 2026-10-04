@@ -14,6 +14,12 @@ covers `prod.compose.yml` on a host without Coolify and is kept as the fallback 
 - **Deploy** = merge `dev` into `main` with a merge commit (keep `dev`). A GitHub webhook makes
   Coolify build both images from source and replace the containers. A failed build leaves the
   running containers untouched.
+- **Downtime per deploy**: Coolify removes every container of the project before `compose up`, so
+  the site is down from the first stop until the new frontend is healthy (measured ~100 s before
+  the tuning in `coolify.compose.yml`: slow nginx/mongod stops, a second image build at `up`,
+  serial health waits). Re-measure with a 1 req/s probe after changing anything that affects
+  stop, start or healthcheck timing; getting close to zero needs Coolify to keep the old
+  containers running until the new ones are healthy, which the compose build pack does not do.
 - **No deployment appeared after a push**: the webhook was not delivered (it happened on
   2026-09-29). Check the repo's Settings → Webhooks → Recent Deliveries and redeliver, or press
   Deploy in the Coolify UI.
@@ -235,10 +241,21 @@ enforcing policy takes the storefront down.
 ## 8. Enable rate limiting — only after verifying `req.ip`
 
 Rate limiting exists (`authLimiter`, `orderLimiter`, `publicLimiter` in `backend/server.js`)
-but is **off by default**, gated behind `RATE_LIMIT_ENABLED` (`server.js:137`,
-`if (process.env.RATE_LIMIT_ENABLED === 'true')`). `trust proxy` is hardcoded to `2` for
-production. If the real hop count from `store.sabies.vn` to the backend is ever different,
-every client collapses onto one IP bucket and the whole site gets 429'd.
+but is **off by default**, gated behind `RATE_LIMIT_ENABLED` (`backend/server.js`,
+`if (process.env.RATE_LIMIT_ENABLED === 'true')`). `req.ip` is resolved by a CIDR trust list
+(`backend/lib/trusted-proxies.js`: `loopback` + `10.0.0.0/16`, override with
+`TRUSTED_PROXY_IPS`), and frontend nginx restores the visitor address with the same range
+(`set_real_ip_from` in `frontend/nginx.conf`). Coolify assigns the project network subnet; if
+it ever falls outside `10.0.0.0/16`, change both together or every client collapses onto one
+IP bucket and the whole site gets 429'd.
+
+Quick check after a deploy (no second network needed):
+
+```sh
+curl -s -o /dev/null -H "X-Forwarded-For: 9.9.9.9" https://store.sabies.vn/api/settings
+docker logs --tail 5 <frontend container>   # first token = your public IP, not 10.0.x.x, not 9.9.9.9
+docker logs --tail 5 <backend container>    # {"type":"access","ip":...} = the same public IP
+```
 
 Verify from **two different external networks** (not the same NAT) before setting
 `RATE_LIMIT_ENABLED=true`:
@@ -257,8 +274,8 @@ docker compose -f prod.compose.yml logs backend | grep "404 - Route not found"
 ```
 
 Confirm the two log lines show two **different** `ip` values. If they show the same value
-(e.g. the frontend container's internal IP), do not enable rate limiting — the hop count is
-wrong and needs fixing in `server.js:48` first. Only after two distinct real IPs are
+(e.g. the frontend container's internal IP), do not enable rate limiting — the proxy trust list
+does not match the real chain and needs fixing in `backend/lib/trusted-proxies.js` / `frontend/nginx.conf` first. Only after two distinct real IPs are
 confirmed: set `RATE_LIMIT_ENABLED=true` in `.env`, redeploy backend (step 5, backend only).
 
 ## Operator scripts

@@ -34,7 +34,7 @@ services:
         # rejects a keyfile that is group/world accessible or not readable by it.
         chown 999:999 /etc/mongo/keyfile
         chmod 400 /etc/mongo/keyfile
-        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /etc/mongo/keyfile --bind_ip_all --wiredTigerCacheSizeGB 0.25
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /etc/mongo/keyfile --bind_ip_all --wiredTigerCacheSizeGB 0.25 --setParameter shutdownTimeoutMillisForSignaledShutdown=1000
     mem_limit: 512m
     logging:
       driver: json-file
@@ -79,6 +79,8 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 2s
 
   # SAB Store object storage (SeaweedFS, S3 API on :9000)
   sabstore-seaweedfs:
@@ -156,6 +158,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 2s
     networks:
       - sabstore_network
 
@@ -207,6 +211,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 1s
     networks:
       - sabstore_network
 
@@ -274,7 +280,9 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 40s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 2s
 
   # SAB Store Frontend React App (with Nginx Reverse Proxy)
   frontend:
@@ -287,6 +295,8 @@ services:
     container_name: sabstore_frontend
     restart: unless-stopped
     mem_limit: 128m
+    # nginx stops on SIGQUIT (waits for open connections) by default; SIGTERM is its fast shutdown.
+    stop_signal: SIGTERM
     logging:
       driver: json-file
       options:
@@ -310,6 +320,8 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 1s
 
 volumes:
   mongodb_data:

@@ -10,13 +10,14 @@
 #   * Named volumes replaced by absolute binds under /srv/appdata/vol/. Coolify
 #     rewrites compose-declared volume names, which would have detached MongoDB,
 #     SeaweedFS and the upload store from their data.
-# Backend and frontend are built from source on every deploy (`pull_policy: build`:
-# never pulled, always built). Until 2026-09-29 they ran pre-built images from the
+# Backend and frontend are built from source on every deploy (Coolify runs
+# `compose build` before stopping anything; `pull_policy: never` then keeps `up` from
+# building or pulling a second time). Until 2026-09-29 they ran pre-built images from the
 # host registry because the first source build (2026-09-21) failed with
 # `vite: not found`; that failure could not be reproduced afterwards, locally or with
 # the platform's build args. Rollback (both services together, never one): git-revert
 # this change, i.e. restore `image: 127.0.0.1:5000/sab-store-{backend,frontend}:migrated-260921`
-# with `pull_policy: always` AND delete the `build:` blocks - keeping `build:` next to
+# with `pull_policy: always` (instead of `never`) AND delete the `build:` blocks - keeping `build:` next to
 # `image:` would rebuild from source under the old tag instead of rolling back. Those
 # two tags stay in the host registry for that purpose.
 # Object storage is SeaweedFS (`sabstore-seaweedfs`), configured by an inline script in
@@ -32,6 +33,14 @@
 # MONGODB_URI must carry `replicaSet=rs0`. Rollback (together with reverting the backend's
 # replica-set startup check, or it refuses to boot): drop --replSet/--keyFile and the
 # `replicaSet` URI option; mongod then starts standalone on the same data dir.
+# Deploy downtime: Coolify removes EVERY container of the project before `compose up`
+# (even services whose config did not change), so the site is down from the first stop
+# until the new frontend is healthy. Measured on one deploy: ~100 s = 30 s nginx stop +
+# 21 s mongod stop + 27 s second image build + 16 s SeaweedFS start + 5 s first health
+# probe. The settings below target each of those; they must not be undone:
+#   * `pull_policy: never` on the built services (not `build`: that rebuilds at `up`);
+#   * `stop_signal: SIGTERM` on nginx, `shutdownTimeoutMillisForSignaledShutdown` on mongod;
+#   * `start_interval` on every healthcheck, `service_started` for the backend's deps.
 # The `${VAR:?message}` form is NOT used in this file. The deployment platform does
 # not implement error-if-unset: it substitutes the MESSAGE as the value, so
 # `${PUBLIC_URL:?PUBLIC_URL is required}` silently becomes the literal string
@@ -54,6 +63,10 @@ services:
     # by another user in a sticky directory, and a restarted (not recreated)
     # container still holds last run's mongodb-owned file - hence the `rm -f`.
     # Every `$` is doubled: compose would otherwise interpolate it first.
+    # shutdownTimeoutMillisForSignaledShutdown: a replica-set member otherwise sits in a
+    # 15 s "quiesce" period after SIGTERM (measured ~21 s per stop), and the site is down
+    # for all of it during a deploy. The backend is already stopped by then and mongod
+    # still checkpoints and closes cleanly; only the wait for clients to drain is cut.
     #
     # Fail-closed on purpose: the platform turns an unset variable into an empty
     # string, and a mongod with no usable keyfile must never start.
@@ -77,7 +90,7 @@ services:
         # rejects a keyfile that is group/world accessible or not readable by it.
         chown 999:999 /etc/mongo/keyfile
         chmod 400 /etc/mongo/keyfile
-        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /etc/mongo/keyfile --bind_ip_all --wiredTigerCacheSizeGB 0.25
+        exec docker-entrypoint.sh mongod --replSet rs0 --keyFile /etc/mongo/keyfile --bind_ip_all --wiredTigerCacheSizeGB 0.25 --setParameter shutdownTimeoutMillisForSignaledShutdown=1000
     mem_limit: 512m
     logging:
       driver: json-file
@@ -117,6 +130,9 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+      # Probe often only while starting (start_period): the first success, not the
+      # steady-state interval, decides how soon dependants and the proxy see it healthy.
+      start_interval: 2s
 
   # SAB Store object storage (SeaweedFS, S3 API on :9000)
   sabstore-seaweedfs:
@@ -194,6 +210,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+      # Probe often only while starting (start_period): the first success, not the
+      # steady-state interval, decides how soon dependants and the proxy see it healthy.
+      start_interval: 2s
 
   # SAB Store Redis: dispatcher for the stock-movement queue (BullMQ). It is NOT the
   # source of truth - every stock movement is a pending document in MongoDB first, and
@@ -243,6 +262,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+      # Probe often only while starting (start_period): the first success, not the
+      # steady-state interval, decides how soon dependants and the proxy see it healthy.
+      start_interval: 1s
 
   # SAB Store Backend API
   sabstore-backend:
@@ -250,7 +272,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     cpus: 2
-    pull_policy: build
+    pull_policy: never
     restart: unless-stopped
     mem_limit: 256m
     logging:
@@ -291,15 +313,19 @@ services:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     expose:
       - "5000"
+    # service_started, not service_healthy: start.js already retries MongoDB and the
+    # object store (30 x 2 s) before it listens, and Redis is optional. Waiting for health
+    # here only serialised the slowest dependency (SeaweedFS, ~16 s) in front of the
+    # backend and frontend during the window the site is down.
     depends_on:
       mongodb:
-        condition: service_healthy
+        condition: service_started
         restart: true
       sabstore-seaweedfs:
-        condition: service_healthy
+        condition: service_started
         restart: true
       sabstore-redis:
-        condition: service_healthy
+        condition: service_started
         restart: true
     volumes:
       - /srv/appdata/vol/sab-store_backend_uploads:/app/uploads
@@ -308,7 +334,10 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      start_period: 40s
+      # Probe often only while starting (start_period): the first success, not the
+      # steady-state interval, decides how soon dependants and the proxy see it healthy.
+      start_interval: 2s
     # Only the frontend joins multi-domain. The backend is reachable
     # exclusively through the frontend nginx /api/ proxy.
     #
@@ -324,9 +353,13 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     cpus: 2
-    pull_policy: build
+    pull_policy: never
     restart: unless-stopped
     mem_limit: 128m
+    # nginx's image stops on SIGQUIT (graceful): it waits for open keep-alive
+    # connections from the proxy until the platform's 30 s stop timeout kills it.
+    # SIGTERM is nginx's fast shutdown; nothing here needs connections to drain.
+    stop_signal: SIGTERM
     logging:
       driver: json-file
       options:
@@ -344,3 +377,6 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+      # Probe often only while starting (start_period): the first success, not the
+      # steady-state interval, decides how soon dependants and the proxy see it healthy.
+      start_interval: 1s

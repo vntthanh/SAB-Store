@@ -63,3 +63,11 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
 - Cổng deploy của user (04/10): downtime < 30 s → deploy ngay (đo bằng probe 1 req/s suốt lần deploy); không bảo đảm
   được thì chỉ deploy khi 15 phút không ai xem sản phẩm — script đọc log `activity-check.sh` (thư mục plan kênh bán).
   Trước deploy: verify bằng Playwright MCP trên localhost với catalog clone từ production (products/combos/settings, không dữ liệu khách).
+- **Downtime một lần deploy Coolify ≈ 100 s** (đo 04/10 20:44:06→20:45:47, deploy 78, probe 1 req/s: 84 mẫu 502/503):
+  Coolify xoá CẢ stack compose (kể cả mongo, seaweedfs không đổi cấu hình) rồi mới `up`. Phân rã đo được: ~30 s nginx
+  dừng (SIGQUIT chờ keep-alive), ~21 s mongod dừng, ~27 s build ảnh lần hai ở `up` (`pull_policy: build`), ~16 s
+  SeaweedFS khởi động (backend chờ `service_healthy`), ~5 s probe health đầu.
+  Đã chỉnh trong `coolify.compose.yml` (comment đầu file): `pull_policy: never`, nginx `stop_signal: SIGTERM`, mongod
+  `shutdownTimeoutMillisForSignaledShutdown`, `start_interval`, backend chờ deps `service_started`. **Chưa đo lại** →
+  tới khi probe 1 req/s chứng minh < 30 s, vẫn chỉ deploy trong cửa sổ "15 phút không ai xem sản phẩm" (`activity-check.sh`).
+  `pull_policy: never` + `build:` vẫn build khi ảnh vắng (compose `build.go`: chỉ bỏ build khi ảnh có sẵn).
