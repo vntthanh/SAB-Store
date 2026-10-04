@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { STUDENT_ID_PATTERN, STUDENT_ID_HINT } from '../utils/student-id';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { productService, orderService, comboService, formatCurrency, PRICE_CHANGED } from '../services/api';
@@ -124,9 +125,8 @@ const EventPage = () => {
 		if (!formData.studentId.trim()) {
 			newErrors.studentId = 'Mã số sinh viên là bắt buộc';
 		} else if (formData.school === 'HCMUS') {
-			const mssvRegex = /^(1[6-9]|2[0-5])[0-9]{6}$/;
-			if (!mssvRegex.test(formData.studentId.trim())) {
-				newErrors.studentId = 'Mã số sinh viên không hợp lệ (định dạng: 16xxxxxx - 25xxxxxx)';
+			if (!STUDENT_ID_PATTERN.test(formData.studentId.trim())) {
+				newErrors.studentId = STUDENT_ID_HINT;
 			}
 		}
 

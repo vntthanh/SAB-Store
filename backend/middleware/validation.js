@@ -1,4 +1,5 @@
 const { body, validationResult } = require('express-validator');
+const { STUDENT_ID_PATTERN } = require('../utils/student-id');
 const { createPasswordValidationRules } = require('../utils/passwordValidator');
 const { MAX_UNITS_PER_ORDER } = require('../services/pricing');
 
@@ -51,11 +52,11 @@ const validateDirectOrder = [expectedTotalRule, handleValidationErrors];
  */
 const validateOrder = [
 	body('studentId')
+		.trim()
 		.notEmpty()
 		.withMessage('Mã số sinh viên là bắt buộc')
-		.isLength({ min: 1, max: 20 })
-		.withMessage('Mã số sinh viên phải từ 1-20 ký tự')
-		.trim(),
+		.matches(STUDENT_ID_PATTERN)
+		.withMessage('Mã số sinh viên gồm 8 chữ số, từ 16xxxxxx đến 26xxxxxx'),
 
 	body('fullName')
 		.notEmpty()

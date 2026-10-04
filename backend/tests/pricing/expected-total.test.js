@@ -11,7 +11,7 @@ const Combo = require('../../models/Combo');
 
 const line = (product, quantity = 1) => ({ productId: product._id.toString(), quantity });
 const customer = {
-	studentId: 'SV12345',
+	studentId: '24120001',
 	fullName: 'Nguyen Van A',
 	email: 'nguyenvana@example.com',
 	phoneNumber: '0987654321'

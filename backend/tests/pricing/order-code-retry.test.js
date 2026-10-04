@@ -47,7 +47,7 @@ describe('POST /api/orders — orderCode collision retry', () => {
 		const res = await request(app)
 			.post('/api/orders')
 			.send({
-				studentId: 'SV1',
+				studentId: '24120011',
 				fullName: 'Nguyen Van B',
 				email: 'b@example.com',
 				phoneNumber: '0987654321',
@@ -80,7 +80,7 @@ describe('POST /api/orders — orderCode collision retry', () => {
 			const res = await request(app)
 				.post('/api/orders')
 				.send({
-					studentId: 'SV2',
+					studentId: '24120012',
 					fullName: 'Nguyen Van C',
 					email: 'c@example.com',
 					phoneNumber: '0987654322',

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { STUDENT_ID_PATTERN, STUDENT_ID_HINT } from '../utils/student-id';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useCart } from '../context/CartContext';
@@ -58,11 +59,10 @@ const CheckoutPage = () => {
 		}
 
 		// Student ID validation
-		const mssvRegex = /^(1[6-9]|2[0-5])[0-9]{6}$/;
 		if (!formData.studentId.trim()) {
 			newErrors.studentId = 'Mã số sinh viên là bắt buộc';
-		} else if (!mssvRegex.test(formData.studentId.trim())) {
-			newErrors.studentId = 'Mã số sinh viên không hợp lệ';
+		} else if (!STUDENT_ID_PATTERN.test(formData.studentId.trim())) {
+			newErrors.studentId = STUDENT_ID_HINT;
 		}
 
 		// Full name validation

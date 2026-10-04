@@ -11,7 +11,7 @@ const Order = require('../../models/Order');
 function validOrderBody(overrides = {}) {
 	// expectedTotal is mandatory; tests that care about it set their own.
 	return {
-		studentId: 'SV12345',
+		studentId: '24120001',
 		fullName: 'Nguyen Van A',
 		email: 'nguyenvana@example.com',
 		phoneNumber: '0987654321',
@@ -108,7 +108,7 @@ describe('GET /api/orders/:orderCode', () => {
 			.post('/api/orders')
 			.send(
 				validOrderBody({
-					studentId: 'SECRET-STUDENT-ID',
+					studentId: '24129999',
 					fullName: 'Secret Full Name',
 					items: [{ productId: product._id.toString(), quantity: 1 }],
 					expectedTotal: 10000

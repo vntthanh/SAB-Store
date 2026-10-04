@@ -10,7 +10,7 @@ const Order = require('../../models/Order');
 
 function onlineOrderBody(items, expectedTotal) {
 	return {
-		studentId: 'SV12345',
+		studentId: '24120001',
 		fullName: 'Nguyen Van A',
 		email: 'nguyenvana@example.com',
 		phoneNumber: '0987654321',
