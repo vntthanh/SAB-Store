@@ -237,12 +237,26 @@ const PORT = process.env.PORT || 5000;
 
 let server;
 
+// The worker applies stock movements to the product cache. Without Redis the
+// movements are still recorded but nothing applies them, so say so loudly
+// instead of leaving stock figures silently frozen.
+function startStockLedger() {
+	const stockQueue = require('./queues/stock-queue');
+	if (!stockQueue.isConfigured()) {
+		ErrorLogger.logWarning('[STOCK] REDIS_URL is not set: stock movements will stay pending and stock will not update');
+		return;
+	}
+	stockQueue.startStockWorker();
+	ErrorLogger.logInfo('[STOCK] Stock worker and sweeper started');
+}
+
 // Start server with database connection
 async function startServer() {
 	try {
 		await connectDB();
 
 		setupProcessMonitoring();
+		startStockLedger();
 
 		const app = createApp();
 
@@ -288,6 +302,12 @@ async function gracefulShutdown(signal) {
 	if (server) {
 		server.close(async () => {
 			ErrorLogger.logInfo('HTTP server closed successfully');
+
+			try {
+				await require('./queues/stock-queue').closeStockQueue();
+			} catch (error) {
+				ErrorLogger.logWarning('Error closing stock queue', { error: error.message });
+			}
 
 			try {
 				const { closeDB } = require('./lib/database');

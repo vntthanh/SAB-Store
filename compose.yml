@@ -159,6 +159,57 @@ services:
     networks:
       - sabstore_network
 
+  # SAB Store Redis: dispatcher for the stock-movement queue (BullMQ). It is NOT the
+  # source of truth - every stock movement is a pending document in MongoDB first, and
+  # a sweeper re-enqueues anything Redis lost - so losing this data only delays stock
+  # updates. `noeviction` is deliberate: Redis must refuse writes when full rather than
+  # silently drop queued jobs.
+  sabstore-redis:
+    container_name: sabstore_redis
+    image: redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    restart: unless-stopped
+    # Fail-closed on purpose: the platform turns an unset variable into an empty
+    # string, and a Redis with no password must never start. The password is
+    # embedded in REDIS_URL, so it has to be URL-safe. Every `$` is doubled:
+    # compose would otherwise interpolate it first.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        fail() { echo "$$1" >&2; exit 1; }
+        pw="$${REDIS_PASSWORD:-}"
+        case "$$pw" in
+          '' | *[!A-Za-z0-9._~-]*) fail "REDIS_PASSWORD must be non-empty and use only A-Z a-z 0-9 . _ ~ -" ;;
+        esac
+        [ "$${#pw}" -ge 16 ] || fail "REDIS_PASSWORD must be at least 16 characters"
+        exec docker-entrypoint.sh redis-server --appendonly yes --appendfsync everysec --maxmemory 64mb --maxmemory-policy noeviction --requirepass "$$pw"
+    mem_limit: 128m
+    security_opt:
+      - "no-new-privileges:true"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-sabstore-dev-redis-password}
+      # redis-cli reads this, so the healthcheck authenticates without the password in argv.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-sabstore-dev-redis-password}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    # Never published to the host; reachable only from the project network.
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD-SHELL", "redis-cli ping | grep -q PONG" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - sabstore_network
+
   # SAB Store Backend API
   backend:
     build:
@@ -199,6 +250,9 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-sabstore-dev-secret-key}
       MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-sabstore}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+      # Dispatcher for stock movements; without it the backend still records them
+      # and the sweeper applies them once Redis is back.
+      REDIS_URL: redis://:${REDIS_PASSWORD:-sabstore-dev-redis-password}@sabstore-redis:6379
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     expose:
       - "5000"
@@ -206,6 +260,8 @@ services:
       mongodb:
         condition: service_healthy
       sabstore-seaweedfs:
+        condition: service_healthy
+      sabstore-redis:
         condition: service_healthy
     volumes:
       - ./backend:/app
@@ -258,6 +314,7 @@ services:
 volumes:
   mongodb_data:
   seaweedfs_data:
+  redis_data:
   backend_node_modules:
 
 
