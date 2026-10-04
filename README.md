@@ -83,13 +83,13 @@ docker compose up -d --build
 # Backend setup
 cd backend
 cp .env.example .env   # backend/.env.example, không expand ${VAR} — xem docs/ENV_SETUP.md
-yarn install
-yarn dev       # Port 5000 (nodemon)
+pnpm install
+pnpm dev       # Port 5000 (nodemon)
 
 # Frontend setup (terminal mới)
 cd frontend
-yarn install
-yarn dev       # Port 3000 (Vite), proxy /api → localhost:5000
+pnpm install
+pnpm dev       # Port 3000 (Vite), proxy /api → localhost:5000
 ```
 
 ## 🌐 URLs truy cập
@@ -172,7 +172,7 @@ Không package nào có script `lint` (`backend/package.json`, `frontend/package
 cd backend && npx jest
 
 # Frontend (Vitest)
-cd frontend && yarn test
+cd frontend && pnpm test
 ```
 
 ### Kiểm tra Better-Auth integration
