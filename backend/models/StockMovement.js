@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const MOVEMENT_TYPES = ['opening', 'order', 'order_cancel', 'order_restore', 'adjust', 'set_target'];
+const MOVEMENT_TYPES = ['opening', 'order', 'order_cancel', 'adjust', 'set_target'];
 const MOVEMENT_STATUSES = ['pending', 'applied'];
 
 /**

@@ -1,7 +1,6 @@
 /**
  * Order status routes, apart from stock: what they record and what they reject.
- * The stock side of cancelling and un-cancelling (movements, `stockDeducted`,
- * legacy orders) is covered in order-stock-ledger.test.js.
+ * The stock side of cancelling (movements, `stockDeducted`, legacy orders) is covered in order-stock-ledger.test.js.
  */
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');

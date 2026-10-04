@@ -1,4 +1,4 @@
-const { body, validationResult } = require('express-validator');
+const { body, param, validationResult } = require('express-validator');
 const { STUDENT_ID_PATTERN } = require('../utils/student-id');
 const { createPasswordValidationRules } = require('../utils/passwordValidator');
 const { MAX_UNITS_PER_ORDER } = require('../services/pricing');
@@ -135,6 +135,38 @@ const validateOrderUpdate = [
 	handleValidationErrors
 ];
 
+// `additionalNote` may be empty (clears the customer note); `note` may not.
+const validateOrderNotes = [
+	param('id').isMongoId().withMessage('ID đơn hàng không hợp lệ'),
+
+	body('additionalNote')
+		.optional()
+		.isString()
+		.withMessage('Ghi chú khách hàng không hợp lệ')
+		.bail()
+		.trim()
+		.isLength({ max: 500 })
+		.withMessage('Ghi chú không được vượt quá 500 ký tự'),
+
+	body('note')
+		.optional()
+		.isString()
+		.withMessage('Ghi chú nội bộ không hợp lệ')
+		.bail()
+		.trim()
+		.isLength({ min: 1, max: 500 })
+		.withMessage('Ghi chú nội bộ phải từ 1 đến 500 ký tự'),
+
+	body().custom((value) => {
+		if (value?.additionalNote === undefined && value?.note === undefined) {
+			throw new Error('Cần ít nhất một trong additionalNote hoặc note');
+		}
+		return true;
+	}),
+
+	handleValidationErrors
+];
+
 // validateSellerLogin removed - now handled by better-auth
 // The old search-parameter validator was removed: it was mounted on 0
 // routes, and read req.body while every caller reads req.query — dead for
@@ -229,6 +261,7 @@ module.exports = {
 	validateOrder,
 	validateDirectOrder,
 	validateOrderUpdate,
+	validateOrderNotes,
 	validateComboItems,
 	validatePasswordChange,
 	validateUserRegistration,

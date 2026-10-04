@@ -205,6 +205,16 @@ export const adminService = {
 		}
 	},
 
+	// Edit customer/internal notes (allowed in every status, including final ones)
+	updateOrderNotes: async (id, data) => {
+		try {
+			const response = await api.patch(`/admin/orders/${id}/notes`, data);
+			return response.data;
+		} catch (error) {
+			throw new Error(error.response?.data?.message || 'Lỗi khi lưu ghi chú');
+		}
+	},
+
 	// Product management
 	getProducts: async () => {
 		try {

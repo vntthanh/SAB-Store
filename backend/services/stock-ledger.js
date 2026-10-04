@@ -42,7 +42,6 @@ const DELTA_RULES = {
 	opening: () => true,
 	order: (d) => d < 0,
 	order_cancel: (d) => d > 0,
-	order_restore: (d) => d < 0,
 	adjust: (d) => d !== 0
 };
 

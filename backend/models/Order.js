@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 const mongoosePaginate = require('mongoose-paginate-v2');
 
+// A cancelled or delivered order never changes status again; only notes stay editable.
+const FINAL_ORDER_STATUSES = ['cancelled', 'delivered'];
+
 // Schema for status history tracking
 const statusHistorySchema = new mongoose.Schema({
 	status: {
@@ -149,11 +152,11 @@ const orderSchema = new mongoose.Schema({
 		default: 'confirmed'
 	},
 	// True while this order holds a deduction against the stock ledger: set at
-	// creation (online and counter), cleared when a cancel gives the units back,
-	// set again when the order is un-cancelled. It alone decides whether a cancel
-	// records a movement, so a cancel never returns units that were never taken
-	// and never returns them twice. Orders created before stock was tracked per
-	// order keep `false`: cancelling them records nothing, since nothing was taken.
+	// creation (online and counter) and cleared when a cancel gives the units back.
+	// It alone decides whether a cancel records a movement, so a cancel never
+	// returns units that were never taken and never returns them twice. Orders
+	// created before stock was tracked per order keep `false`: cancelling them
+	// records nothing, since nothing was taken.
 	stockDeducted: {
 		type: Boolean,
 		default: false,
@@ -170,6 +173,20 @@ const orderSchema = new mongoose.Schema({
 		maxLength: [500, 'Lý do hủy không được vượt quá 500 ký tự']
 	},
 	statusHistory: [statusHistorySchema], // Track all status changes
+	// Admin-only notes, kept apart from statusHistory: both dashboards render every
+	// statusHistory entry as a status event and cancel idempotency keys use its length.
+	// Never returned to sellers or the public lookup.
+	internalNotes: [{
+		note: {
+			type: String,
+			required: true,
+			trim: true,
+			maxlength: [500, 'Ghi chú không được vượt quá 500 ký tự']
+		},
+		by: { type: String, required: true },
+		at: { type: Date, default: Date.now },
+		_id: false
+	}],
 	lastUpdatedBy: {
 		type: String,
 		default: 'system' // Username of who last updated the order
@@ -223,4 +240,7 @@ orderSchema.pre('save', function (next) {
 });
 
 orderSchema.plugin(mongoosePaginate);
-module.exports = mongoose.model('Order', orderSchema);
+const Order = mongoose.model('Order', orderSchema);
+Order.FINAL_ORDER_STATUSES = FINAL_ORDER_STATUSES;
+
+module.exports = Order;

@@ -11,6 +11,7 @@ const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError
 const { auth } = require('../lib/auth');
 const { recordOrderMovements, transitionOrderWithStock } = require('../services/stock');
 const { enqueueMovements } = require('../services/stock-ledger');
+const { ERROR_CODES, ERROR_MESSAGES } = require('../constants/errorCodes');
 const { withTransaction } = require('../utils/transaction');
 const { asEnum, asSort, asDate, safeSearch, asPageLimit } = require('../utils/query-guard');
 const router = express.Router();
@@ -122,6 +123,7 @@ router.get('/dashboard/stats', async (req, res) => {
 
 		// Get recent orders
 		const recentOrders = await Order.find()
+			.select('-internalNotes')
 			.populate('items.productId', 'name imageUrl')
 			.sort({ createdAt: -1 })
 			.limit(5)
@@ -220,6 +222,7 @@ router.get('/orders', async (req, res) => {
 			page: pageNum,
 			limit: limitNum,
 			sort,
+			select: '-internalNotes',
 			populate: [
 				{
 					path: 'items.productId',
@@ -313,6 +316,13 @@ router.put('/orders/:id/status', validateOrderUpdate, async (req, res) => {
 				message: 'Không tìm thấy đơn hàng'
 			});
 		}
+		if (result.outcome === 'final') {
+			return res.status(409).json({
+				success: false,
+				code: ERROR_CODES.ORDER_FINAL,
+				message: ERROR_MESSAGES[ERROR_CODES.ORDER_FINAL].vi
+			});
+		}
 		if (result.outcome === 'unchanged') {
 			return res.status(409).json({
 				success: false,
@@ -352,12 +362,14 @@ router.put('/orders/:id/status', validateOrderUpdate, async (req, res) => {
 			});
 		});
 
+		// Internal notes are admin-only.
+		const { internalNotes: _adminOnly, ...visibleOrder } = transitioned.toObject();
 		res.json({
 			success: true,
 			message: 'Cập nhật trạng thái đơn hàng thành công',
 			data: {
 				order: {
-					...transitioned.toObject(),
+					...visibleOrder,
 					statusText: getStatusInVietnamese(transitioned.status),
 					formattedDate: formatDate(transitioned.createdAt),
 					formattedTotal: formatCurrency(transitioned.totalAmount)
@@ -384,6 +396,7 @@ router.get('/orders/:id', async (req, res) => {
 		const { id } = req.params;
 
 		const order = await Order.findById(id)
+			.select('-internalNotes')
 			.populate('items.productId', 'name imageUrl price category')
 			.lean();
 
@@ -546,6 +559,7 @@ router.post('/orders/direct', validateDirectOrder, async (req, res) => {
 
 		// Populate order for response
 		const populatedOrder = await Order.findById(order._id)
+			.select('-internalNotes')
 			.populate('items.productId', 'name imageUrl')
 			.lean();
 

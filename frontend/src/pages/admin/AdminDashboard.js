@@ -5,6 +5,8 @@ import { adminService, formatCurrency, formatDate, getStatusText, getStatusColor
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
 import ChangePassword from '../../components/ChangePassword';
+import OrderNotesPanel from '../../components/admin/OrderNotesPanel';
+import { isFinalOrderStatus } from '../../utils/order-status';
 
 const AdminDashboard = () => {
 	const [stats, setStats] = useState(null);
@@ -98,9 +100,14 @@ const AdminDashboard = () => {
 		}));
 	};
 
+	// Keep the open modal and the list row in sync with the saved order
+	const handleNotesSaved = (updatedOrder) => {
+		setSelectedOrderStatus(prev => (prev && prev._id === updatedOrder._id ? { ...prev, ...updatedOrder } : prev));
+		setOrders(prev => prev.map(o => (o._id === updatedOrder._id ? { ...o, ...updatedOrder } : o)));
+	};
+
 	// Handle order status update
 	const handleStatusUpdate = async (orderId, currentStatus) => {
-		// Admin có thể chuyển sang bất kỳ trạng thái nào (kể cả trạng thái hiện tại) để sửa dữ liệu sai
 		const allStatuses = ['confirmed', 'paid', 'delivered', 'cancelled'];
 
 		const statusLabels = {
@@ -119,7 +126,7 @@ const AdminDashboard = () => {
 			title: 'Cập nhật trạng thái',
 			html: `
 				<p class="mb-2">Chọn trạng thái cho đơn hàng:</p>
-				<p class="text-sm text-gray-600 mb-4">Admin có thể chuyển sang bất kỳ trạng thái nào để sửa dữ liệu sai</p>
+				<p class="text-sm text-gray-600 mb-4">Đơn đã huỷ hoặc đã giao hàng không đổi trạng thái được nữa</p>
 			`,
 			input: 'select',
 			inputOptions: inputOptions,
@@ -236,7 +243,18 @@ const AdminDashboard = () => {
 			}
 		} catch (error) {
 			console.error('Error updating order:', error);
-			toast.error('Lỗi khi cập nhật trạng thái đơn hàng');
+			toast.error(error.message || 'Lỗi khi cập nhật trạng thái đơn hàng');
+			// The row may be stale (e.g. another tab already delivered the order):
+			// reload so its status and buttons match the server.
+			try {
+				const ordersResponse = await adminService.getOrders(filters);
+				if (ordersResponse.success) {
+					setOrders(ordersResponse.data.orders);
+					setPagination(ordersResponse.data.pagination);
+				}
+			} catch (refreshError) {
+				console.error('Error refreshing orders:', refreshError);
+			}
 		}
 	};
 
@@ -677,14 +695,20 @@ const AdminDashboard = () => {
 											{formatDate(order.createdAt)}
 										</td>
 										<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-											<button
-												onClick={() => handleStatusUpdate(order._id, order.status)}
-												className="text-blue-700 hover:text-blue-900 mr-3"
-												title="Admin có thể cập nhật bất kỳ trạng thái nào"
-											>
-												<i className="fas fa-edit mr-1"></i>
-												Cập nhật
-											</button>
+											{isFinalOrderStatus(order.status) ? (
+												<span className="text-xs text-gray-500">
+													Trạng thái cuối — chỉ sửa ghi chú
+												</span>
+											) : (
+												<button
+													onClick={() => handleStatusUpdate(order._id, order.status)}
+													className="text-blue-700 hover:text-blue-900 mr-3"
+													title="Cập nhật trạng thái đơn hàng"
+												>
+													<i className="fas fa-edit mr-1"></i>
+													Cập nhật
+												</button>
+											)}
 										</td>
 									</tr>
 								))}
@@ -872,6 +896,8 @@ const AdminDashboard = () => {
 								<p className="text-sm"><strong>Email:</strong> {selectedOrderStatus.email}</p>
 							</div>
 						</div>
+
+						<OrderNotesPanel order={selectedOrderStatus} onSaved={handleNotesSaved} />
 
 						{/* Total Amount */}
 						<div>

@@ -1,6 +1,7 @@
 const express = require('express');
 const Order = require('../../models/Order');
-const { validateOrderUpdate } = require('../../middleware/validation');
+const { ERROR_CODES, ERROR_MESSAGES } = require('../../constants/errorCodes');
+const { validateOrderUpdate, validateOrderNotes } = require('../../middleware/validation');
 const { getPaginationInfo } = require('../../utils/helpers');
 const { sendOrderToAppScript } = require('../../utils/appscript');
 const { transitionOrderWithStock } = require('../../services/stock');
@@ -116,6 +117,7 @@ router.get('/:id', async (req, res) => {
  * write matches it — the loser gets `null` back and a 409, and never
  * touches stock. Only the request that actually won the transition performs
  * the stock side effect, so a cancel can never restore stock twice.
+ * Cancelled and delivered orders are final and refuse any status change.
  */
 router.put('/:id', validateOrderUpdate, async (req, res) => {
 	const { id } = req.params;
@@ -160,6 +162,13 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
 			return res.status(404).json({
 				success: false,
 				message: 'Không tìm thấy đơn hàng'
+			});
+		}
+		if (result.outcome === 'final') {
+			return res.status(409).json({
+				success: false,
+				code: ERROR_CODES.ORDER_FINAL,
+				message: ERROR_MESSAGES[ERROR_CODES.ORDER_FINAL].vi
 			});
 		}
 		if (result.outcome === 'unchanged') {
@@ -225,6 +234,61 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi cập nhật đơn hàng'
+		});
+	}
+});
+
+/**
+ * @route   PATCH /api/admin/orders/:id/notes
+ * @desc    Edit the customer note and/or append an internal note
+ * @access  Private (Admin)
+ *
+ * Allowed in every status, final ones included: notes touch neither status nor
+ * stock, so one conditional-free update is enough and nothing goes to App Script.
+ */
+router.patch('/:id/notes', validateOrderNotes, async (req, res) => {
+	try {
+		const { additionalNote, note } = req.body;
+
+		const update = {};
+		if (additionalNote !== undefined) update.$set = { additionalNote };
+		if (note !== undefined) {
+			update.$push = { internalNotes: { note, by: req.admin.username, at: new Date() } };
+		}
+
+		const order = await Order.findOneAndUpdate(
+			{ _id: req.params.id },
+			update,
+			{ new: true, runValidators: true }
+		);
+
+		if (!order) {
+			return res.status(404).json({
+				success: false,
+				message: 'Không tìm thấy đơn hàng'
+			});
+		}
+
+		res.json({
+			success: true,
+			message: 'Cập nhật ghi chú thành công',
+			data: order
+		});
+
+	} catch (error) {
+		console.error('Error updating order notes:', error);
+
+		if (error.name === 'ValidationError') {
+			const errorMessages = Object.values(error.errors).map(err => err.message);
+			return res.status(400).json({
+				success: false,
+				message: errorMessages.join(', ')
+			});
+		}
+
+		res.status(500).json({
+			success: false,
+			message: 'Lỗi server khi cập nhật ghi chú đơn hàng'
 		});
 	}
 });

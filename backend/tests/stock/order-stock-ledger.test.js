@@ -323,37 +323,6 @@ describe.each([
 		expect(await stockOf(product)).toBe(10);
 	});
 
-	it('records an order_restore movement when un-cancelling, even if no stock is left', async () => {
-		const { order, product } = await placeOrderWithStock(2);
-		await change(order._id, { status: 'cancelled' });
-		await applyPendingMovements();
-		await Product.updateOne({ _id: product._id }, { $set: { stockQuantity: 0 } });
-
-		const res = await change(order._id, { status: 'confirmed' });
-
-		expect(res.status).toBe(200);
-		expect(await Order.findById(order._id).lean()).toMatchObject({ status: 'confirmed', stockDeducted: true });
-		const restore = (await movementsOf(product)).find((m) => m.type === 'order_restore');
-		expect(restore).toMatchObject({ delta: -2, status: 'pending' });
-
-		await applyPendingMovements();
-		expect(await stockOf(product)).toBe(-2);
-	});
-
-	it('gives every cancel and restore of one order its own movement', async () => {
-		const { order, product } = await placeOrderWithStock(1);
-
-		for (const status of ['cancelled', 'confirmed', 'cancelled']) {
-			const res = await change(order._id, { status });
-			expect(res.status).toBe(200);
-		}
-
-		const types = (await movementsOf(product)).map((m) => m.type);
-		expect(types.sort()).toEqual(['order', 'order_cancel', 'order_cancel', 'order_restore']);
-		await applyPendingMovements();
-		expect(await stockOf(product)).toBe(10);
-	});
-
 	it('records nothing when cancelling an order that never took stock', async () => {
 		const { orderId, product } = await insertLegacyOrder();
 
@@ -364,17 +333,7 @@ describe.each([
 		expect(await movementsOf(product)).toHaveLength(0);
 	});
 
-	it('takes stock when a legacy order is un-cancelled, since every order holds stock now', async () => {
-		const { orderId, product } = await insertLegacyOrder('cancelled');
-
-		const res = await change(orderId, { status: 'confirmed' });
-
-		expect(res.status).toBe(200);
-		expect(await Order.findById(orderId).lean()).toMatchObject({ status: 'confirmed', stockDeducted: true });
-		expect((await movementsOf(product)).map((m) => [m.type, m.delta])).toEqual([['order_restore', -2]]);
-	});
-
-	it('records nothing for a change that is not a cancel or an un-cancel', async () => {
+	it('records nothing for a change that is not a cancel', async () => {
 		const { order, product } = await placeOrderWithStock(2);
 		const before = (await movementsOf(product)).length;
 
@@ -425,21 +384,21 @@ describe.each([
 		expect(cancel).toMatchObject({ status: 'applied', lastError: 'PRODUCT_NOT_FOUND' });
 	});
 
-	it('keeps status, flag and stock consistent when a cancel races an un-cancel', async () => {
+	it('lets exactly one of a cancel and a delivery win and keeps stock consistent with the winner', async () => {
 		const { order, product } = await placeOrderWithStock(2);
-		await change(order._id, { status: 'cancelled' });
-		await applyPendingMovements();
 
-		await Promise.all([
-			change(order._id, { status: 'confirmed' }),
-			change(order._id, { status: 'cancelled', cancelReason: 'again' })
+		const [cancel, deliver] = await Promise.all([
+			change(order._id, { status: 'cancelled', cancelReason: 'race' }),
+			change(order._id, { status: 'delivered' })
 		]);
 		await applyPendingMovements();
 
+		expect([cancel.status, deliver.status].sort()).toEqual([200, 409]);
 		const saved = await Order.findById(order._id).lean();
-		const held = saved.status === 'cancelled' ? 0 : 2;
-		expect(saved.stockDeducted).toBe(held === 2);
-		expect(await stockOf(product)).toBe(10 - held);
+		const cancelWon = cancel.status === 200;
+		expect(saved.status).toBe(cancelWon ? 'cancelled' : 'delivered');
+		expect(saved.stockDeducted).toBe(!cancelWon);
+		expect(await stockOf(product)).toBe(cancelWon ? 10 : 8);
 	});
 
 	it('hands the movements to the queue after the commit', async () => {

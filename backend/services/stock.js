@@ -16,7 +16,9 @@ const Order = require('../models/Order');
 const { recordMovement } = require('./stock-ledger');
 const { withTransaction } = require('../utils/transaction');
 
-const MOVEMENT_SIGN = { order: -1, order_cancel: 1, order_restore: -1 };
+const { FINAL_ORDER_STATUSES } = Order;
+
+const MOVEMENT_SIGN = { order: -1, order_cancel: 1 };
 
 /** Units per product across all lines: a combo line and a retail line of one product count together. */
 function unitsByProduct(items) {
@@ -33,10 +35,10 @@ function unitsByProduct(items) {
  * transaction that writes the order, then `enqueueMovements` after it commits.
  *
  * `keyTag` makes the idempotency key unique per event of the order: creating is
- * `create`, while every cancel / restore carries the order's status-history
- * length so cancelling, restoring and cancelling again do not collide.
+ * `create`, while every cancel carries the order's status-history
+ * length so its key stays unique per event of the order.
  *
- * @param {{orderId: *, items: Array<{productId: *, quantity: number}>, type: 'order'|'order_cancel'|'order_restore',
+ * @param {{orderId: *, items: Array<{productId: *, quantity: number}>, type: 'order'|'order_cancel',
  *          keyTag: string, createdBy: string, reason: string}} movement
  * @param {{session: import('mongoose').ClientSession}} opts
  * @returns {Promise<Array<import('mongoose').Document>>}
@@ -63,20 +65,15 @@ async function recordOrderMovements({ orderId, items, type, keyTag, createdBy, r
  * Decide the stock effect of an order status change from the order's own state.
  *
  * - cancelling an order that holds stock gives it back;
- * - un-cancelling an order that holds none takes it again (any order, web or
- *   counter: both hold stock from creation now);
  * - anything else, including cancelling an order that never held stock, does
- *   nothing.
+ *   nothing. Cancelled is final, so there is no way back to taking stock again.
  *
- * @returns {{type: 'order_cancel'|'order_restore', stockDeducted: boolean}|null}
+ * @returns {{type: 'order_cancel', stockDeducted: boolean}|null}
  *          the movement to record and the new `stockDeducted` to store, or null
  */
 function stockEffectOfTransition({ stockDeducted, previousStatus, newStatus }) {
 	if (newStatus === 'cancelled' && previousStatus !== 'cancelled' && stockDeducted) {
 		return { type: 'order_cancel', stockDeducted: false };
-	}
-	if (previousStatus === 'cancelled' && newStatus !== 'cancelled' && !stockDeducted) {
-		return { type: 'order_restore', stockDeducted: true };
 	}
 	return null;
 }
@@ -93,14 +90,17 @@ function stockEffectOfTransition({ stockDeducted, previousStatus, newStatus }) {
  * @param {{orderId: string, status: string, setFields: object, historyEntry: object, actor: string}} change
  *        `setFields` / `historyEntry` carry the status and whatever else the
  *        route records (transaction code, cancel reason, note, who).
- * @returns {Promise<{outcome: 'not_found'|'unchanged'|'conflict'|'ok', order?: import('mongoose').Document,
+ * @returns {Promise<{outcome: 'not_found'|'final'|'unchanged'|'conflict'|'ok', order?: import('mongoose').Document,
  *                    movements?: Array<import('mongoose').Document>}>}
- *          `unchanged` means the order already has `status`.
+ *          `final` means the order is cancelled or delivered and refuses any status
+ *          change; `unchanged` means it already has `status`.
  */
 function transitionOrderWithStock({ orderId, status, setFields, historyEntry, actor }) {
 	return withTransaction(async (session) => {
 		const existing = await Order.findById(orderId).session(session).lean();
 		if (!existing) return { outcome: 'not_found' };
+		// Read inside the transaction so a cancel racing a delivery sees the winner.
+		if (FINAL_ORDER_STATUSES.includes(existing.status)) return { outcome: 'final' };
 		if (existing.status === status) return { outcome: 'unchanged' };
 
 		const effect = stockEffectOfTransition({
@@ -120,14 +120,13 @@ function transitionOrderWithStock({ orderId, status, setFields, historyEntry, ac
 		if (!order) return { outcome: 'conflict' };
 		if (!effect) return { outcome: 'ok', order, movements: [] };
 
-		const tag = effect.type === 'order_cancel' ? 'cancel' : 'restore';
 		const movements = await recordOrderMovements({
 			orderId: order._id,
 			items: order.items,
 			type: effect.type,
-			keyTag: `${tag}:${order.statusHistory.length}`,
+			keyTag: `cancel:${order.statusHistory.length}`,
 			createdBy: actor,
-			reason: `${effect.type === 'order_cancel' ? 'Huỷ' : 'Bỏ huỷ'} đơn ${order.orderCode}`
+			reason: `Huỷ đơn ${order.orderCode}`
 		}, { session });
 		return { outcome: 'ok', order, movements };
 	});

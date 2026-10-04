@@ -5,6 +5,7 @@ import { sellerService, formatCurrency, formatDate, getStatusText, getStatusColo
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
 import ChangePassword from '../../components/ChangePassword';
+import { isFinalOrderStatus } from '../../utils/order-status';
 
 const SellerDashboard = () => {
 	// const [stats, setStats] = useState(null); // Xóa thống kê cho seller
@@ -75,11 +76,9 @@ const SellerDashboard = () => {
 	const handleStatusUpdate = async (orderId, currentStatus) => {
 		const statusOptions = {
 			'confirmed': ['paid', 'cancelled'],
-			'paid': ['delivered', 'cancelled'],
-			'delivered': [],
-			'cancelled': []
+			'paid': ['delivered', 'cancelled']
 		};
-		const availableStatuses = statusOptions[currentStatus] || [];
+		const availableStatuses = isFinalOrderStatus(currentStatus) ? [] : (statusOptions[currentStatus] || []);
 
 		if (availableStatuses.length === 0) {
 			toast.warning('Không có trạng thái nào khác để thay đổi');
@@ -197,7 +196,18 @@ const SellerDashboard = () => {
 			}
 		} catch (error) {
 			console.error('Error updating order:', error);
-			toast.error('Lỗi khi cập nhật trạng thái đơn hàng');
+			toast.error(error.message || 'Lỗi khi cập nhật trạng thái đơn hàng');
+			// The row may be stale (e.g. another tab already delivered the order):
+			// reload so its status and buttons match the server.
+			try {
+				const ordersResponse = await sellerService.getOrders(filters);
+				if (ordersResponse.success) {
+					setOrders(ordersResponse.data.orders);
+					setPagination(ordersResponse.data.pagination);
+				}
+			} catch (refreshError) {
+				console.error('Error refreshing orders:', refreshError);
+			}
 		}
 	};
 
@@ -382,7 +392,7 @@ const SellerDashboard = () => {
 											{formatDate(order.createdAt)}
 										</td>
 										<td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-											{(order.status !== 'delivered' && order.status !== 'cancelled') && (
+											{!isFinalOrderStatus(order.status) && (
 												<button
 													onClick={() => handleStatusUpdate(order._id, order.status)}
 													className="text-primary-600 hover:text-primary-900 mr-3"
