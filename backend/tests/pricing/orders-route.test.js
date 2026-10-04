@@ -108,7 +108,7 @@ describe('GET /api/orders/:orderCode', () => {
 			.post('/api/orders')
 			.send(
 				validOrderBody({
-					studentId: 'SECRET-STUDENT-ID',
+					studentId: '24129999',
 					fullName: 'Secret Full Name',
 					items: [{ productId: product._id.toString(), quantity: 1 }],
 					expectedTotal: 10000
