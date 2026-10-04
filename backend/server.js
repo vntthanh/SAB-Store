@@ -10,6 +10,7 @@ const { toNodeHandler } = require('better-auth/node');
 const ErrorLogger = require('./utils/errorLogger');
 const { ErrorResponse, handleMongooseError } = require('./utils/errorResponse');
 const { ERROR_CODES, HTTP_STATUS } = require('./constants/errorCodes');
+const { buildTrustedProxies } = require('./lib/trusted-proxies');
 const { requestLogger, errorRateLimiter, healthCheckEndpoint } = require('./middleware/logger');
 const { setupProcessMonitoring } = require('./utils/performanceMonitor');
 
@@ -41,11 +42,10 @@ function applyCorsHeaders(req, res) {
 function createApp() {
 	const app = express();
 
-	// Trust proxy configuration - secure setup for rate limiting.
-	// Requests arrive through two hops (NPM -> frontend nginx -> backend), so
-	// trusting a single proxy would make req.ip the frontend container for every
-	// visitor and collapse all rate limiting onto one bucket.
-	app.set('trust proxy', process.env.NODE_ENV === 'production' ? 2 : false);
+	// req.ip must be the real visitor: it keys logs and, once enabled, rate
+	// limits. A CIDR list (not a hop count) survives proxy-chain changes; see
+	// lib/trusted-proxies.js.
+	app.set('trust proxy', buildTrustedProxies());
 
 	// Parse query strings into plain strings only. Express' default parser turns
 	// ?status[$ne]= into a nested object that reaches Mongo as a live operator.
@@ -128,12 +128,10 @@ function createApp() {
 		next();
 	});
 
-	// Rate limiting is OFF by default. `trust proxy` above is set to 2 hops for
-	// production, but that hop count has never been verified against real
-	// traffic (two requests from two different source IPs must resolve to two
-	// different req.ip values). Enabling this with a wrong hop count collapses
-	// every visitor onto one bucket and 429s the entire site. Flip
-	// RATE_LIMIT_ENABLED=true only after that check has been run in prod.
+	// Rate limiting is OFF by default. Enabling it while req.ip is still a proxy
+	// address collapses every visitor onto one bucket and 429s the entire site.
+	// Flip RATE_LIMIT_ENABLED=true only after docs/deployment.md section 8 shows
+	// distinct real IPs in the backend log.
 	if (process.env.RATE_LIMIT_ENABLED === 'true') {
 		const rateLimit = require('express-rate-limit');
 		const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
