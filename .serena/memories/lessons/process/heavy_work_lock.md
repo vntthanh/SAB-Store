@@ -25,5 +25,12 @@ Bối cảnh sự cố (máy crash 30/09/2026): `mem:lessons/machine/shared_mac_
 - Ctrl-C/TERM/HUP nhả khoá chỉ khi owner line vẫn là của mình. Sau SIGKILL khoá kẹt lại: kiểm owner line trước khi xoá tay.
 - Hook cũng chờ `memory_pressure` free ≥ 35% → commit có thể đứng lâu; đọc dòng "heavy-lock: waiting".
 - Có hook chạy test thì KHÔNG chạy test/lint "kiểm tra lần cuối" ngay trước commit — gấp đôi thời gian cho cùng kết quả. Chi tiết hook của SAB: AGENTS.md §4.
+- Từ 04/10 (commit 07c8326): `heavy-lock.sh` + `hook-env.sh` là bản chuẩn của Leaderboard (8e52781), chép nguyên văn —
+  cổng memory cả Windows (`powershell.exe`) và Linux (`/proc/meminfo`), chờ tối đa 1800 s rồi lỗi (không bao giờ chạy
+  ngoài khoá), `CC_HEAVY_TMP` là alias của `CC_HEAVY_ROOT`. Bản chung chỉ sửa ở Leaderboard rồi mọi repo chép lại;
+  so bằng `shasum -a 256` với commit đã chốt, không so working tree của repo khác (có thể đang dở).
+- Commit từ GitHub Desktop/IDE chạy hook với PATH launchd trơn (`/usr/bin:/bin:/usr/sbin:/sbin`): không có node keg-only
+  của Homebrew, không có shim của corepack (shim chỉ nằm cạnh binary node). `hook-env.sh` + phần riêng của repo bổ sung PATH.
+- Đang giữ khoá thì chờ ở foreground có timeout; đừng treo lệnh chờ nền — agent đứng yên vẫn giữ khoá (bài học QR).
 
 **How to apply:** snippet chuẩn nằm ở AGENTS.md §4 ("Khoá máy dùng chung"); sửa snippet thì giữ khớp memory này.

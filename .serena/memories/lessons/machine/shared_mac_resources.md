@@ -16,3 +16,13 @@ Luật do user đặt (chuyển qua phiên Leaderboard: "không được phép n
 
 Cổng `memory_pressure -Q` < 35%, định nghĩa "heavy", dừng stack nhàn rỗi: đã thành luật của owner
 (chuyển qua Leaderboard 03/10/2026) — giao thức đầy đủ ở `mem:lessons/process/heavy_work_lock`.
+
+## Lần reset thứ hai — 04/10/2026 18:22:54 (đã đo)
+- Panic `watchdog timeout: no checkins from watchdogd in 91 seconds`; panic report
+  (`/Library/Logs/DiagnosticReports/Retired/panic-full-*.panic`, JSON `processByPid`) cho thấy 3 tiến trình `node`
+  RSS 9.5 / 7.2 / 2.3 GB trên máy 16 GB, `free` pages ≈ 900. Phiên Leaderboard nhận: pre-commit hook của họ chạy hai
+  lần liền không qua cổng memory. Panic report KHÔNG có argv/ppid → chỉ quy trách nhiệm được qua hỏi các phiên.
+- eslint trong hook (đo ở Leaderboard): 4 luồng đỉnh 13.6 GB, 1 luồng 4.4 GB, thời gian gần như nhau → chạy 1 luồng.
+- Agent verify trình duyệt có dựng dev stack cục bộ = việc nặng: giữ khoá, chạy một mình (JudgeHub 04/10).
+- Reboot xoá `/private/tmp` → scratchpad của phiên (script, log, nguồn artifact) mất. Đọc lại artifact bằng
+  `Artifact action=read`; thứ phải giữ qua reboot thì để trong `plans/` hoặc repo.
