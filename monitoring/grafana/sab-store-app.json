@@ -1,0 +1,614 @@
+{
+  "description": "Log JSON của sab-store qua Loki dùng chung (david-loki): backend access/event, nginx frontend. ms là mili-giây; luôn lọc event= trước unwrap. Panel đếm lưu lượng loại probe uptime: backend ip!=\"10.0.1.1\" (gateway nội bộ khi david-host tự gọi domain), frontend ua!~\"Blackbox.*\".",
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": [],
+      "title": "API (backend access log)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "sum(count_over_time({project=\"sab-store\",service=\"backend\",type=\"access\"} | json | ip!=\"10.0.1.1\" [1m]))",
+          "legendFormat": "req/min",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Request API / phút",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 1
+      },
+      "id": 3,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "(sum(count_over_time({project=\"sab-store\",service=\"backend\",type=\"access\"} | json | status=~\"5..\" [5m])) or vector(0)) / sum(count_over_time({project=\"sab-store\",service=\"backend\",type=\"access\"} [5m]))",
+          "legendFormat": "5xx",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Tỉ lệ 5xx (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 1
+      },
+      "id": 4,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "count(sum by (ip) (count_over_time({project=\"sab-store\",service=\"backend\",type=\"access\"} | json | ip!=\"10.0.1.1\" [1h])))",
+          "legendFormat": "IP",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Khách duy nhất / giờ (IP)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 5,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "max(quantile_over_time(0.5, {project=\"sab-store\",service=\"backend\",type=\"access\"} | json | status!=\"499\" | unwrap ms | __error__=\"\" [5m]))",
+          "legendFormat": "p50",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "max(quantile_over_time(0.95, {project=\"sab-store\",service=\"backend\",type=\"access\"} | json | status!=\"499\" | unwrap ms | __error__=\"\" [5m]))",
+          "legendFormat": "p95",
+          "queryType": "range",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "max(quantile_over_time(0.99, {project=\"sab-store\",service=\"backend\",type=\"access\"} | json | status!=\"499\" | unwrap ms | __error__=\"\" [5m]))",
+          "legendFormat": "p99",
+          "queryType": "range",
+          "refId": "C"
+        }
+      ],
+      "title": "Latency p50/p95/p99 (ms, trừ 499)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 6,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "topk(10, quantile_over_time(0.95, {project=\"sab-store\",service=\"backend\",type=\"access\"} | json | status!=\"499\" | unwrap ms | __error__=\"\" [1h]) by (route))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "10 route chậm nhất (p95, 1h)",
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "id": 7,
+      "panels": [],
+      "title": "Nghiệp vụ (event)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "id": 8,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "sum by (channel) (count_over_time({project=\"sab-store\",service=\"backend\",event=\"order.created\"} | json [1h]))",
+          "legendFormat": "{{channel}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Đơn tạo / giờ theo kênh",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          },
+          "unit": "locale"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "id": 9,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "sum(sum_over_time({project=\"sab-store\",service=\"backend\",event=\"order.created\"} | json | unwrap totalAmount | __error__=\"\" [1d]))",
+          "legendFormat": "VND",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Tổng tiền đơn / ngày",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "id": 10,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "sum by (to) (count_over_time({project=\"sab-store\",service=\"backend\",event=\"order.status\"} | json [1h]))",
+          "legendFormat": "{{to}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Đổi trạng thái đơn / giờ (theo trạng thái mới)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 23
+      },
+      "id": 11,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "max(max_over_time({project=\"sab-store\",service=\"backend\",event=\"stock.sweeper\"} | json | unwrap pending | __error__=\"\" [1m]))",
+          "legendFormat": "pending",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "max(max_over_time({project=\"sab-store\",service=\"backend\",event=\"stock.sweeper\"} | json | unwrap oldestPendingSec | __error__=\"\" [1m]))",
+          "legendFormat": "oldest (s)",
+          "queryType": "range",
+          "refId": "B"
+        }
+      ],
+      "title": "Stock movement pending (sweeper)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 23
+      },
+      "id": 12,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "sum by (movementType) (count_over_time({project=\"sab-store\",service=\"backend\",event=\"stock.movement.applied\"} | json [15m]))",
+          "legendFormat": "ok {{movementType}}",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "sum by (movementType) (count_over_time({project=\"sab-store\",service=\"backend\",event=\"stock.movement.failed\"} | json [15m]))",
+          "legendFormat": "FAIL {{movementType}}",
+          "queryType": "range",
+          "refId": "B"
+        }
+      ],
+      "title": "Stock movement áp dụng / thất bại (15m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 23
+      },
+      "id": 13,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "{project=\"sab-store\",service=\"backend\"} |~ \"(?i)(\\\\[(WARN|ERROR)\\\\]|\\\"level\\\":\\\"(warn|error)\\\"|stock.movement.failed)\"",
+          "legendFormat": "",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Log lỗi / cảnh báo backend",
+      "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "id": 14,
+      "panels": [],
+      "title": "nginx (frontend)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 31
+      },
+      "id": 15,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "sum by (status) (count_over_time({project=\"sab-store\",service=\"frontend\"} | json | ua!~\"Blackbox.*\" [1m]))",
+          "legendFormat": "{{status}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Request / phút theo status",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 31
+      },
+      "id": 16,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "topk(10, sum by (ua) (count_over_time({project=\"sab-store\",service=\"frontend\"} | json | ua=~\"(?i).*(bot|crawl|spider|scan|curl|python|go-http).*\" [1h])))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Top UA bot (1h)",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "david-loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 31
+      },
+      "id": 17,
+      "options": {},
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "david-loki"
+          },
+          "expr": "topk(10, sum by (uri) (count_over_time({project=\"sab-store\",service=\"frontend\"} | json | status=\"404\" [1h])))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Top URI 404 (1h)",
+      "type": "table"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": [
+    "sab-store",
+    "david-host"
+  ],
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "SAB-Store — Ứng dụng",
+  "uid": "sab-store-app",
+  "version": 2
+}
