@@ -1,0 +1,30 @@
+# Used only by backend/Dockerfile (BuildKit prefers <Dockerfile>.dockerignore
+# over the root .dockerignore). The context is the repository root, so every
+# rule is `**/` or root-relative; it repeats the essentials of the root list on
+# purpose, so this image does not depend on the root list being complete.
+**/node_modules
+**/dist
+**/build
+**/coverage
+.git
+**/.claude
+**/.serena
+**/.code-review-graph
+**/uploads
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+**/.DS_Store
+# Not needed at runtime: tests and their config, docs.
+**/tests
+**/jest.config.js
+**/docs
+**/*.md
+# Read by the builder itself, never COPY'd into an image.
+**/Dockerfile*
+**/.dockerignore
+# The other workspace members never belong in the backend image.
+frontend
+monitoring
+plans

@@ -10,6 +10,11 @@
 #   * Named volumes replaced by absolute binds under /srv/appdata/vol/. Coolify
 #     rewrites compose-declared volume names, which would have detached MongoDB,
 #     SeaweedFS and the upload store from their data.
+# Both images build with `context: .` (the repository root, Coolify Base Directory `/`)
+# and `dockerfile: backend/Dockerfile` / `frontend/Dockerfile`: the pnpm workspace
+# lockfile lives at the root, and the root .dockerignore plus each image's
+# <Dockerfile>.dockerignore decide what enters the build. Rollback of that move:
+# redeploy the previous `main` commit in Coolify.
 # Backend and frontend are built from source on every deploy (Coolify runs
 # `compose build` before stopping anything; `pull_policy: never` then keeps `up` from
 # building or pulling a second time). Until 2026-09-29 they ran pre-built images from the
@@ -269,8 +274,8 @@ services:
   # SAB Store Backend API
   sabstore-backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     cpus: 2
     pull_policy: never
     restart: unless-stopped
@@ -355,8 +360,8 @@ services:
     # No VITE_API_URL build arg/env: the SPA calls the API via the relative
     # path /api (AD-3), so nothing domain-specific is baked into the bundle.
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
     cpus: 2
     pull_policy: never
     restart: unless-stopped

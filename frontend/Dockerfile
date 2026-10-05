@@ -8,17 +8,20 @@ FROM ${NODE_IMAGE} AS deps
 # The version must match `packageManager` in package.json.
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
-COPY package.json pnpm-lock.yaml .npmrc ./
+# The build context is the repository root (the workspace lockfile lives there).
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY frontend/package.json ./frontend/
 # `--prod=false` is load-bearing. The deploy platform injects every environment
 # variable as an ARG into every stage, NODE_ENV=production included; a package
 # manager that honours NODE_ENV then skips devDependencies and the build dies
 # with `vite: not found`. The flag makes the install ignore NODE_ENV.
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
-	pnpm install --frozen-lockfile --prod=false
+	pnpm install --frozen-lockfile --prod=false --filter minipreorder-frontend...
 
 # ── builder ──────────────────────────────────────────────────────────────────
 FROM deps AS builder
-COPY . .
+COPY frontend ./frontend
+WORKDIR /app/frontend
 # No VITE_API_URL: the SPA calls the API via the relative path /api, so nothing
 # domain-specific gets baked into the bundle.
 RUN pnpm build
@@ -27,9 +30,9 @@ RUN pnpm build
 FROM ${NGINX_IMAGE} AS runner
 # curl backs the compose healthchecks (compose.yml, prod.compose.yml, coolify.compose.yml).
 RUN apk add --no-cache curl
-COPY --from=builder /app/build /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY security-headers.conf /etc/nginx/security-headers.conf
+COPY --from=builder /app/frontend/build /usr/share/nginx/html
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY frontend/security-headers.conf /etc/nginx/security-headers.conf
 
 EXPOSE 80
 
