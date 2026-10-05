@@ -54,9 +54,8 @@ describe('POST /api/orders', () => {
 			.post('/api/orders')
 			.send(validOrderBody({ items: [] }));
 
-		// express-validator's items.isArray({min:1}) rejects this before
-		// pricing even runs (see middleware/validation.js's handleValidationErrors,
-		// which responds with {message, errors} rather than {success: false}).
+		// The order schema rejects this before pricing even runs, with the
+		// validation shape {message, errors} rather than {success: false}.
 		// computeOrderPricing's own EMPTY_CART behavior is covered directly in
 		// compute-order-pricing.test.js.
 		expect(res.status).toBe(400);

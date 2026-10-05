@@ -1,7 +1,8 @@
 const express = require('express');
+const { ORDER_STATUSES } = require('@sab/shared');
 const Order = require('../../models/Order');
 const { ERROR_CODES, ERROR_MESSAGES } = require('../../constants/errorCodes');
-const { validateOrderUpdate, validateOrderNotes, validateOrderItemsEdit } = require('../../middleware/validation');
+const { validateOrderUpdate, validateOrderNotes, validateOrderItemsEdit, trimText, trimStatusText } = require('../../middleware/validation');
 const { editOrderItems } = require('../../services/order-edit');
 const { PricingError, pricingErrorBody } = require('../../services/pricing');
 const { getPaginationInfo } = require('../../utils/helpers');
@@ -11,7 +12,6 @@ const { enqueueMovements } = require('../../services/stock-ledger');
 const { asEnum, asSort, safeSearch, asPageLimit } = require('../../utils/query-guard');
 const router = express.Router();
 
-const ORDER_STATUSES = ['confirmed', 'paid', 'delivered', 'cancelled'];
 const ORDER_SORTABLE_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode'];
 
 /**
@@ -125,7 +125,8 @@ router.get('/:id', async (req, res) => {
 router.put('/:id', validateOrderUpdate, async (req, res) => {
 	const { id } = req.params;
 	try {
-		const { status, transactionCode, cancelReason, note } = req.body;
+		const { status } = req.body;
+		const { transactionCode, cancelReason, note } = trimStatusText(req.body);
 
 		const historyEntry = {
 			status,
@@ -252,13 +253,14 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
  */
 router.put('/:id/items', validateOrderItemsEdit, async (req, res) => {
 	try {
-		const { items, expectedRevision, reason } = req.body;
+		const { items } = req.body;
 
+		// Validation does not rewrite the request, but the service needs numbers and the trimmed reason.
 		const result = await editOrderItems({
 			orderId: req.params.id,
-			items: items.map(({ productId, quantity }) => ({ productId, quantity })),
-			expectedRevision,
-			reason,
+			items: items.map(({ productId, quantity }) => ({ productId, quantity: Number(quantity) })),
+			expectedRevision: Number(req.body.expectedRevision),
+			reason: trimText(req.body.reason),
 			actor: req.admin.username
 		});
 
@@ -321,7 +323,8 @@ router.put('/:id/items', validateOrderItemsEdit, async (req, res) => {
  */
 router.patch('/:id/notes', validateOrderNotes, async (req, res) => {
 	try {
-		const { additionalNote, note } = req.body;
+		const additionalNote = trimText(req.body.additionalNote);
+		const note = trimText(req.body.note);
 
 		const update = {};
 		if (additionalNote !== undefined) update.$set = { additionalNote };

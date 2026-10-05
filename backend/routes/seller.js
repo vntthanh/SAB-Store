@@ -1,9 +1,10 @@
 const express = require('express');
+const { ORDER_STATUSES } = require('@sab/shared');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
 const { authenticateSeller } = require('../middleware/better-auth');
-const { validatePasswordChange, validateOrderUpdate, validateDirectOrder } = require('../middleware/validation');
+const { validatePasswordChange, validateOrderUpdate, validateDirectOrder, trimStatusText } = require('../middleware/validation');
 const { getPaginationInfo, formatDate, formatCurrency } = require('../utils/helpers');
 const { sendOrderToAppScript } = require('../utils/appscript');
 const { generateDirectSalePaymentQR } = require('../utils/paymentHelper');
@@ -18,7 +19,6 @@ const { asEnum, asSort, asDate, safeSearch, asPageLimit } = require('../utils/qu
 const router = express.Router();
 
 const MAX_ORDER_CODE_ATTEMPTS = 10;
-const ORDER_STATUSES = ['confirmed', 'paid', 'delivered', 'cancelled'];
 const ORDER_SORTABLE_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode', 'orderNumber'];
 
 // Apply seller authentication to all routes
@@ -276,7 +276,8 @@ router.get('/orders', async (req, res) => {
 router.put('/orders/:id/status', validateOrderUpdate, async (req, res) => {
 	const { id } = req.params;
 	try {
-		const { status, transactionCode, cancelReason, note } = req.body;
+		const { status } = req.body;
+		const { transactionCode, cancelReason, note } = trimStatusText(req.body);
 
 		const historyEntry = {
 			status,
