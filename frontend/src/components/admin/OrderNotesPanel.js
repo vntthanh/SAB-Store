@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import { adminService, formatDate } from '../../services/api';
+import FormField from '../form/FormField';
 
 const MAX_NOTE_LENGTH = 500;
 
@@ -44,14 +45,10 @@ const OrderNotesPanel = ({ order, onSaved }) => {
 
 	return (
 		<div className="space-y-3">
-			<label className="block text-sm font-medium text-gray-700">Ghi chú</label>
+			<p className="block text-sm font-medium text-gray-700">Ghi chú</p>
 
-			<div>
-				<label className="block text-xs text-gray-600 mb-1" htmlFor="order-customer-note">
-					Ghi chú của khách
-				</label>
+			<FormField id="order-customer-note" label="Ghi chú của khách" hint={`${additionalNote.length}/${MAX_NOTE_LENGTH}`} hintVisualOnly>
 				<textarea
-					id="order-customer-note"
 					className="w-full border rounded px-3 py-2 text-sm"
 					rows={2}
 					maxLength={MAX_NOTE_LENGTH}
@@ -59,14 +56,10 @@ const OrderNotesPanel = ({ order, onSaved }) => {
 					onChange={(e) => setAdditionalNote(e.target.value)}
 					disabled={saving}
 				/>
-			</div>
+			</FormField>
 
-			<div>
-				<label className="block text-xs text-gray-600 mb-1" htmlFor="order-internal-note">
-					Thêm ghi chú nội bộ
-				</label>
+			<FormField id="order-internal-note" label="Thêm ghi chú nội bộ" hint={`${internalNote.length}/${MAX_NOTE_LENGTH}`} hintVisualOnly>
 				<textarea
-					id="order-internal-note"
 					className="w-full border rounded px-3 py-2 text-sm"
 					rows={2}
 					maxLength={MAX_NOTE_LENGTH}
@@ -74,7 +67,7 @@ const OrderNotesPanel = ({ order, onSaved }) => {
 					onChange={(e) => setInternalNote(e.target.value)}
 					disabled={saving}
 				/>
-			</div>
+			</FormField>
 
 			<button
 				type="button"

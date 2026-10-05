@@ -3,14 +3,16 @@
  * Generates secure random passwords that meet validation requirements
  */
 
+import { MIN_PASSWORD_LENGTH } from './passwordValidator';
+
 /**
  * Generate a random password that meets all validation requirements
- * @param {number} length - Password length (minimum 8, default 12)
+ * @param {number} length - Password length (minimum MIN_PASSWORD_LENGTH, default 12)
  * @returns {string} Generated password
  */
 export function generateRandomPassword(length = 12) {
 	// Ensure minimum length
-	if (length < 8) length = 8;
+	if (length < MIN_PASSWORD_LENGTH) length = MIN_PASSWORD_LENGTH;
 
 	// Character sets
 	const lowercase = 'abcdefghijklmnopqrstuvwxyz';
@@ -37,12 +39,12 @@ export function generateRandomPassword(length = 12) {
 /**
  * Generate a simple password that meets basic requirements
  * (lowercase, uppercase, minimum length)
- * @param {number} length - Password length (minimum 6, default 8)
+ * @param {number} length - Password length (minimum MIN_PASSWORD_LENGTH, default 8)
  * @returns {string} Generated password
  */
-export function generateSimplePassword(length = 8) {
+export function generateSimplePassword(length = MIN_PASSWORD_LENGTH) {
 	// Ensure minimum length
-	if (length < 6) length = 6;
+	if (length < MIN_PASSWORD_LENGTH) length = MIN_PASSWORD_LENGTH;
 
 	// Character sets (no special chars for simplicity)
 	const lowercase = 'abcdefghijklmnopqrstuvwxyz';

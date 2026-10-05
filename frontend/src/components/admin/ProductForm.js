@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import LoadingSpinner from '../LoadingSpinner';
 import {
@@ -10,6 +10,30 @@ import {
 } from '../../utils/imageUtils';
 import { getImageUrl } from '../../utils/helpers';
 import { SALES_CHANNELS, SALES_CHANNEL_LABELS, normalizeSalesChannel } from '../../utils/sales-channel';
+import useFieldErrors from '../../hooks/use-field-errors';
+import FormField from '../form/FormField';
+
+// Client rules mirror the Product schema and POST /api/admin/products (the server stays authoritative).
+const PRODUCT_RULES = {
+	name: (value) => {
+		const v = value.trim();
+		if (!v) return 'Tên sản phẩm là bắt buộc';
+		return v.length > 100 ? 'Tên sản phẩm không được vượt quá 100 ký tự' : null;
+	},
+	category: (value) => (value.trim() ? null : 'Danh mục sản phẩm là bắt buộc'),
+	price: (value) => {
+		if (String(value).trim() === '') return 'Giá sản phẩm là bắt buộc';
+		const n = Number(value);
+		if (!Number.isFinite(n) || n < 0) return 'Giá không được âm';
+		return Number.isInteger(n) ? null : 'Giá phải là số nguyên (VND)';
+	},
+	stockQuantity: (value) => {
+		if (String(value).trim() === '') return null;
+		const n = Number(value);
+		return Number.isInteger(n) && n >= 0 ? null : 'Số lượng tồn kho không hợp lệ';
+	},
+	description: (value) => (value.length > 500 ? 'Mô tả không được vượt quá 500 ký tự' : null)
+};
 
 const ProductForm = ({
 	product,
@@ -42,6 +66,8 @@ const ProductForm = ({
 	const [processingImage, setProcessingImage] = useState(false);
 	const [imageInfo, setImageInfo] = useState(null);
 	const [submitting, setSubmitting] = useState(false);
+	const { errors, validateField, onFieldChange, validateAll, focusFirstError } = useFieldErrors(PRODUCT_RULES);
+	const formRef = useRef(null);
 
 	const handleInputChange = (e) => {
 		const { name, value, type, checked } = e.target;
@@ -49,6 +75,9 @@ const ProductForm = ({
 			...prev,
 			[name]: type === 'checkbox' ? checked : value
 		}));
+		if (type !== 'checkbox' && type !== 'radio') {
+			onFieldChange(name, value, { ...formData, [name]: value });
+		}
 
 		// Update preview when imageUrl changes in URL mode
 		if (name === 'imageUrl' && (uploadMethod === 'url' || uploadMethod === 'path')) {
@@ -142,9 +171,19 @@ const ProductForm = ({
 		}
 	};
 
+	const handleBlur = (e) => {
+		validateField(e.target.name, e.target.value, formData);
+	};
+
 	const handleSubmit = async (e) => {
 		e.preventDefault();
 		if (submitting) return;
+		// Stock is not sent for an existing product, so its rule must not block saving.
+		const values = product ? { ...formData, stockQuantity: '' } : formData;
+		if (!validateAll(values)) {
+			focusFirstError(formRef);
+			return;
+		}
 		setSubmitting(true);
 		try {
 			let finalImageUrl = formData.imageUrl;
@@ -181,81 +220,69 @@ const ProductForm = ({
 	};
 
 	return (
-		<form onSubmit={handleSubmit} className="space-y-4">
+		<form ref={formRef} onSubmit={handleSubmit} noValidate className="space-y-4">
 			<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-				<div>
-					<label className="block text-sm font-medium text-gray-700 mb-1">
-						Tên sản phẩm *
-					</label>
+				<FormField id="product-name" label="Tên sản phẩm" required error={errors.name}>
 					<input
 						type="text"
 						name="name"
 						value={formData.name}
 						onChange={handleInputChange}
+						onBlur={handleBlur}
 						className="form-input"
-						required
+						maxLength="100"
 					/>
-				</div>
+				</FormField>
 
-				<div>
-					<label className="block text-sm font-medium text-gray-700 mb-1">
-						Danh mục *
-					</label>
+				<FormField id="product-category" label="Danh mục" required error={errors.category}>
 					<input
 						type="text"
 						name="category"
 						value={formData.category}
 						onChange={handleInputChange}
+						onBlur={handleBlur}
 						className="form-input"
-						required
 					/>
-				</div>
+				</FormField>
 
-				<div>
-					<label className="block text-sm font-medium text-gray-700 mb-1">
-						Giá (VND) *
-					</label>
+				<FormField id="product-price" label="Giá (VND)" required error={errors.price}>
 					<input
 						type="number"
 						name="price"
 						value={formData.price}
 						onChange={handleInputChange}
+						onBlur={handleBlur}
 						className="form-input"
 						min="0"
 						step="1000"
-						required
 					/>
-				</div>
+				</FormField>
 
 				{!product && (
-					<div>
-						<label className="block text-sm font-medium text-gray-700 mb-1">
-							Tồn ban đầu
-						</label>
+					<FormField id="product-stockQuantity" label="Tồn ban đầu" error={errors.stockQuantity}>
 						<input
 							type="number"
 							name="stockQuantity"
 							value={formData.stockQuantity}
 							onChange={handleInputChange}
+							onBlur={handleBlur}
 							className="form-input"
 							min="0"
 						/>
-					</div>
+					</FormField>
 				)}
 			</div>
 
-			<div>
-				<label className="block text-sm font-medium text-gray-700 mb-1">
-					Mô tả
-				</label>
+			<FormField id="product-description" label="Mô tả" error={errors.description}>
 				<textarea
 					name="description"
 					value={formData.description}
 					onChange={handleInputChange}
+					onBlur={handleBlur}
 					className="form-input"
 					rows="3"
 				/>
-			</div>
+			</FormField>
 
 			<div>
 				<label className="block text-sm font-medium text-gray-700 mb-1">

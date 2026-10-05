@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'react-toastify';
 import { adminService, comboService, productService, formatCurrency, formatDate } from '../../services/api';
 import { getOrderChannel, isFinalOrderStatus } from '../../utils/order-status';
+import useFieldErrors from '../../hooks/use-field-errors';
+import FormField from '../form/FormField';
 
 const PREVIEW_DEBOUNCE_MS = 300;
 const MAX_REASON_LENGTH = 200;
@@ -27,6 +29,38 @@ const draftSignature = (draft) =>
 		.map((line) => `${line.productId}:${line.quantity}`)
 		.sort()
 		.join('|');
+
+// Mirrors validateOrderItemsEdit (reason 1..200 after trim); the server stays authoritative.
+const REASON_RULES = {
+	reason: (value) => {
+		const length = value.trim().length;
+		if (length === 0) return 'Lý do sửa là bắt buộc';
+		return length > MAX_REASON_LENGTH ? `Lý do phải từ 1 đến ${MAX_REASON_LENGTH} ký tự` : null;
+	}
+};
+
+// Its own component so the error state disappears with the edit session instead of
+// resurfacing the next time editing opens. Save stays disabled until the reason
+// is filled, so the message appears on blur rather than on submit.
+const ReasonField = ({ value, onChange, disabled }) => {
+	const { errors, validateField, onFieldChange } = useFieldErrors(REASON_RULES);
+	return (
+		<FormField id="order-items-reason" label="Lý do sửa" required error={errors.reason}>
+			<input
+				type="text"
+				className="w-full border rounded px-3 py-2 text-sm"
+				maxLength={MAX_REASON_LENGTH}
+				value={value}
+				onChange={(e) => {
+					onChange(e.target.value);
+					onFieldChange('reason', e.target.value);
+				}}
+				onBlur={() => validateField('reason', value)}
+				disabled={disabled}
+			/>
+		</FormField>
+	);
+};
 
 const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 	const channel = getOrderChannel(order);
@@ -325,20 +359,7 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 						{renderPreview()}
 					</p>
 
-					<div>
-						<label className="block text-xs text-gray-600 mb-1" htmlFor="order-items-reason">
-							Lý do sửa (bắt buộc)
-						</label>
-						<input
-							id="order-items-reason"
-							type="text"
-							className="w-full border rounded px-3 py-2 text-sm"
-							maxLength={MAX_REASON_LENGTH}
-							value={reason}
-							onChange={(e) => setReason(e.target.value)}
-							disabled={saving}
-						/>
-					</div>
+					<ReasonField value={reason} onChange={setReason} disabled={saving} />
 
 					<div className="flex items-center gap-2">
 						<button

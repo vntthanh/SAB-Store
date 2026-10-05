@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 import Swal from 'sweetalert2';
 import { authClient } from '../../lib/auth-client';
@@ -6,19 +6,146 @@ import { formatDate } from '../../services/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import RandomPasswordButton from '../../components/RandomPasswordButton';
 import { generateSimplePassword } from '../../utils/passwordGenerator';
+import { MIN_PASSWORD_LENGTH } from '../../utils/passwordValidator';
+import useFieldErrors from '../../hooks/use-field-errors';
+import FormField from '../../components/form/FormField';
+
+// `editing` rides along in the values: a new seller needs a password, an existing one may keep theirs.
+const SELLER_RULES = {
+	username: (value) => {
+		const v = value.trim();
+		if (!v) return 'Username là bắt buộc';
+		return v.length < 3 || v.length > 30 ? 'Username phải từ 3-30 ký tự' : null;
+	},
+	password: (value, values) => {
+		if (!value) return values?.editing ? null : 'Mật khẩu là bắt buộc';
+		return value.length < MIN_PASSWORD_LENGTH ? `Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự` : null;
+	},
+	name: (value) => (value.trim() ? null : 'Họ tên là bắt buộc'),
+	email: (value) => {
+		const v = value.trim();
+		if (!v) return 'Email là bắt buộc';
+		return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? null : 'Email không hợp lệ';
+	}
+};
+
+// Mounted only while the modal is open, so each open starts with fresh values and no stale errors.
+const SellerForm = ({ seller, submitting, onSubmit, onCancel }) => {
+	const editing = Boolean(seller);
+	const [formData, setFormData] = useState({
+		username: seller?.username || '',
+		password: '', // Don't populate password for security
+		email: seller?.email || '',
+		name: seller?.name || '',
+		role: 'seller'
+	});
+	const { errors, validateField, onFieldChange, validateAll, focusFirstError } = useFieldErrors(SELLER_RULES);
+	const formRef = useRef(null);
+
+	const handleInputChange = (e) => {
+		const { name, value } = e.target;
+		setFormData(prev => ({ ...prev, [name]: value }));
+		onFieldChange(name, value, { ...formData, [name]: value, editing });
+	};
+
+	const handleBlur = (e) => {
+		validateField(e.target.name, e.target.value, { ...formData, editing });
+	};
+
+	const handlePasswordGenerated = (newPassword) => {
+		setFormData(prev => ({ ...prev, password: newPassword }));
+		onFieldChange('password', newPassword, { ...formData, password: newPassword, editing });
+	};
+
+	const handleSubmit = (e) => {
+		e.preventDefault();
+		if (submitting) return;
+		if (!validateAll({ ...formData, editing })) {
+			focusFirstError(formRef);
+			return;
+		}
+		onSubmit(formData);
+	};
+
+	return (
+		<form ref={formRef} onSubmit={handleSubmit} noValidate className="space-y-4">
+			<FormField id="seller-username" label="Username" required error={errors.username}>
+				<input
+					type="text"
+					name="username"
+					value={formData.username}
+					onChange={handleInputChange}
+					onBlur={handleBlur}
+					className="form-input"
+					maxLength="30"
+				/>
+			</FormField>
+
+			<FormField
+				id="seller-password"
+				label={editing ? 'Mật khẩu mới (để trống nếu không đổi)' : 'Mật khẩu'}
+				required={!editing}
+				error={errors.password}
+			>
+				<input
+					type="password"
+					name="password"
+					value={formData.password}
+					onChange={handleInputChange}
+					onBlur={handleBlur}
+					className="form-input"
+				/>
+			</FormField>
+			{!editing && (
+				<div className="-mt-2">
+					<RandomPasswordButton
+						onPasswordGenerated={handlePasswordGenerated}
+						length={10}
+						title="Tạo mật khẩu ngẫu nhiên"
+					/>
+				</div>
+			)}
+
+			<FormField id="seller-name" label="Họ tên" required error={errors.name}>
+				<input
+					type="text"
+					name="name"
+					value={formData.name}
+					onChange={handleInputChange}
+					onBlur={handleBlur}
+					className="form-input"
+				/>
+			</FormField>
+
+			<FormField id="seller-email" label="Email" required error={errors.email}>
+				<input
+					type="email"
+					name="email"
+					value={formData.email}
+					onChange={handleInputChange}
+					onBlur={handleBlur}
+					className="form-input"
+				/>
+			</FormField>
+
+			<div className="flex justify-end space-x-3 pt-4">
+				<button type="button" onClick={onCancel} className="btn-secondary">
+					Hủy
+				</button>
+				<button type="submit" className="btn-primary" disabled={submitting}>
+					{submitting ? 'Đang lưu...' : editing ? 'Cập nhật' : 'Thêm mới'}
+				</button>
+			</div>
+		</form>
+	);
+};
 
 const SellersManagement = () => {
 	const [sellers, setSellers] = useState([]);
 	const [loading, setLoading] = useState(true);
 	const [showModal, setShowModal] = useState(false);
 	const [editingSeller, setEditingSeller] = useState(null);
-	const [formData, setFormData] = useState({
-		username: '',
-		password: '',
-		email: '',
-		name: '',
-		role: 'seller'
-	});
+	const [submitting, setSubmitting] = useState(false);
 
 	// Fetch sellers
 	useEffect(() => {
@@ -49,13 +176,6 @@ const SellersManagement = () => {
 		}
 	};
 
-	const handlePasswordGenerated = (newPassword) => {
-		setFormData(prev => ({
-			...prev,
-			password: newPassword
-		}));
-	};
-
 	const handleResetPassword = async (sellerId, sellerName) => {
 		const result = await Swal.fire({
 			title: 'Reset mật khẩu seller',
@@ -83,7 +203,7 @@ const SellersManagement = () => {
 								<i class="fas fa-random"></i>
 							</button>
 						</div>
-						<small class="text-gray-500 mt-1 block">Mật khẩu phải có ít nhất 6 ký tự</small>
+						<small class="text-gray-500 mt-1 block">Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự</small>
 					</div>
 				</div>
 			`,
@@ -111,8 +231,8 @@ const SellersManagement = () => {
 					Swal.showValidationMessage('Vui lòng nhập mật khẩu mới!');
 					return false;
 				}
-				if (password.length < 6) {
-					Swal.showValidationMessage('Mật khẩu phải có ít nhất 6 ký tự!');
+				if (password.length < MIN_PASSWORD_LENGTH) {
+					Swal.showValidationMessage(`Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự!`);
 					return false;
 				}
 				return password;
@@ -139,16 +259,9 @@ const SellersManagement = () => {
 		}
 	};
 
-	const handleInputChange = (e) => {
-		const { name, value } = e.target;
-		setFormData(prev => ({
-			...prev,
-			[name]: value
-		}));
-	};
-
-	const handleSubmit = async (e) => {
-		e.preventDefault();
+	const handleSubmit = async (formData) => {
+		if (submitting) return;
+		setSubmitting(true);
 		try {
 			if (editingSeller) {
 				// Update seller using better-auth admin functions
@@ -191,29 +304,17 @@ const SellersManagement = () => {
 
 			setShowModal(false);
 			setEditingSeller(null);
-			setFormData({
-				username: '',
-				password: '',
-				email: '',
-				name: '',
-				role: 'seller'
-			});
 			fetchSellers();
 		} catch (error) {
 			console.error('Error saving seller:', error);
 			toast.error(error.message || 'Lỗi khi lưu seller');
+		} finally {
+			setSubmitting(false);
 		}
 	};
 
 	const handleEdit = (seller) => {
 		setEditingSeller(seller);
-		setFormData({
-			username: seller.username || '',
-			password: '', // Don't populate password for security
-			email: seller.email || '',
-			name: seller.name || '',
-			role: 'seller'
-		});
 		setShowModal(true);
 	};
 
@@ -267,13 +368,6 @@ const SellersManagement = () => {
 				<button
 					onClick={() => {
 						setEditingSeller(null);
-						setFormData({
-							username: '',
-							password: '',
-							email: '',
-							fullName: '',
-							isActive: true
-						});
 						setShowModal(true);
 					}}
 					className="btn-primary"
@@ -391,88 +485,12 @@ const SellersManagement = () => {
 								</button>
 							</div>
 
-							<form onSubmit={handleSubmit} className="space-y-4">
-								<div>
-									<label className="block text-sm font-medium text-gray-700 mb-1">
-										Username *
-									</label>
-									<input
-										type="text"
-										name="username"
-										value={formData.username}
-										onChange={handleInputChange}
-										className="form-input"
-										required
-										minLength="3"
-										maxLength="30"
-									/>
-								</div>
-
-								<div>
-									<label className="block text-sm font-medium text-gray-700 mb-1">
-										{editingSeller ? 'Mật khẩu mới (để trống nếu không đổi)' : 'Mật khẩu *'}
-									</label>
-									<div className="flex space-x-2">
-										<input
-											type="password"
-											name="password"
-											value={formData.password}
-											onChange={handleInputChange}
-											className="form-input flex-1"
-											required={!editingSeller}
-											minLength="6"
-										/>
-										{!editingSeller && (
-											<RandomPasswordButton
-												onPasswordGenerated={handlePasswordGenerated}
-												length={10}
-												title="Tạo mật khẩu ngẫu nhiên"
-											/>
-										)}
-									</div>
-								</div>
-
-								<div>
-									<label className="block text-sm font-medium text-gray-700 mb-1">
-										Họ tên *
-									</label>
-									<input
-										type="text"
-										name="name"
-										value={formData.name}
-										onChange={handleInputChange}
-										className="form-input"
-										required
-									/>
-								</div>
-
-								<div>
-									<label className="block text-sm font-medium text-gray-700 mb-1">
-										Email *
-									</label>
-									<input
-										type="email"
-										name="email"
-										value={formData.email}
-										onChange={handleInputChange}
-										className="form-input"
-										required
-									/>
-								</div>
-
-								<div className="flex justify-end space-x-3 pt-4">
-									<button
-										type="button"
-										onClick={() => setShowModal(false)}
-										className="btn-secondary"
-									>
-										Hủy
-									</button>
-									<button type="submit" className="btn-primary">
-										{editingSeller ? 'Cập nhật' : 'Thêm mới'}
-									</button>
-								</div>
-							</form>
+							<SellerForm
+								seller={editingSeller}
+								submitting={submitting}
+								onSubmit={handleSubmit}
+								onCancel={() => setShowModal(false)}
+							/>
 						</div>
 					</div>
 				</div>

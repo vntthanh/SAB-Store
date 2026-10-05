@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { STUDENT_ID_PATTERN, STUDENT_ID_HINT } from '../utils/student-id';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -7,6 +7,35 @@ import { orderService, PRICE_CHANGED } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import MarkdownContent from '../components/MarkdownContent';
 import usePublicSettings from '../hooks/usePublicSettings';
+import useFieldErrors from '../hooks/use-field-errors';
+import FormField from '../components/form/FormField';
+
+// Client rules mirror validateOrder in backend/middleware/validation.js (the server stays authoritative).
+const CHECKOUT_RULES = {
+	studentId: (value) => {
+		const v = value.trim();
+		if (!v) return 'Mã số sinh viên là bắt buộc';
+		return STUDENT_ID_PATTERN.test(v) ? null : STUDENT_ID_HINT;
+	},
+	fullName: (value) => {
+		const v = value.trim();
+		if (!v) return 'Họ tên là bắt buộc';
+		if (v.length < 2 || v.length > 100) return 'Họ tên phải từ 2-100 ký tự';
+		return /^[a-zA-ZÀ-ỹ\s]+$/.test(v) ? null : 'Họ tên chỉ được chứa chữ cái và khoảng trắng';
+	},
+	email: (value) => {
+		const v = value.trim();
+		if (!v) return 'Email là bắt buộc';
+		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return 'Email không hợp lệ';
+		return v.length > 100 ? 'Email không được vượt quá 100 ký tự' : null;
+	},
+	phoneNumber: (value) => {
+		const v = value.trim();
+		if (!v) return 'Số điện thoại là bắt buộc';
+		return /^0[0-9]{9}$/.test(v) ? null : 'Số điện thoại phải có 10 số và bắt đầu bằng 0';
+	},
+	additionalNote: (value) => (value.length > 500 ? 'Ghi chú không được vượt quá 500 ký tự' : null)
+};
 
 const CheckoutPage = () => {
 	const settings = usePublicSettings();
@@ -21,7 +50,8 @@ const CheckoutPage = () => {
 		additionalNote: ''
 	});
 
-	const [errors, setErrors] = useState({});
+	const { errors, validateField, onFieldChange, validateAll, setServerErrors, focusFirstError } = useFieldErrors(CHECKOUT_RULES);
+	const formRef = useRef(null);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [orderCompleted, setOrderCompleted] = useState(false);
 
@@ -35,66 +65,19 @@ const CheckoutPage = () => {
 
 	const handleInputChange = (e) => {
 		const { name, value } = e.target;
-		setFormData(prev => ({
-			...prev,
-			[name]: value
-		}));
-
-		// Clear error when user starts typing
-		if (errors[name]) {
-			setErrors(prev => ({
-				...prev,
-				[name]: ''
-			}));
-		}
+		setFormData(prev => ({ ...prev, [name]: value }));
+		onFieldChange(name, value, { ...formData, [name]: value });
 	};
 
-	const validateForm = () => {
-		// Phone number validation
-		const newErrors = {};
-		if (!formData.phoneNumber.trim()) {
-			newErrors.phoneNumber = 'Số điện thoại là bắt buộc';
-		} else if (!/^0[0-9]{9}$/.test(formData.phoneNumber.trim())) {
-			newErrors.phoneNumber = 'Số điện thoại không hợp lệ';
-		}
-
-		// Student ID validation
-		if (!formData.studentId.trim()) {
-			newErrors.studentId = 'Mã số sinh viên là bắt buộc';
-		} else if (!STUDENT_ID_PATTERN.test(formData.studentId.trim())) {
-			newErrors.studentId = STUDENT_ID_HINT;
-		}
-
-		// Full name validation
-		if (!formData.fullName.trim()) {
-			newErrors.fullName = 'Họ tên là bắt buộc';
-		} else if (formData.fullName.trim().length < 2) {
-			newErrors.fullName = 'Họ tên phải có ít nhất 2 ký tự';
-		} else if (!/^[a-zA-ZÀ-ỹ\s]+$/.test(formData.fullName.trim())) {
-			newErrors.fullName = 'Họ tên chỉ được chứa chữ cái và khoảng trắng';
-		}
-
-		// Email validation
-		if (!formData.email.trim()) {
-			newErrors.email = 'Email là bắt buộc';
-		} else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
-			newErrors.email = 'Email không hợp lệ';
-		}
-
-		// Additional note validation (optional but length check)
-		if (formData.additionalNote.length > 500) {
-			newErrors.additionalNote = 'Ghi chú không được vượt quá 500 ký tự';
-		}
-
-		setErrors(newErrors);
-		return Object.keys(newErrors).length === 0;
+	const handleBlur = (e) => {
+		validateField(e.target.name, e.target.value, formData);
 	};
 
 	const handleSubmit = async (e) => {
 		e.preventDefault();
 
-		if (!validateForm()) {
-			toast.error('Vui lòng kiểm tra lại thông tin đã nhập');
+		if (!validateAll(formData)) {
+			focusFirstError(formRef);
 			return;
 		}
 
@@ -164,6 +147,12 @@ const CheckoutPage = () => {
 				checkForCombos();
 				return;
 			}
+			if (error.status === 400 && error.fieldErrors?.length) {
+				const leftovers = setServerErrors(error);
+				if (leftovers.length < error.fieldErrors.length) focusFirstError(formRef);
+				if (leftovers.length > 0) toast.error(leftovers.map(l => l.message).join('. '));
+				return;
+			}
 			console.error('Order creation error:', error);
 			toast.error(error.message || 'Có lỗi xảy ra khi tạo đơn hàng');
 		} finally {
@@ -202,132 +191,94 @@ const CheckoutPage = () => {
 								</h2>
 							</div>
 
-							<form id="checkout-form" onSubmit={handleSubmit} className="p-6 space-y-6">
-								{/* Student ID */}
-								<div>
-									<label htmlFor="studentId" className="block text-sm font-medium text-gray-700 mb-2">
-										Mã số sinh viên <span className="text-danger-500">*</span>
-									</label>
-									<input
-										type="text"
+							<form id="checkout-form" ref={formRef} onSubmit={handleSubmit} noValidate className="p-6 space-y-6">
+									<FormField
 										id="studentId"
-										name="studentId"
-										value={formData.studentId}
-										onChange={handleInputChange}
-										placeholder="Nhập mã số sinh viên"
-										className={`form-input ${errors.studentId ? 'form-input-error' : ''}`}
-										maxLength="20"
-									/>
-									{errors.studentId && (
-										<p className="text-danger-500 text-sm mt-1">
-											<i className="fas fa-exclamation-circle mr-1"></i>
-											{errors.studentId}
-										</p>
-									)}
-								</div>
+										label="Mã số sinh viên" required
+										error={errors.studentId}
+									>
+										<input
+											type="text"
+											name="studentId"
+											value={formData.studentId}
+											onChange={handleInputChange}
+											onBlur={handleBlur}
+											placeholder="Nhập mã số sinh viên"
+											className="form-input"
+											maxLength="20"
+										/>
+									</FormField>
 
-								{/* Full Name */}
-								<div>
-									<label htmlFor="fullName" className="block text-sm font-medium text-gray-700 mb-2">
-										Họ tên <span className="text-danger-500">*</span>
-									</label>
-									<input
-										type="text"
+									<FormField
 										id="fullName"
-										name="fullName"
-										value={formData.fullName}
-										onChange={handleInputChange}
-										placeholder="Nhập họ tên đầy đủ"
-										className={`form-input ${errors.fullName ? 'form-input-error' : ''}`}
-										maxLength="100"
-									/>
-									{errors.fullName && (
-										<p className="text-danger-500 text-sm mt-1">
-											<i className="fas fa-exclamation-circle mr-1"></i>
-											{errors.fullName}
-										</p>
-									)}
-								</div>
+										label="Họ tên" required
+										error={errors.fullName}
+									>
+										<input
+											type="text"
+											name="fullName"
+											value={formData.fullName}
+											onChange={handleInputChange}
+											onBlur={handleBlur}
+											placeholder="Nhập họ tên đầy đủ"
+											className="form-input"
+											maxLength="100"
+										/>
+									</FormField>
 
-								{/* Email */}
-								<div>
-									<label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-										Email <span className="text-danger-500">*</span>
-									</label>
-									<input
-										type="email"
+									<FormField
 										id="email"
-										name="email"
-										value={formData.email}
-										onChange={handleInputChange}
-										placeholder="Nhập địa chỉ email"
-										className={`form-input ${errors.email ? 'form-input-error' : ''}`}
-										maxLength="100"
-									/>
-									{errors.email && (
-										<p className="text-danger-500 text-sm mt-1">
-											<i className="fas fa-exclamation-circle mr-1"></i>
-											{errors.email}
-										</p>
-									)}
-									<p className="text-gray-500 text-sm mt-1">
-										Email sẽ được sử dụng để gửi xác nhận đơn hàng
-									</p>
-								</div>
+										label="Email" required
+										error={errors.email}
+										hint="Email sẽ được sử dụng để gửi xác nhận đơn hàng"
+									>
+										<input
+											type="email"
+											name="email"
+											value={formData.email}
+											onChange={handleInputChange}
+											onBlur={handleBlur}
+											placeholder="Nhập địa chỉ email"
+											className="form-input"
+											maxLength="100"
+										/>
+									</FormField>
 
-								{/* Phone Number */}
-								<div>
-									<label htmlFor="phoneNumber" className="block text-sm font-medium text-gray-700 mb-2">
-										Số điện thoại <span className="text-danger-500">*</span>
-									</label>
-									<input
-										type="text"
+									<FormField
 										id="phoneNumber"
-										name="phoneNumber"
-										value={formData.phoneNumber}
-										onChange={handleInputChange}
-										placeholder="Nhập số điện thoại"
-										className={`form-input ${errors.phoneNumber ? 'form-input-error' : ''}`}
-										maxLength="10"
-									/>
-									{errors.phoneNumber && (
-										<p className="text-danger-500 text-sm mt-1">
-											<i className="fas fa-exclamation-circle mr-1"></i>
-											{errors.phoneNumber}
-										</p>
-									)}
-									<p className="text-gray-500 text-sm mt-1">
-										Ưu tiên số điện thoại có sử dụng Zalo.
-									</p>
-								</div>
+										label="Số điện thoại" required
+										error={errors.phoneNumber}
+										hint="Ưu tiên số điện thoại có sử dụng Zalo."
+									>
+										<input
+											type="text"
+											name="phoneNumber"
+											value={formData.phoneNumber}
+											onChange={handleInputChange}
+											onBlur={handleBlur}
+											placeholder="Nhập số điện thoại"
+											className="form-input"
+											maxLength="10"
+										/>
+									</FormField>
 
-								{/* Additional Note */}
-								<div>
-									<label htmlFor="additionalNote" className="block text-sm font-medium text-gray-700 mb-2">
-										Ghi chú
-									</label>
-									<textarea
+									<FormField
 										id="additionalNote"
-										name="additionalNote"
-										value={formData.additionalNote}
-										onChange={handleInputChange}
-										placeholder="Nếu còn điều gì cần lưu ý với SAB, bạn hãy điền vào đây nhé!"
-										rows="3"
-										className={`form-input ${errors.additionalNote ? 'form-input-error' : ''}`}
-										maxLength="500"
-									/>
-									<div className="flex justify-between mt-1">
-										{errors.additionalNote && (
-											<p className="text-danger-500 text-sm">
-												<i className="fas fa-exclamation-circle mr-1"></i>
-												{errors.additionalNote}
-											</p>
-										)}
-										<p className="text-gray-500 text-sm ml-auto">
-											{formData.additionalNote.length}/500
-										</p>
-									</div>
-								</div>
+										label="Ghi chú"
+										error={errors.additionalNote}
+										hint={`${formData.additionalNote.length}/500`}
+									>
+										<textarea
+											name="additionalNote"
+											value={formData.additionalNote}
+											onChange={handleInputChange}
+											onBlur={handleBlur}
+											placeholder="Nếu còn điều gì cần lưu ý với SAB, bạn hãy điền vào đây nhé!"
+											rows="3"
+											className="form-input"
+											maxLength="500"
+										/>
+									</FormField>
 							</form>
 						</div>
 					</div>

@@ -3,6 +3,9 @@
  * Mirrors the backend validation for real-time feedback
  */
 
+// Matches Better Auth minPasswordLength in backend/lib/auth.js.
+export const MIN_PASSWORD_LENGTH = 8;
+
 // Common passwords list (subset for client-side checking)
 const COMMON_PASSWORDS = [
 	'123456', 'password', '123456789', '12345678', '12345', '1234567',
@@ -54,9 +57,9 @@ export function validatePassword(password) {
 	const trimmedPassword = password.trim();
 
 	// Length check
-	requirements.length = trimmedPassword.length >= 6;
+	requirements.length = trimmedPassword.length >= MIN_PASSWORD_LENGTH;
 	if (!requirements.length) {
-		errors.push('Mật khẩu phải có ít nhất 6 ký tự');
+		errors.push(`Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự`);
 	}
 
 	// Lowercase check
@@ -97,7 +100,7 @@ function calculatePasswordStrength(password) {
 	let score = 0;
 
 	// Length bonus
-	if (password.length >= 8) score += 1;
+	if (password.length >= MIN_PASSWORD_LENGTH) score += 1;
 	if (password.length >= 12) score += 1;
 
 	// Character variety
