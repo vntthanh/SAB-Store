@@ -12,8 +12,9 @@
  *
  * Two kinds of recorded 500 prove less than a body: a non-object JSON body
  * is rejected by the body parser before validation, and a change-password
- * request that passes validation reaches Better Auth with a wrong password.
- * For those the fixture only proves validation did not answer 400.
+ * request that passes validation reaches Better Auth with a wrong password
+ * (now a 400 naming the currentPassword field, still not a validation reject).
+ * For those the fixture only proves validation did not reject the request.
  */
 const fs = require('fs');
 const path = require('path');
@@ -150,7 +151,7 @@ describe('validation golden fixture', () => {
 				const passThrough500 = record.route === PASSWORD_CHANGE_ROUTE
 					&& expected.status === 500 && !expected.errors;
 				const matches = passThrough500
-					? observed.status !== 400 && !observed.errors
+					? !observed.errors && observed.message !== VALIDATION_MESSAGE
 					: JSON.stringify(observed) === JSON.stringify(expected);
 				if (!matches) mismatches.push({ case: caseKey(record), expected, observed });
 			}

@@ -139,6 +139,9 @@ function createApp() {
 		const publicLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false });
 
 		app.use('/api/auth', authLimiter);
+		// Calls Better Auth in-process, so its own limiter never sees these
+		// current-password guesses; give them the sign-in budget.
+		app.use('/api/seller/change-password', authLimiter);
 		// Also covers GET /api/orders/:orderCode: a public order-tracking code
 		// has only 9,000 possible values, so the read path needs the same limit
 		// as order creation, not just the write path.
