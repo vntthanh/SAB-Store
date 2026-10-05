@@ -71,3 +71,9 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
   `shutdownTimeoutMillisForSignaledShutdown`, `start_interval`, backend chờ deps `service_started`. **Chưa đo lại** →
   tới khi probe 1 req/s chứng minh < 30 s, vẫn chỉ deploy trong cửa sổ "15 phút không ai xem sản phẩm" (`activity-check.sh`).
   `pull_policy: never` + `build:` vẫn build khi ảnh vắng (compose `build.go`: chỉ bỏ build khi ảnh có sẵn).
+- **Đo lại sau khi chỉnh (deploy 80, 05/10 01:54, probe 1 req/s):** trang tĩnh sập **57 s** (503 01:54:34 → 200 01:55:31),
+  API sập **89 s** (502 tới 01:56:03). Phần thêm 32 s của API: backend chờ SeaweedFS (`ECONNREFUSED :9000`, `start.js`
+  thử lại 2 s/lần) vì mọi container tạo cùng lúc. Vẫn > 30 s → giữ luật cửa sổ yên tĩnh / khung giờ user cho phép.
+  Đã làm 05/10: `start.js` mở cổng sau MongoDB, tạo bucket ngầm (ảnh do nginx đọc thẳng SeaweedFS) — chưa đo lại.
+  Hướng tiếp (user chọn để sau): tách mongo/redis/seaweedfs sang resource Coolify riêng để deploy code không restart dữ liệu
+  (JudgeHub deploy bằng `compose up -d` nên chỉ tạo lại service đổi ảnh/cấu hình).

@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const mongoosePaginate = require('mongoose-paginate-v2');
+const { publicCodePlugin } = require('../utils/public-code');
 
 // Where a product (or combo) may be sold. 'all' is not a channel a sale happens
 // on; it is a product allowing every channel.
@@ -169,6 +170,7 @@ productSchema.statics.findFeatured = function (channel, limit = 6) {
 
 // Add pagination plugin
 productSchema.plugin(mongoosePaginate);
+productSchema.plugin(publicCodePlugin);
 
 const Product = mongoose.model('Product', productSchema);
 Product.SALES_CHANNELS = SALES_CHANNELS;

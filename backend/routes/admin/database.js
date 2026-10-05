@@ -11,6 +11,12 @@ const Combo = require('../../models/Combo');
 
 const { asString } = require('../../utils/query-guard');
 const { withTransaction } = require('../../utils/transaction');
+const {
+	PUBLIC_CODE_PATTERN,
+	isPublicCodeDuplicate,
+	withPublicCodeRetry,
+	createWithPublicCodeRetry
+} = require('../../utils/public-code');
 const { recordAppliedOpening } = require('../../services/stock-ledger');
 
 const router = express.Router();
@@ -67,12 +73,12 @@ const upload = multer({
  */
 const IMPORT_WHITELIST = {
 	products: [
-		'_id', 'name', 'description', 'price', 'imageUrl', 'category', 'available',
+		'_id', 'publicCode', 'name', 'description', 'price', 'imageUrl', 'category', 'available',
 		'isActive', 'salesChannel', 'stockQuantity', 'minOrderQuantity', 'maxOrderQuantity',
 		'sku', 'tags', 'weight', 'dimensions', 'featured', 'salePrice',
 		'saleStartDate', 'saleEndDate'
 	],
-	combos: ['_id', 'name', 'description', 'price', 'categoryRequirements', 'isActive', 'salesChannel', 'priority'],
+	combos: ['_id', 'publicCode', 'name', 'description', 'price', 'categoryRequirements', 'isActive', 'salesChannel', 'priority'],
 	orders: [
 		'phoneNumber', 'orderCode', 'orderNumber', 'studentId', 'fullName', 'email',
 		'additionalNote', 'items', 'status', 'transactionCode', 'cancelReason',
@@ -94,6 +100,9 @@ const REJECTED_SECTIONS = {
 };
 
 const CHANNEL_SECTIONS = ['products', 'combos'];
+// `publicCode` is importable so a restore keeps the links customers already
+// shared; `slug` never is, it is recomputed from the name.
+const CODE_SECTIONS = ['products', 'combos'];
 
 const KNOWN_IMPORT_SECTIONS = [...Object.keys(IMPORT_WHITELIST), ...Object.keys(REJECTED_SECTIONS)];
 
@@ -170,6 +179,7 @@ function computeOrderTotalWithCombo(items, comboInfo) {
  */
 function validateImportStructure(data) {
 	const problems = [];
+	const seenCodes = { products: new Set(), combos: new Set() };
 	if (!data || typeof data !== 'object' || Array.isArray(data)) {
 		return ['"data" phải là một object'];
 	}
@@ -193,9 +203,24 @@ function validateImportStructure(data) {
 				&& !Product.SALES_CHANNELS.includes(record.salesChannel)) {
 				problems.push(`Phần "${section}" tại vị trí ${index} có salesChannel không hợp lệ`);
 			}
+			if (CODE_SECTIONS.includes(section) && record.publicCode !== undefined) {
+				if (typeof record.publicCode !== 'string' || !PUBLIC_CODE_PATTERN.test(record.publicCode)) {
+					problems.push(`Phần "${section}" tại vị trí ${index} có publicCode không hợp lệ`);
+				} else if (seenCodes[section].has(record.publicCode)) {
+					problems.push(`Phần "${section}" tại vị trí ${index} có publicCode trùng trong file`);
+				} else {
+					seenCodes[section].add(record.publicCode);
+				}
+			}
 		});
 	}
 	return problems;
+}
+
+function importErrorMessage(error, entity) {
+	if (!isPublicCodeDuplicate(error)) return error.message;
+	const code = error.keyValue && error.keyValue.publicCode;
+	return `Mã công khai${code ? ` ${code}` : ''} đã thuộc ${entity} khác`;
 }
 
 /** Write one collection as a JSON array using a cursor so the whole result set is never held in memory at once. */
@@ -350,19 +375,21 @@ router.post('/import', upload.single('dataFile'), async (req, res) => {
 					}
 					// The imported stock enters the ledger as its opening movement, in the
 					// same transaction, so the cache stays equal to the sum of movements.
-					await withTransaction(async (session) => {
-						const [product] = await Product.create([pick(raw, IMPORT_WHITELIST.products)], { session });
+					// A publicCode collision aborts that transaction, so the retry wraps it.
+					const picked = pick(raw, IMPORT_WHITELIST.products);
+					await withPublicCodeRetry(() => withTransaction(async (session) => {
+						const [product] = await Product.create([picked], { session });
 						if (product.stockQuantity !== 0) {
 							await recordAppliedOpening(
 								{ productId: product._id, quantity: product.stockQuantity, createdBy: req.user && req.user.email, reason: 'import' },
 								{ session }
 							);
 						}
-					});
+					}), { maxAttempts: picked.publicCode ? 1 : undefined });
 					importResults.products.imported++;
 				} catch (error) {
 					importResults.products.errors++;
-					errorDetails.products.push({ index: i, error: error.message });
+					errorDetails.products.push({ index: i, error: importErrorMessage(error, 'sản phẩm') });
 				}
 			}
 		}
@@ -377,11 +404,11 @@ router.post('/import', upload.single('dataFile'), async (req, res) => {
 						importResults.combos.skipped++;
 						continue;
 					}
-					await Combo.create(pick(raw, IMPORT_WHITELIST.combos));
+					await createWithPublicCodeRetry(Combo, pick(raw, IMPORT_WHITELIST.combos));
 					importResults.combos.imported++;
 				} catch (error) {
 					importResults.combos.errors++;
-					errorDetails.combos.push({ index: i, error: error.message });
+					errorDetails.combos.push({ index: i, error: importErrorMessage(error, 'combo') });
 				}
 			}
 		}

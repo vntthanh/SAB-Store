@@ -18,6 +18,7 @@ const mongoose = require('mongoose');
 const Product = require('../models/Product');
 const StockMovement = require('../models/StockMovement');
 const ErrorLogger = require('../utils/errorLogger');
+const { logEvent } = require('../utils/log-event');
 
 const { MOVEMENT_TYPES } = StockMovement;
 
@@ -26,6 +27,10 @@ const { MOVEMENT_TYPES } = StockMovement;
 const CRITICAL_AFTER_ATTEMPTS = 5;
 
 const MAX_TEXT_LENGTH = 200;
+
+// Error text in the event line stays short: it is a signal to alert on, the full
+// message is on the movement's lastError.
+const EVENT_ERROR_LENGTH = 200;
 
 class StockLedgerError extends Error {
 	/** @param {string} message */
@@ -211,10 +216,13 @@ async function applyMovement(movementId) {
 		{ $set: { claimedAt: new Date() }, $inc: { attempts: 1 } }
 	);
 
+	const startedAt = Date.now();
 	try {
-		return { applied: await applyInTransaction(movement._id), deferred: false };
+		const applied = await applyInTransaction(movement._id);
+		if (applied) logEvent('stock.movement.applied', { movementType: movement.type, ms: Date.now() - startedAt });
+		return { applied, deferred: false };
 	} catch (err) {
-		await recordFailure(movement._id, err);
+		await recordFailure(movement, err);
 		throw err;
 	}
 }
@@ -269,25 +277,39 @@ async function applyInTransaction(movementId) {
 	return applied;
 }
 
-async function recordFailure(movementId, err) {
+async function recordFailure(movement, err) {
+	const movementId = movement._id;
+	const errorText = String(err && err.message);
+	let failed;
 	try {
-		const failed = await StockMovement.findOneAndUpdate(
+		failed = await StockMovement.findOneAndUpdate(
 			{ _id: movementId, status: 'pending' },
-			{ $set: { lastError: String(err && err.message).slice(0, 500) } },
+			{ $set: { lastError: errorText.slice(0, 500) } },
 			{ new: true }
 		).lean();
-		if (failed && failed.attempts >= CRITICAL_AFTER_ATTEMPTS) {
-			ErrorLogger.logCritical('Stock movement keeps failing to apply', err, {
-				movementId: String(movementId),
-				productId: String(failed.productId),
-				attempts: failed.attempts
-			});
-		}
 	} catch (bookkeepingError) {
-		// The original error is what matters and is rethrown by the caller.
+		// The original error is what matters and is rethrown by the caller. The
+		// failure is still reported: a failing database is when it matters most.
 		ErrorLogger.logWarning('Could not record stock movement failure', {
 			movementId: String(movementId),
 			error: bookkeepingError.message
+		});
+		failed = undefined;
+	}
+	// null: the movement is no longer pending (applied by a concurrent run), so
+	// there is no failure to report.
+	if (failed === null) return;
+
+	logEvent('stock.movement.failed', {
+		movementType: movement.type,
+		attempts: failed ? failed.attempts : null,
+		error: errorText.slice(0, EVENT_ERROR_LENGTH)
+	});
+	if (failed && failed.attempts >= CRITICAL_AFTER_ATTEMPTS) {
+		ErrorLogger.logCritical('Stock movement keeps failing to apply', err, {
+			movementId: String(movementId),
+			productId: String(failed.productId),
+			attempts: failed.attempts
 		});
 	}
 }

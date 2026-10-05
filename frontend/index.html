@@ -6,7 +6,6 @@
 	<link rel="icon" href="/favicon.png" type="image/png" />
 	<meta name="viewport" content="width=device-width, initial-scale=1" />
 	<meta name="theme-color" content="#4C4CA6" />
-	<meta name="description" content="Cửa hàng vật phẩm do SAB sản xuất dành cho sinh viên fit@hcmus. Đặt hàng online, nhận tại trường." />
 	<link rel="apple-touch-icon" href="/logo192.png" />
 
 	<!-- Open Graph / Zalo / Messenger link preview.
@@ -16,7 +15,17 @@
 	     removed build-time domain variables for the API path only.
 	     Image is 2242x934 (~2.4:1, 65 KB) — wider than the 1.91:1 ideal, so
 	     crawlers centre-crop it; that is why the card is summary_large_image
-	     and not the square summary. -->
+	     and not the square summary.
+
+	     The block below is the complete set of tags a product/combo page
+	     replaces. On /p/* and /c/* nginx SSI swaps it for the backend fragment
+	     and falls back to it (stub) when the fragment is empty. Everywhere else
+	     the directives are plain HTML comments and the block renders as-is.
+	     Keep title/description inside it: outside, a share page would carry two
+	     of each. -->
+	<!--# block name="og_default" -->
+	<title>SAB Store</title>
+	<meta name="description" content="Cửa hàng vật phẩm do SAB sản xuất dành cho sinh viên fit@hcmus. Đặt hàng online, nhận tại trường." />
 	<meta property="og:type" content="website" />
 	<meta property="og:site_name" content="SAB Store" />
 	<meta property="og:url" content="https://store.sabies.vn/" />
@@ -32,6 +41,8 @@
 	<meta name="twitter:title" content="SAB Store — Vật phẩm SAB dành cho sinh viên fit@hcmus" />
 	<meta name="twitter:description" content="Cửa hàng vật phẩm do SAB sản xuất dành cho sinh viên fit@hcmus. Đặt hàng online, nhận tại trường." />
 	<meta name="twitter:image" content="https://store.sabies.vn/logo512.png" />
+	<!--# endblock -->
+	<!--# include virtual="/_share_meta?type=$share_type&code=$share_code" stub="og_default" -->
 
 	<link rel="manifest" href="/manifest.json" />
 
@@ -44,8 +55,6 @@
 
 	<!-- Font Awesome for icons -->
 	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-
-	<title>SAB Store</title>
 </head>
 
 <body>

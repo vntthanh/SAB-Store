@@ -5,7 +5,10 @@ const { authenticateAdmin, authenticateSeller, authenticateUser } = require('../
 const { validateComboItems } = require('../middleware/validation');
 const { computeOrderPricing, pricingErrorBody, PricingError } = require('../services/pricing');
 const { asEnum } = require('../utils/query-guard');
+const { createWithPublicCodeRetry } = require('../utils/public-code');
 const ErrorLogger = require('../utils/errorLogger');
+const { ErrorResponse } = require('../utils/errorResponse');
+const { findPublicComboByCode } = require('../services/public-catalog');
 const router = express.Router();
 
 const SALE_CHANNELS = ['online', 'offline'];
@@ -71,6 +74,31 @@ router.get('/active', async (req, res) => {
 });
 
 /**
+ * @route   GET /api/combos/by-code/:code
+ * @desc    Get a combo sold online by its public code
+ * @access  Public
+ */
+router.get('/by-code/:code', async (req, res) => {
+	try {
+		const combo = await findPublicComboByCode(req.params.code);
+		if (!combo) {
+			return res
+				.status(404)
+				.json(ErrorResponse.formatErrorResponse(ErrorResponse.notFoundError('Combo'), req));
+		}
+
+		res.set('Cache-Control', 'public, max-age=60');
+		res.json({ success: true, data: combo });
+	} catch (error) {
+		ErrorLogger.logRoute('GET /combos/by-code/:code', error, req);
+		res.status(500).json({
+			success: false,
+			message: 'Lỗi server khi lấy thông tin combo'
+		});
+	}
+});
+
+/**
  * @route   POST /api/combos
  * @desc    Create new combo
  * @access  Private/Admin
@@ -111,7 +139,7 @@ router.post('/', authenticateAdmin, async (req, res) => {
 			});
 		}
 
-		const combo = new Combo({
+		const combo = await createWithPublicCodeRetry(Combo, {
 			name,
 			description,
 			price,
@@ -119,8 +147,6 @@ router.post('/', authenticateAdmin, async (req, res) => {
 			priority: priority || 0,
 			...(salesChannel !== undefined && { salesChannel })
 		});
-
-		await combo.save();
 
 		res.status(201).json({
 			success: true,

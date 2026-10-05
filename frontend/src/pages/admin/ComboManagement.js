@@ -4,7 +4,9 @@ import Swal from 'sweetalert2';
 import { adminService } from '../../services/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
+import ShareButton from '../../components/ShareButton';
 import { SALES_CHANNELS, SALES_CHANNEL_LABELS, normalizeSalesChannel } from '../../utils/sales-channel';
+import { comboPath } from '../../utils/share-links';
 
 const ComboManagement = () => {
 	const [combos, setCombos] = useState([]);
@@ -283,6 +285,9 @@ const ComboManagement = () => {
 								<table className="w-full table-auto">
 									<thead>
 										<tr className="border-b border-gray-200">
+											<th className="hidden md:table-cell text-left py-3 px-4 font-semibold text-gray-900">
+												Mã
+											</th>
 											<th className="text-left py-3 px-4 font-semibold text-gray-900">
 												Tên combo
 											</th>
@@ -309,6 +314,9 @@ const ComboManagement = () => {
 									<tbody>
 										{combos.map(combo => (
 											<tr key={combo._id} className="border-b border-gray-100 hover:bg-gray-50">
+												<td className="hidden md:table-cell py-3 px-4 font-mono text-sm text-gray-700">
+													{combo.publicCode || '—'}
+												</td>
 												<td className="py-3 px-4">
 													<div>
 														<div className="font-medium text-gray-900">
@@ -359,7 +367,13 @@ const ComboManagement = () => {
 													</button>
 												</td>
 												<td className="py-3 px-4">
-													<div className="flex space-x-2">
+													<div className="flex items-center space-x-2">
+														<ShareButton
+															mode="copy"
+															path={comboPath(combo)}
+															disabledHint="Chưa có mã — chạy backfill"
+															className="px-3 py-1 text-xs whitespace-nowrap"
+														/>
 														<button
 															onClick={() => handleEdit(combo)}
 															className="text-blue-600 hover:text-blue-800"

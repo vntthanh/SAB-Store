@@ -59,6 +59,16 @@ export const PRICE_CHANGED = 'PRICE_CHANGED';
 
 // Product Services
 export const productService = {
+	// Public detail by code; a 404 surfaces as err.status === 404 so pages can render NotFoundPage.
+	getByCode: async (code) => {
+		try {
+			const response = await api.get(`/products/by-code/${encodeURIComponent(code)}`);
+			return response.data;
+		} catch (error) {
+			throw toApiError(error, 'Lỗi khi lấy thông tin sản phẩm');
+		}
+	},
+
 	// Get all products
 	getProducts: async (params = {}) => {
 		try {
@@ -581,6 +591,15 @@ export const databaseService = {
 
 // Combo Services
 export const comboService = {
+	getByCode: async (code) => {
+		try {
+			const response = await api.get(`/combos/by-code/${encodeURIComponent(code)}`);
+			return response.data;
+		} catch (error) {
+			throw toApiError(error, 'Lỗi khi lấy thông tin combo');
+		}
+	},
+
 	// Get active combos
 	getActiveCombos: async () => {
 		try {

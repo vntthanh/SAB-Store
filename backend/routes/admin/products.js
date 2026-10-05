@@ -3,6 +3,7 @@ const Product = require('../../models/Product');
 const { asString, asEnum, asPageLimit, safeSearch } = require('../../utils/query-guard');
 const { recordAppliedOpening, countPendingByProduct } = require('../../services/stock-ledger');
 const { withTransaction } = require('../../utils/transaction');
+const { withPublicCodeRetry } = require('../../utils/public-code');
 const router = express.Router();
 
 /** `stockQuantity` must be a non-negative integer; anything else is rejected outright. */
@@ -125,8 +126,9 @@ router.post('/', async (req, res) => {
 
 		// The product and its opening movement commit together, so the cache and
 		// the ledger agree from the first moment. The document is built inside the
-		// callback because withTransaction may run it again.
-		const product = await withTransaction(async (session) => {
+		// callback because withTransaction may run it again. A publicCode collision
+		// aborts the whole transaction, so the retry wraps it and draws a new code.
+		const product = await withPublicCodeRetry(() => withTransaction(async (session) => {
 			const created = new Product({
 				name,
 				description,
@@ -146,7 +148,7 @@ router.post('/', async (req, res) => {
 				);
 			}
 			return created;
-		});
+		}));
 
 		res.status(201).json({
 			success: true,

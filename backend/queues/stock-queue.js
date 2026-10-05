@@ -11,6 +11,7 @@ const IORedis = require('ioredis');
 const StockMovement = require('../models/StockMovement');
 const { applyMovement } = require('../services/stock-ledger');
 const ErrorLogger = require('../utils/errorLogger');
+const { logEvent } = require('../utils/log-event');
 
 const QUEUE_NAME = 'stock-movements';
 const WORKER_CONCURRENCY = 5;
@@ -111,6 +112,41 @@ async function sweepOnce({ olderThanMs = SWEEP_MIN_AGE_MS, limit = SWEEP_BATCH }
 	return stale.length;
 }
 
+/** Backlog of pending movements: how many, and how long the oldest has waited. */
+async function pendingBacklog() {
+	const [pending, oldest] = await Promise.all([
+		StockMovement.countDocuments({ status: 'pending' }),
+		StockMovement.findOne({ status: 'pending' }).sort({ createdAt: 1, _id: 1 }).select('createdAt').lean()
+	]);
+	const oldestPendingSec = oldest ? Math.max(0, Math.round((Date.now() - oldest.createdAt.getTime()) / 1000)) : 0;
+	return { pending, oldestPendingSec };
+}
+
+/**
+ * One sweeper pass: re-enqueue stale movements, then report the backlog that
+ * remains. The backlog is read even when nothing was re-enqueued, so a healthy
+ * system emits a steady zero rather than silence, and even when Redis is down
+ * (the re-enqueue fails) — that is exactly when the backlog is growing. The two
+ * failures are kept apart: a re-enqueue error is rethrown for the caller to
+ * log after the report; a report error is logged here and never hides it.
+ */
+async function sweepAndReport({ olderThanMs = SWEEP_MIN_AGE_MS } = {}) {
+	let count = 0;
+	let sweepError = null;
+	try {
+		count = await sweepOnce({ olderThanMs });
+	} catch (err) {
+		sweepError = err;
+	}
+	try {
+		logEvent('stock.sweeper', await pendingBacklog());
+	} catch (err) {
+		ErrorLogger.logWarning('Could not read the stock backlog', { error: err.message });
+	}
+	if (sweepError) throw sweepError;
+	return count;
+}
+
 function makeProcessor(deferMs) {
 	return async (job, token) => {
 		const result = await applyMovement(job.data.movementId);
@@ -166,7 +202,7 @@ function startStockWorker({
 		if (sweeping) return;
 		sweeping = true;
 		try {
-			const count = await sweepOnce({ olderThanMs: sweepMinAgeMs });
+			const count = await sweepAndReport({ olderThanMs: sweepMinAgeMs });
 			if (count > 0) ErrorLogger.logInfo('Stock sweeper re-enqueued pending movements', { count });
 		} catch (err) {
 			ErrorLogger.logWarning('Stock sweeper run failed', { error: err.message });
@@ -210,6 +246,8 @@ module.exports = {
 	getQueue,
 	enqueueMovementJobs,
 	sweepOnce,
+	pendingBacklog,
+	sweepAndReport,
 	startStockWorker,
 	closeStockQueue
 };

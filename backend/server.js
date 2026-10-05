@@ -155,6 +155,7 @@ function createApp() {
 	const { authenticateAdmin } = require('./middleware/better-auth');
 	app.use('/api/upload', authenticateAdmin, require('./routes/upload'));
 	app.use('/api/products', require('./routes/products'));
+	app.use('/api/share', require('./routes/share'));
 	app.use('/api/orders', require('./routes/orders'));
 	app.use('/api/combos', require('./routes/combos'));
 	app.use('/api/settings', require('./routes/settings'));

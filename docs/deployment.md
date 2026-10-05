@@ -310,6 +310,43 @@ docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
   node scripts/backfill-stock-deducted.js --apply
 ```
 
+### `backend/scripts/backfill-stock-opening.js` — dry-run by default
+
+Records each product's current `stockQuantity` as an applied `opening` stock movement, so the
+ledger sum equals the cached stock from then on. Run once after the first deploy of the stock
+ledger; re-running records nothing. Same `docker exec … [--apply]` pattern as above.
+
+### `backend/scripts/backfill-public-codes.js` — dry-run by default
+
+Gives every product and combo created before public codes existed an 8-character
+`publicCode` and a `slug`, which the share links `/p/<CODE>/<slug>` and `/c/<CODE>/<slug>`
+need. Until it runs, those items have no detail page and the admin "Sao chép link" button is
+disabled. It builds the unique index first and only touches documents without a code, so
+re-running is a no-op. Same `docker exec … [--apply]` pattern as above.
+
+### Checking a share preview
+
+The share pages get their `<head>` tags from an nginx SSI subrequest; every failure falls back
+to the generic store tags. To check one product after a deploy:
+
+```sh
+curl -s -A 'facebookexternalhit/1.1' https://store.sabies.vn/p/<CODE>/x | grep -o 'og:[a-z]*" content="[^"]*"'
+```
+
+`og:title` must be the product name and `og:image` an `/og/p/<CODE>.jpg?v=…` URL that answers
+`image/jpeg`. The preview cache lives in the frontend container, so every deploy (which
+recreates it) starts cold; social networks keep their own copy, so use the Facebook Sharing
+Debugger to refresh a link that was shared before a change.
+
+### Logs
+
+The `frontend` and `sabstore-backend` services carry the labels `logging: david-alloy`,
+`logging.project: sab-store` and `logging.service: frontend|backend`; the shared Alloy on the
+host ships only labelled containers to the shared Loki. Both write one JSON object per line.
+Secrets are never logged: the order code in `/api/orders/<code>` is rewritten to
+`/api/orders/:code` and query strings are dropped, in nginx and in the backend alike. Scanner
+probes (`/.env`, `*.php`, …) get an unlogged 404 straight from nginx.
+
 ## Operational consequences
 
 - **Admin's DB export no longer contains `users`/`accounts`**

@@ -1,6 +1,12 @@
 import React from 'react';
-import { useCart } from '../context/CartContext';
+import { Link } from 'react-router-dom';
+import { useCart, CART_MAX_QUANTITY } from '../context/CartContext';
 import { getImageUrl } from '../utils/helpers';
+import { productPath } from '../utils/share-links';
+
+// Defined at module level so a re-render does not remount the image.
+const DetailLink = ({ to, className, children }) =>
+	to ? <Link to={to} className={className}>{children}</Link> : <div className={className}>{children}</div>;
 
 const ProductCard = ({ product }) => {
 	const {
@@ -12,6 +18,8 @@ const ProductCard = ({ product }) => {
 	} = useCart();
 
 	const quantity = getItemQuantity(product._id);
+	// Docs without a public code yet (before backfill) have no detail page to link to.
+	const detailPath = product.path ?? productPath(product);
 
 	const handleAddToCart = () => {
 		addToCart(product);
@@ -30,7 +38,7 @@ const ProductCard = ({ product }) => {
 	return (
 		<div className="card-hover group flex flex-col h-full">
 			{/* Product Image */}
-			<div className="relative overflow-hidden h-48">
+			<DetailLink to={detailPath} className="relative block overflow-hidden h-48">
 				<img
 					src={getImageUrl(product.imageUrl)}
 					alt={product.name}
@@ -46,19 +54,13 @@ const ProductCard = ({ product }) => {
 						{product.category}
 					</span>
 				</div>
-				{/* Availability Badge */}
-				{!product.available && (
-					<div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-						<span className="badge-danger text-white">
-							Hết hàng
-						</span>
-					</div>
-				)}
-			</div>
+			</DetailLink>
 			{/* Product Info */}
 			<div className="p-4 flex flex-col flex-1">
 				<h3 className="font-semibold text-lg text-gray-900 mb-2 line-clamp-1">
-					{product.name}
+					<DetailLink to={detailPath} className="hover:text-primary-600">
+						{product.name}
+					</DetailLink>
 				</h3>
 				<p className="text-gray-600 text-sm mb-3 line-clamp-2">
 					{product.description}
@@ -99,22 +101,13 @@ const ProductCard = ({ product }) => {
 								<button
 									onClick={handleIncrease}
 									className="btn-primary w-10 h-10 flex items-center justify-center p-0"
-									disabled={quantity >= 99}
+									disabled={quantity >= CART_MAX_QUANTITY}
 								>
 									<i className="fas fa-plus"></i>
 								</button>
 							</div>
 						)}
 					</div>
-				)}
-				{/* Out of Stock Button */}
-				{!product.available && (
-					<button
-						disabled
-						className="btn-secondary w-full opacity-50 cursor-not-allowed mt-4"
-					>
-						Hết hàng
-					</button>
 				)}
 			</div>
 		</div>

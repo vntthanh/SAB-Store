@@ -52,24 +52,34 @@ async function initializeDatabase() {
 	});
 }
 
-async function waitForStorage() {
-	console.log('Waiting for object storage to be ready...');
-	const maxRetries = 30;
-	let retries = 0;
-
-	while (retries < maxRetries) {
+/**
+ * Make sure the bucket exists, in the background. The API does not wait for it:
+ * a deploy recreates every container at once and object storage is the slowest
+ * to start (it added ~30 s to the API outage of one measured deploy), while only
+ * uploads need it: product images are served by nginx straight from storage.
+ * Until this succeeds an upload fails with a storage error instead of the whole
+ * API answering 502. It never gives up: a fresh host has no bucket, and the old
+ * blocking start-up recovered by crash-looping, which this must not lose.
+ */
+async function ensureStorageInBackground() {
+	let delayMs = 2000;
+	let waitedMs = 0;
+	let reported = false;
+	for (;;) {
 		try {
 			await initializeBucket();
 			console.log('[OK] Object storage is ready and bucket initialized');
-			return true;
+			return;
 		} catch (error) {
-			retries++;
-			console.log(`Object storage not ready, retrying... (${retries}/${maxRetries})`);
-			await new Promise(resolve => setTimeout(resolve, 2000));
+			if (waitedMs >= 60000 && !reported) {
+				console.error('[ERROR] Object storage still unreachable after 60 s; uploads fail until it is back, still retrying');
+				reported = true;
+			}
+			await new Promise(resolve => setTimeout(resolve, delayMs));
+			waitedMs += delayMs;
+			delayMs = Math.min(delayMs * 2, 60000);
 		}
 	}
-
-	throw new Error('Object storage failed to become ready within timeout');
 }
 
 async function startServer() {
@@ -145,9 +155,9 @@ process.on('warning', (warning) => {
 async function main() {
 	try {
 		await waitForMongoDB();
-		await waitForStorage();
 		await initializeDatabase();
 		await startServer();
+		ensureStorageInBackground().catch((error) => console.error('[ERROR] Storage initialisation crashed:', error));
 	} catch (error) {
 		console.error('[ERROR] Startup failed:', error);
 		console.error('Stack:', error.stack);
