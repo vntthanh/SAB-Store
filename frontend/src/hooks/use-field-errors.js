@@ -91,6 +91,7 @@ const useFieldErrors = (rules) => {
 		const leftovers = [];
 		list.forEach(({ field, message }) => {
 			if (Object.prototype.hasOwnProperty.call(rulesRef.current, field)) {
+				serverRef.current[field] = { message, value: lastValuesRef.current[field] };
 				if (!next[field]) next[field] = message;
 			} else {
 				leftovers.push({ field, message });

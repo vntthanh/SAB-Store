@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { STUDENT_ID_PATTERN, STUDENT_ID_HINT } from '../utils/student-id';
+import { orderCreate } from '@sab/shared';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useCart } from '../context/CartContext';
@@ -9,33 +9,13 @@ import MarkdownContent from '../components/MarkdownContent';
 import usePublicSettings from '../hooks/usePublicSettings';
 import useFieldErrors from '../hooks/use-field-errors';
 import FormField from '../components/form/FormField';
+import { rulesFromSchema, requiredFromSchema } from '../lib/schema-rules';
 
-// Client rules mirror validateOrder in backend/middleware/validation.js (the server stays authoritative).
-const CHECKOUT_RULES = {
-	studentId: (value) => {
-		const v = value.trim();
-		if (!v) return 'Mã số sinh viên là bắt buộc';
-		return STUDENT_ID_PATTERN.test(v) ? null : STUDENT_ID_HINT;
-	},
-	fullName: (value) => {
-		const v = value.trim();
-		if (!v) return 'Họ tên là bắt buộc';
-		if (v.length < 2 || v.length > 100) return 'Họ tên phải từ 2-100 ký tự';
-		return /^[a-zA-ZÀ-ỹ\s]+$/.test(v) ? null : 'Họ tên chỉ được chứa chữ cái và khoảng trắng';
-	},
-	email: (value) => {
-		const v = value.trim();
-		if (!v) return 'Email là bắt buộc';
-		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return 'Email không hợp lệ';
-		return v.length > 100 ? 'Email không được vượt quá 100 ký tự' : null;
-	},
-	phoneNumber: (value) => {
-		const v = value.trim();
-		if (!v) return 'Số điện thoại là bắt buộc';
-		return /^0[0-9]{9}$/.test(v) ? null : 'Số điện thoại phải có 10 số và bắt đầu bằng 0';
-	},
-	additionalNote: (value) => (value.length > 500 ? 'Ghi chú không được vượt quá 500 ký tự' : null)
-};
+// The form fields are the customer-entered part of the order; the cart items and the total are
+// guarded by the cart checks in handleSubmit.
+const CHECKOUT_FIELDS = ['studentId', 'fullName', 'email', 'phoneNumber', 'additionalNote'];
+const CHECKOUT_RULES = rulesFromSchema(orderCreate, { fields: CHECKOUT_FIELDS });
+const REQUIRED = requiredFromSchema(orderCreate);
 
 const CheckoutPage = () => {
 	const settings = usePublicSettings();
@@ -194,7 +174,7 @@ const CheckoutPage = () => {
 							<form id="checkout-form" ref={formRef} onSubmit={handleSubmit} noValidate className="p-6 space-y-6">
 									<FormField
 										id="studentId"
-										label="Mã số sinh viên" required
+										label="Mã số sinh viên" required={REQUIRED.studentId}
 										error={errors.studentId}
 									>
 										<input
@@ -211,7 +191,7 @@ const CheckoutPage = () => {
 
 									<FormField
 										id="fullName"
-										label="Họ tên" required
+										label="Họ tên" required={REQUIRED.fullName}
 										error={errors.fullName}
 									>
 										<input
@@ -228,7 +208,7 @@ const CheckoutPage = () => {
 
 									<FormField
 										id="email"
-										label="Email" required
+										label="Email" required={REQUIRED.email}
 										error={errors.email}
 										hint="Email sẽ được sử dụng để gửi xác nhận đơn hàng"
 									>
@@ -246,7 +226,7 @@ const CheckoutPage = () => {
 
 									<FormField
 										id="phoneNumber"
-										label="Số điện thoại" required
+										label="Số điện thoại" required={REQUIRED.phoneNumber}
 										error={errors.phoneNumber}
 										hint="Ưu tiên số điện thoại có sử dụng Zalo."
 									>

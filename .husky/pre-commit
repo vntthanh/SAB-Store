@@ -4,9 +4,9 @@
 # - backend: Jest on the staged files' related tests, or the full suite when a
 #   shared contract (models, pricing, stock, auth, middleware, query guard, test
 #   harness, dependencies) changed;
-# - frontend: the production bundle must build (no frontend tests are checked in);
+# - frontend: the production bundle must build and the frontend unit tests must pass;
 # - workspace plumbing (packages/*, root manifest, lockfile, workspace file): every
-#   consumer is affected, so the full backend suite, the frontend build and the
+#   consumer is affected, so the full backend suite, the frontend build and tests and the
 #   shared package's own tests all run;
 # - anything else (Markdown, hooks, compose files): nothing to run.
 # Tests and the build run under the machine-wide heavy lock (lib/heavy-lock.sh),
@@ -78,6 +78,8 @@ fi
 if [[ "$frontend_changed" == true ]]; then
 	echo "pre-commit: frontend changed, building the production bundle"
 	(cd "$ROOT/frontend" && pnpm --silent build >/dev/null)
+	echo "pre-commit: frontend unit tests"
+	(cd "$ROOT/frontend" && pnpm --silent exec vitest run)
 fi
 
 # No-op until the package exists, so the hook keeps working on a tree without it.

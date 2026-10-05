@@ -6,6 +6,8 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Logo from '../components/Logo';
 import useFieldErrors from '../hooks/use-field-errors';
 import FormField from '../components/form/FormField';
+import { z, loginPassword } from '@sab/shared';
+import { rulesFromSchema, requiredFromSchema } from '../lib/schema-rules';
 
 const ROLE_REDIRECTS = {
 	admin: '/admin/dashboard',
@@ -13,15 +15,21 @@ const ROLE_REDIRECTS = {
 };
 
 // Only shape checks: whether the credentials are right is the auth server's call, and it is
-// reported as a toast because it does not belong to a single field.
-const LOGIN_RULES = {
-	username: (value) => {
-		const v = value.trim();
-		if (!v) return 'Tên đăng nhập là bắt buộc';
-		return v.length < 3 ? 'Tên đăng nhập phải có ít nhất 3 ký tự' : null;
-	},
-	password: (value) => (value ? null : 'Mật khẩu là bắt buộc')
-};
+// reported as a toast because it does not belong to a single field. The username length is a
+// UI-only convenience; the password must merely be present, never strength-checked, so an
+// existing account can always sign in.
+const LOGIN_SCHEMA = z.object({ password: loginPassword });
+const LOGIN_RULES = rulesFromSchema(LOGIN_SCHEMA, {
+	fields: ['password'],
+	uiRules: {
+		username: (value) => {
+			const v = value.trim();
+			if (!v) return 'Tên đăng nhập là bắt buộc';
+			return v.length < 3 ? 'Tên đăng nhập phải có ít nhất 3 ký tự' : null;
+		}
+	}
+});
+const REQUIRED = requiredFromSchema(LOGIN_SCHEMA);
 
 const LoginPage = () => {
 	const navigate = useNavigate();
@@ -254,7 +262,7 @@ const LoginPage = () => {
 								</div>
 								<FormField
 									id="password"
-									label="Mật khẩu" required
+									label="Mật khẩu" required={REQUIRED.password}
 									error={errors.password}
 								>
 									<input
