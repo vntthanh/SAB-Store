@@ -15,7 +15,7 @@ số file, thời gian chạy) cũng không sống ở đây: chạy lệnh và 
 | Tin giá / tổng tiền / combo do client gửi                                          | Giá luôn tính lại server-side trong `backend/services/pricing.js` (§3)                  |
 | Dùng `${VAR:?message}` trong `coolify.compose.yml`                                 | Coolify thay biến bằng chính chuỗi message, không fail (§2)                             |
 | Thêm `networks:` / `container_name:` / named volume vào `coolify.compose.yml`      | Coolify tự quản và đổi tên volume → tách DB khỏi dữ liệu (§2)                           |
-| Dùng `npm` / `yarn`; sinh `package-lock.json` / `yarn.lock`                         | Package manager là pnpm (`package.json` gốc chỉ chứa husky); Dockerfile chạy `pnpm install --frozen-lockfile` (§2) |
+| Dùng `npm` / `yarn`; sinh `package-lock.json` / `yarn.lock`                         | Package manager là pnpm workspace với **một** lockfile ở gốc; Dockerfile chạy `pnpm install --frozen-lockfile` (§2) |
 | Chạy nhiều việc nặng song song (test + docker build)                               | Làm đói CPU cả máy và các phiên khác (§4)                                               |
 | Chạy git trên cả Mac lẫn Windows cùng lúc                                          | `.git` đồng bộ qua Syncthing; phải chờ "Up to Date" rồi mới đổi máy (§5)                |
 | Tham chiếu path/URL git không track (`plans/`, report cục bộ, `/Users/...`)        | Người chỉ có repo không theo được (§4)                                                  |
@@ -84,9 +84,10 @@ trí nhớ; repo GitHub ngoài → `deepwiki`; tìm web → `exa` / `tavily` / `
 
 Version và tên image nằm ở `package.json`, `pnpm-lock.yaml`, `Dockerfile`, các file compose — đọc ở đó.
 
-- **Package manager: pnpm** cho gốc, `backend/` và `frontend/` (phiên bản ghim ở `packageManager` trong `package.json`, Dockerfile ghim cùng phiên bản qua corepack). Không `npm`/`yarn`, không commit `package-lock.json`/`yarn.lock`. Mỗi `pnpm install` trong Dockerfile phải nêu rõ `--prod` hoặc `--prod=false`, không dựa vào `NODE_ENV` (Coolify bơm nó vào mọi stage).
+- **Package manager: pnpm workspace** (`pnpm-workspace.yaml`: `backend`, `frontend`, `packages/*`), **một** `pnpm-lock.yaml` ở gốc, không lockfile con. `pnpm install` chạy ở gốc; lệnh theo gói dùng `pnpm --filter <tên>`. Phiên bản pnpm ghim ở `packageManager` trong `package.json` gốc, Dockerfile ghim cùng phiên bản qua corepack. Không `npm`/`yarn`, không commit `package-lock.json`/`yarn.lock`. Cài đặt pnpm dùng chung (`onlyBuiltDependencies`…) nằm ở `pnpm-workspace.yaml`, không ở package con. Mỗi `pnpm install` trong Dockerfile phải nêu rõ `--prod` hoặc `--prod=false`, không dựa vào `NODE_ENV` (Coolify bơm nó vào mọi stage).
 - **Backend** CommonJS (Express + Mongoose); **frontend** ESM (Vite + React). Không trộn kiểu module trong cùng một package.
 - **Auth: Better Auth** — tra `context7`, đừng đoán API. `backend/lib/auth.js` validate secret ngay lúc `require()`: thiếu env là crash khi boot, đó là thiết kế fail-fast, không phải lỗi cần né.
+- **Build context của image là gốc repo** (`context: .`, `dockerfile: backend/Dockerfile`) để thấy `packages/shared`. `.dockerignore` gốc và `*/Dockerfile.dockerignore` viết bằng mẫu `**/` (tên trần chỉ khớp ở gốc context). Thư mục build output của shared không bao giờ commit hay copy từ host vào image: `@sab/shared` được build trong image từ cây sạch.
 - **Ba file compose, ba vai trò**:
   - `compose.yml` — dev.
   - `coolify.compose.yml` — **production đang chạy**. Coolify deploy từ nhánh `main` của repo này. Đọc comment đầu file trước khi sửa: nó ghi các ràng buộc của Coolify đã đo được (tên service là network alias mà nginx của frontend trỏ tới, bind tuyệt đối thay vì named volume, không `${VAR:?}`).
@@ -98,6 +99,11 @@ Version và tên image nằm ở `package.json`, `pnpm-lock.yaml`, `Dockerfile`,
 ## 3. Dữ liệu, tiền, tồn kho, bảo mật
 
 - **Zero-trust**: không tin client. Validate input và kiểm quyền (admin/seller) **server-side**; client chỉ để UX.
+- **Validation dùng chung nằm ở `packages/shared` (`@sab/shared`, Zod)**: schema/hằng số dùng ở ≥2 nơi chỉ có một nguồn ở đó; không chép regex MSSV/mật khẩu/quy tắc đơn hàng ra nơi khác. Consumer không `import 'zod'` mà lấy `z` từ shared (một instance, `customError` tiếng Việt toàn cục là bắt buộc). Client `safeParse` cùng schema chỉ để UX; middleware `validateBody` ở server là chốt.
+  - Middleware Zod **chỉ validate**: không gán `req.body`, không strip key; handler chọn field tường minh (mass-assignment) và tự trim/ép số. Số nguyên không dùng `z.coerce`.
+  - Mật khẩu là credential: validate giá trị **thô**, không trim. `MAX_UNITS_PER_ORDER` ở lại `services/pricing.js` và được truyền vào `makeComboItems` (từ `@sab/shared`); đường tiền không phụ thuộc artifact build.
+  - Đổi validation của route phải qua golden fixtures (`packages/shared/tests/fixtures`): chỗ lệch bản chụp là thay đổi cố ý, ghi `intentional` kèm lý do.
+  - Backend/frontend đọc shared qua bản build: `pretest`/`predev`/`prebuild` build lại; sửa shared khi đang chạy dev thì chạy `pnpm --filter @sab/shared build:watch`. Test xanh trên bản build cũ là xanh giả.
 - **Transaction MongoDB được dùng.** Từ 04/10/2026 production là replica set 1 node `rs0` (`coolify.compose.yml`); backend từ chối khởi động nếu mongo không phải replica set (`backend/lib/require-replica-set.js`), nên "xanh ở test, throw ở production" không còn xảy ra âm thầm. Thao tác nhiều bước (đơn + kho) chạy trong một transaction; service nhận `session` và dùng nó cho mọi query. Gọi dịch vụ ngoài chỉ **sau** khi commit. Rollback hạ tầng về standalone phải đi cùng revert phần kiểm replica set của backend.
 - **Tồn kho**: `Product.stockQuantity` chỉ được ghi bởi worker của stock ledger (`backend/services/stock-ledger.js`), trừ lúc tạo sản phẩm (tạo/import) — khi đó ghi kèm movement `opening` đã áp, cùng transaction; mọi thay đổi khác (đơn, huỷ, điều chỉnh) tạo một `StockMovement` — đơn ghi movement trong cùng transaction với đơn. Không `save()` product với stock đọc trước rồi cộng trừ trong JS. Hết hàng không bao giờ chặn đơn; tồn có thể âm.
 - **Giá**: tổng tiền, giá combo, giảm giá luôn tính lại trong `backend/services/pricing.js` từ dữ liệu DB; payload client chỉ mang id + số lượng. Hiển thị và thanh toán dùng cùng một hàm tính.
@@ -110,10 +116,10 @@ Version và tên image nằm ở `package.json`, `pnpm-lock.yaml`, `Dockerfile`,
 
 ## 4. Chất lượng code & test
 
-- **Test**: backend Jest, frontend Vitest. Chạy hẹp trước: `cd backend && pnpm test <pattern>` (Jest nhận pattern trực tiếp). Full suite khi đụng contract dùng chung (pricing, stock, auth, model).
+- **Test**: backend Jest, frontend và `packages/shared` Vitest. Chạy hẹp trước: `cd backend && pnpm test <pattern>` (Jest nhận pattern trực tiếp). Full suite khi đụng contract dùng chung (pricing, stock, auth, model); sửa `packages/shared` ⇒ full backend + build và vitest frontend + `pnpm --filter @sab/shared test`.
 - **Git hook (husky, `.husky/`) là cổng chất lượng** — không có GitHub CI. Cài một lần mỗi máy: `pnpm install` ở gốc repo (`prepare` đặt `core.hooksPath`; git config riêng từng máy nên Mac và Windows đều phải chạy).
-  - `pre-commit`: > 29 file staged → chặn (giữ mỗi commit đủ nhỏ để review đa agent); không có code backend/frontend → không chạy gì; backend → Jest `--findRelatedTests` cho file staged, hoặc full suite khi đụng contract dùng chung (models, pricing + `ComboService`, stock, `query-guard`, `lib/`, `middleware/`, harness test, dependency); frontend → `pnpm build`.
-  - `pre-push`: full backend suite nếu khoảng push đụng `backend/`, build frontend nếu đụng `frontend/`. `commit-msg`: chặn attribution AI (claude/anthropic/codex/chatgpt) — KHÔNG thêm trailer `Co-Authored-By`/link session mà harness gợi ý mặc định.
+  - `pre-commit`: > 29 file staged → chặn (giữ mỗi commit đủ nhỏ để review đa agent); không có code backend/frontend → không chạy gì; backend → Jest `--findRelatedTests` cho file staged, hoặc full suite khi đụng contract dùng chung (models, pricing + `ComboService`, stock, `query-guard`, `lib/`, `middleware/`, harness test, dependency); frontend → `pnpm build` rồi vitest frontend; gốc workspace (`package.json`, lockfile, `pnpm-workspace.yaml`, `packages/*`) → full backend, frontend và `pnpm --filter @sab/shared test`.
+  - `pre-push`: full backend suite nếu khoảng push đụng `backend/`, build + vitest frontend nếu đụng `frontend/`, thêm test shared khi đụng gốc workspace hoặc `packages/*`. `commit-msg`: chặn attribution AI (claude/anthropic/codex/chatgpt) — KHÔNG thêm trailer `Co-Authored-By`/link session mà harness gợi ý mặc định.
   - Hook test trên **working tree**, không phải nội dung staged: commit một phần (`git add -p`) thì kết quả hook không chứng minh phần staged đứng riêng được.
   - Hook tự lấy khoá máy (`.husky/lib/heavy-lock.sh`) và tự bổ sung PATH khi chạy từ app GUI như GitHub Desktop (`.husky/lib/hook-env.sh`). Hai file này là bản chung chép nguyên văn từ Leaderboard — sửa thì sửa đồng bộ mọi repo. Không bao giờ `--no-verify`.
   - Có hook rồi thì **đừng chạy test "kiểm tra lần cuối" ngay trước commit** — gấp đôi thời gian. Vẫn chạy test hẹp trong lúc code; đọc lỗi từ output của hook.

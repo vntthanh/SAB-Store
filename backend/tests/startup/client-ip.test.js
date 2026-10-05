@@ -2,7 +2,7 @@ const express = require('express');
 const request = require('supertest');
 const { buildTrustedProxies, DEFAULT_TRUSTED_PROXIES } = require('../../lib/trusted-proxies');
 const { requestLogger } = require('../../middleware/logger');
-const { buildTestApp } = require('../helpers/app');
+const { createApp } = require('../../server');
 
 function ipApp(trustProxy) {
 	const app = express();
@@ -27,7 +27,7 @@ describe('buildTrustedProxies', () => {
 
 describe('req.ip behind the proxy chain', () => {
 	it('is resolved by the app with the shared trust list', () => {
-		expect(buildTestApp().get('trust proxy')).toEqual(buildTrustedProxies());
+		expect(createApp().get('trust proxy')).toEqual(buildTrustedProxies());
 	});
 
 	// supertest connects over loopback, so the peer is 127.0.0.1 / ::1.

@@ -9,6 +9,7 @@
  * database instead of silently using two.
  */
 const mongoose = require('mongoose');
+const { closeTestServers } = require('./helpers/servers');
 
 beforeAll(async () => {
 	const uri = process.env.MONGODB_URI;
@@ -28,6 +29,7 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
+	await closeTestServers();
 	await mongoose.disconnect();
 
 	// better-auth opens its own MongoClient at require time, separate from

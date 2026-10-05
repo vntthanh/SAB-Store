@@ -113,38 +113,9 @@ function getPasswordStrengthIndicators(password) {
 	};
 }
 
-/**
- * Express validator middleware for password validation
- * @param {string} field - The field name to validate (default: 'password')
- * @returns {Array} Express validator rules
- */
-function createPasswordValidationRules(field = 'password') {
-	const { body } = require('express-validator');
-
-	return [
-		body(field)
-			.notEmpty()
-			.withMessage('Mật khẩu là bắt buộc')
-			.isLength({ min: MIN_PASSWORD_LENGTH, max: MAX_PASSWORD_LENGTH })
-			.withMessage(`Mật khẩu phải có từ ${MIN_PASSWORD_LENGTH}-${MAX_PASSWORD_LENGTH} ký tự`)
-			.matches(/[a-z]/)
-			.withMessage('Mật khẩu phải chứa ít nhất 1 chữ cái thường')
-			.matches(/[A-Z]/)
-			.withMessage('Mật khẩu phải chứa ít nhất 1 chữ cái hoa')
-			.custom((value) => {
-				if (isCommonPassword(value)) {
-					throw new Error('Mật khẩu này quá phổ biến và không an toàn');
-				}
-				return true;
-			})
-			.trim()
-	];
-}
-
 module.exports = {
 	validatePassword,
 	getPasswordStrengthIndicators,
-	createPasswordValidationRules,
 	PASSWORD_STRENGTH,
 	COMMON_PASSWORDS
 };

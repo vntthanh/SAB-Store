@@ -38,6 +38,10 @@ covers `prod.compose.yml` on a host without Coolify and is kept as the fallback 
   peers and pulls react/react-dom into the backend image. To check an image, list its files
   (`docker run --rm --entrypoint find <image> /app -maxdepth 3`): no `tests/`, `*.md`,
   `Dockerfile*`, `.claude` or host `uploads`.
+  `@sab/shared` is built inside the image from the clean tree (the backend image has a `shared-build`
+  stage; the frontend's `prebuild` builds it), never copied from the host. To reproduce what Coolify
+  builds on a dev machine: `docker compose -f coolify.compose.yml build` (it needs the compose
+  variables; do not paste the rendered config anywhere).
 - **Rollback of the workspace move**: redeploy the last `main` commit before it in Coolify
   (the one-commit revert on `dev` restores the per-package lockfiles and `./backend` /
   `./frontend` contexts). The registry tags below are for infrastructure disasters only.
