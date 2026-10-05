@@ -1,5 +1,6 @@
 import { z } from '../z.js';
 import { MIN_PASSWORD_LENGTH, MAX_PASSWORD_LENGTH, isCommonPassword } from '../password-rules.js';
+import { nullishAsEmpty, onlyStrings } from './primitives.js';
 
 // A password is a credential: every schema here validates the value exactly as
 // sent, never trimmed. Trimming would let the stored credential differ from what
@@ -37,6 +38,7 @@ export const newPassword = z
 const CURRENT_REQUIRED = 'Mật khẩu hiện tại là bắt buộc';
 
 export const passwordChange = z.object({
-	currentPassword: z.string({ error: CURRENT_REQUIRED }).min(1, CURRENT_REQUIRED),
-	newPassword,
+	currentPassword: onlyStrings(CURRENT_REQUIRED, z.string().min(1, CURRENT_REQUIRED)),
+	// An absent new password reports every rule it fails, so the form can show them all.
+	newPassword: nullishAsEmpty(onlyStrings(REQUIRED, newPassword)),
 });

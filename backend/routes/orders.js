@@ -1,6 +1,6 @@
 const express = require('express');
 const Order = require('../models/Order');
-const { validateOrder } = require('../middleware/validation');
+const { validateOrder, trimText } = require('../middleware/validation');
 const { generateOrderCode } = require('../utils/helpers');
 const { sendOrderToAppScript } = require('../utils/appscript');
 const { generateOrderPaymentQR, formatOrderPaymentDescription } = require('../utils/paymentHelper');
@@ -20,7 +20,14 @@ const MAX_ORDER_CODE_ATTEMPTS = 10;
  */
 router.post('/', validateOrder, async (req, res) => {
 	try {
-		const { studentId, fullName, email, phoneNumber, additionalNote, items, expectedTotal } = req.body;
+		const { items, expectedTotal } = req.body;
+		// Validation checks the trimmed text but does not rewrite the request, so
+		// what is stored and forwarded is trimmed here.
+		const studentId = trimText(req.body.studentId);
+		const fullName = trimText(req.body.fullName);
+		const email = trimText(req.body.email);
+		const phoneNumber = trimText(req.body.phoneNumber);
+		const additionalNote = trimText(req.body.additionalNote);
 
 		// Price, order and stock movements are one transaction: nothing the client
 		// sends about price is read (expectedTotal is only compared — a mismatch

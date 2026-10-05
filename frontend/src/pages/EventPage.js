@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { STUDENT_ID_PATTERN, STUDENT_ID_HINT } from '../utils/student-id';
+import { orderCreate } from '@sab/shared';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { productService, orderService, comboService, formatCurrency, PRICE_CHANGED } from '../services/api';
@@ -8,39 +8,20 @@ import MarkdownContent from '../components/MarkdownContent';
 import usePublicSettings from '../hooks/usePublicSettings';
 import useFieldErrors from '../hooks/use-field-errors';
 import FormField from '../components/form/FormField';
+import { rulesFromSchema, requiredFromSchema } from '../lib/schema-rules';
 
-// Client rules mirror validateOrder in backend/middleware/validation.js (the server stays authoritative).
-// The student-ID format is only enforced for HCMUS students here; other schools use their own formats.
-const EVENT_RULES = {
-	school: (value) => (value ? null : 'Vui lòng chọn trường của bạn'),
-	customSchool: (value, values) => (
-		values.school === 'other' && !value.trim() ? 'Vui lòng nhập tên trường của bạn' : null
-	),
-	studentId: (value, values) => {
-		const v = value.trim();
-		if (!v) return 'Mã số sinh viên là bắt buộc';
-		if (values.school === 'HCMUS' && !STUDENT_ID_PATTERN.test(v)) return STUDENT_ID_HINT;
-		return null;
-	},
-	fullName: (value) => {
-		const v = value.trim();
-		if (!v) return 'Họ tên là bắt buộc';
-		if (v.length < 2 || v.length > 100) return 'Họ tên phải từ 2-100 ký tự';
-		return /^[a-zA-ZÀ-ỹ\s]+$/.test(v) ? null : 'Họ tên chỉ được chứa chữ cái và khoảng trắng';
-	},
-	email: (value) => {
-		const v = value.trim();
-		if (!v) return 'Email là bắt buộc';
-		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return 'Email không hợp lệ';
-		return v.length > 100 ? 'Email không được vượt quá 100 ký tự' : null;
-	},
-	phoneNumber: (value) => {
-		const v = value.trim();
-		if (!v) return 'Số điện thoại là bắt buộc';
-		return /^0[0-9]{9}$/.test(v) ? null : 'Số điện thoại phải có 10 số và bắt đầu bằng 0';
-	},
-	additionalNote: (value) => (value.length > 500 ? 'Ghi chú không được vượt quá 500 ký tự' : null)
-};
+// Same order schema as the server. `school` is the only part the server does not see: it decides
+// whether the free-text school name is required.
+const EVENT_RULES = rulesFromSchema(orderCreate, {
+	fields: ['studentId', 'fullName', 'email', 'phoneNumber', 'additionalNote'],
+	uiRules: {
+		school: (value) => (value ? null : 'Vui lòng chọn trường của bạn'),
+		customSchool: (value, values) => (
+			values.school === 'other' && !value.trim() ? 'Vui lòng nhập tên trường của bạn' : null
+		)
+	}
+});
+const REQUIRED = requiredFromSchema(orderCreate);
 
 const EventPage = () => {
 	const settings = usePublicSettings();
@@ -131,11 +112,8 @@ const EventPage = () => {
 		setFormData(next);
 		onFieldChange(name, value, next);
 
-		// These rules read the chosen school, so they must be re-checked when it changes.
-		if (name === 'school') {
-			onFieldChange('studentId', next.studentId, next);
-			onFieldChange('customSchool', next.customSchool, next);
-		}
+		// The school name rule reads the chosen school, so it is re-checked when that changes.
+		if (name === 'school') onFieldChange('customSchool', next.customSchool, next);
 	};
 
 	const handleBlur = (e) => {
@@ -372,7 +350,7 @@ const EventPage = () => {
 
 						<FormField
 							id="studentId"
-							label="Mã số sinh viên" required
+							label="Mã số sinh viên" required={REQUIRED.studentId}
 							error={errors.studentId}
 						>
 							<input
@@ -389,7 +367,7 @@ const EventPage = () => {
 
 						<FormField
 							id="fullName"
-							label="Họ tên" required
+							label="Họ tên" required={REQUIRED.fullName}
 							error={errors.fullName}
 						>
 							<input
@@ -406,7 +384,7 @@ const EventPage = () => {
 
 						<FormField
 							id="email"
-							label="Email" required
+							label="Email" required={REQUIRED.email}
 							error={errors.email}
 							hint="Email sẽ được sử dụng để gửi xác nhận vé tham dự"
 						>
@@ -424,7 +402,7 @@ const EventPage = () => {
 
 						<FormField
 							id="phoneNumber"
-							label="Số điện thoại" required
+							label="Số điện thoại" required={REQUIRED.phoneNumber}
 							error={errors.phoneNumber}
 							hint="Ưu tiên số điện thoại có sử dụng Zalo."
 						>

@@ -78,7 +78,7 @@ rejection, RIFF-without-WEBP signature rejection, genuine WebP signature accepta
 
 ## Test Results
 
-Run via the backend's own suite (`cd backend && npx jest`), not a standalone script — see
+Run via the backend's own suite (`cd backend && pnpm test`), not a standalone script — see
 that command's output for current pass/fail status. There is no
 `backend/test/test_file_validation.js`; if a doc or script elsewhere references that path, it
 does not exist in this repo.
@@ -147,7 +147,7 @@ proxy must expose object reads and nothing else:
 Run the test suite:
 
 ```bash
-cd backend && npx jest tests/validation/upload-file-guards.test.js
+cd backend && pnpm test tests/validation/upload-file-guards.test.js
 ```
 
 ## Configuration

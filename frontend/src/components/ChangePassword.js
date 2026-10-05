@@ -1,27 +1,27 @@
 import React, { useState, useRef } from 'react';
 import { toast } from 'react-toastify';
 import Swal from 'sweetalert2';
-import { validatePassword, MIN_PASSWORD_LENGTH } from '../utils/passwordValidator';
+import { passwordChange } from '@sab/shared';
+import { MIN_PASSWORD_LENGTH } from '../utils/passwordValidator';
 import PasswordStrengthIndicator from './PasswordStrengthIndicator';
 import RandomPasswordButton from './RandomPasswordButton';
 import useFieldErrors from '../hooks/use-field-errors';
 import FormField from './form/FormField';
+import { rulesFromSchema, requiredFromSchema } from '../lib/schema-rules';
 import { adminService, sellerService } from '../services/api';
 
-const CHANGE_PASSWORD_RULES = {
-	currentPassword: (value) => (value ? null : 'Mật khẩu hiện tại là bắt buộc'),
-	newPassword: (value) => {
-		const validation = validatePassword(value);
-		if (!validation.isValid) return validation.errors[0];
-		return value.trim().length < MIN_PASSWORD_LENGTH
-			? `Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự`
-			: null;
-	},
-	confirmPassword: (value, values) => {
-		if (!value) return 'Vui lòng xác nhận mật khẩu mới';
-		return value === values.newPassword ? null : 'Mật khẩu xác nhận không khớp';
+// Passwords are checked exactly as typed (never trimmed), by the same schema the server runs; the
+// server's message is the one shown. Only the confirmation is a UI concern.
+const CHANGE_PASSWORD_RULES = rulesFromSchema(passwordChange, {
+	fields: ['currentPassword', 'newPassword'],
+	uiRules: {
+		confirmPassword: (value, values) => {
+			if (!value) return 'Vui lòng xác nhận mật khẩu mới';
+			return value === values.newPassword ? null : 'Mật khẩu xác nhận không khớp';
+		}
 	}
-};
+});
+const REQUIRED = requiredFromSchema(passwordChange);
 
 const EMPTY_FORM = { currentPassword: '', newPassword: '', confirmPassword: '' };
 
@@ -119,7 +119,7 @@ const ChangePasswordModal = ({ userType, title, onClose }) => {
 					<form ref={formRef} onSubmit={handleSubmit} noValidate className="space-y-4">
 						<FormField
 							id="currentPassword"
-							label="Mật khẩu hiện tại" required
+							label="Mật khẩu hiện tại" required={REQUIRED.currentPassword}
 							error={errors.currentPassword}
 						>
 							<input
@@ -139,7 +139,7 @@ const ChangePasswordModal = ({ userType, title, onClose }) => {
 								<div className="flex-1">
 									<FormField
 										id="newPassword"
-										label="Mật khẩu mới" required
+										label="Mật khẩu mới" required={REQUIRED.newPassword}
 										error={errors.newPassword}
 									>
 										<input

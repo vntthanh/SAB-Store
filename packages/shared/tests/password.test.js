@@ -116,6 +116,9 @@ describe('passwordChange', () => {
 		expect(result.error.issues.map((i) => [i.path.join('.'), i.message])).toEqual([
 			['currentPassword', 'Mật khẩu hiện tại là bắt buộc'],
 			['newPassword', REQUIRED],
+			['newPassword', RANGE],
+			['newPassword', LOWER],
+			['newPassword', UPPER],
 		]);
 	});
 });

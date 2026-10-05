@@ -80,17 +80,23 @@ docker compose up -d --build
 
 ### Development Setup (Local, không qua Docker)
 ```bash
-# Backend setup
+# Repo là pnpm workspace (backend, frontend, packages/shared): cài một lần ở GỐC
+pnpm install
+
+# Backend
 cd backend
 cp .env.example .env   # backend/.env.example, không expand ${VAR} — xem docs/ENV_SETUP.md
-pnpm install
-pnpm dev       # Port 5000 (nodemon)
+pnpm dev       # Port 5000 (nodemon); predev build @sab/shared trước
 
-# Frontend setup (terminal mới)
+# Frontend (terminal mới)
 cd frontend
-pnpm install
 pnpm dev       # Port 3000 (Vite), proxy /api → localhost:5000
 ```
+
+`packages/shared` (schema Zod dùng chung) được đọc qua bản build của nó. `pnpm dev`, `pnpm test`
+và `pnpm build` tự build lại qua `predev`/`pretest`/`prebuild`, nhưng chạy thẳng `node server.js` trên
+bản clone mới thì phải build trước: `pnpm --filter @sab/shared build`. Sửa shared trong lúc dev
+đang chạy: mở thêm một terminal `pnpm --filter @sab/shared build:watch`.
 
 ## 🌐 URLs truy cập
 
@@ -169,11 +175,16 @@ Không package nào có script `lint` (`backend/package.json`, `frontend/package
 
 ```bash
 # Backend (Jest)
-cd backend && npx jest
+cd backend && pnpm test
 
 # Frontend (Vitest)
 cd frontend && pnpm test
+
+# Schema dùng chung (Vitest)
+pnpm --filter @sab/shared test
 ```
+
+Sửa `packages/shared` ảnh hưởng cả hai app: chạy đủ ba bộ test trên và `pnpm build` ở `frontend/`.
 
 ### Kiểm tra Better-Auth integration
 1. Truy cập `/login` và đăng nhập với admin account

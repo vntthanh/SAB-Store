@@ -36,34 +36,32 @@ export function validatePassword(password) {
 		};
 	}
 
-	const trimmedPassword = password.trim();
-
 	// Length check
-	requirements.length = trimmedPassword.length >= MIN_PASSWORD_LENGTH;
+	requirements.length = password.length >= MIN_PASSWORD_LENGTH;
 	if (!requirements.length) {
 		errors.push(`Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự`);
 	}
 
 	// Lowercase check
-	requirements.lowercase = /[a-z]/.test(trimmedPassword);
+	requirements.lowercase = /[a-z]/.test(password);
 	if (!requirements.lowercase) {
 		errors.push('Mật khẩu phải chứa ít nhất 1 chữ cái thường (a-z)');
 	}
 
 	// Uppercase check
-	requirements.uppercase = /[A-Z]/.test(trimmedPassword);
+	requirements.uppercase = /[A-Z]/.test(password);
 	if (!requirements.uppercase) {
 		errors.push('Mật khẩu phải chứa ít nhất 1 chữ cái hoa (A-Z)');
 	}
 
 	// Common password check
-	requirements.notCommon = !isCommonPassword(trimmedPassword);
+	requirements.notCommon = !isCommonPassword(password);
 	if (!requirements.notCommon) {
 		errors.push('Mật khẩu này quá phổ biến và không an toàn');
 	}
 
 	const isValid = Object.values(requirements).every(req => req);
-	const strength = calculatePasswordStrength(trimmedPassword);
+	const strength = calculatePasswordStrength(password);
 
 	return {
 		isValid,

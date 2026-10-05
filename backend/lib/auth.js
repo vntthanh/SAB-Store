@@ -57,11 +57,10 @@ const auth = betterAuth({
 		requireEmailVerification: false,
 		sendEmailVerificationOnSignUp: false,
 	},
-	// Registration bypasses the express-validator blocklist in
-	// utils/passwordValidator.js entirely (better-auth's own HTTP handler is
-	// mounted ahead of any route-level validation middleware), so "123456"
-	// being the first blocklist entry never actually blocked sign-up. Reuse
-	// the same list here so registration gets the same defense.
+	// better-auth's own HTTP handler is mounted ahead of any route-level
+	// validation middleware, so sign-up never reaches the request schemas;
+	// reuse the shared blocklist here so registration gets the same defense
+	// ("123456" is its first entry).
 	hooks: {
 		before: createAuthMiddleware(async (ctx) => {
 			if (ctx.path !== "/sign-up/email") {

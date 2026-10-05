@@ -1,5 +1,5 @@
 # Pre-push gate over every file in the pushed range: the full backend suite when
-# backend/ changed, the frontend production bundle when frontend/ changed, and all
+# backend/ changed, the frontend production bundle and unit tests when frontend/ changed, and all
 # three plus the shared package tests when workspace plumbing (packages/*, root
 # manifest, lockfile, workspace file) changed.
 # Anything else (Markdown, hooks, compose files) runs nothing. Work runs under
@@ -64,6 +64,8 @@ fi
 if [[ "$frontend_changed" == true ]]; then
 	echo "pre-push: frontend changed, building the production bundle"
 	(cd "$ROOT/frontend" && pnpm --silent build >/dev/null)
+	echo "pre-push: frontend unit tests"
+	(cd "$ROOT/frontend" && pnpm --silent exec vitest run)
 fi
 
 # No-op until the package exists, so the hook keeps working on a tree without it.

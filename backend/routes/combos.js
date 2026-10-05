@@ -189,7 +189,8 @@ router.post('/', authenticateAdmin, async (req, res) => {
  */
 router.post('/pricing', validateComboItems, async (req, res) => {
 	try {
-		const { items } = req.body;
+		// Validation accepts digit-string quantities without rewriting them; the engine needs numbers.
+		const items = req.body.items.map((item) => ({ ...item, quantity: Number(item.quantity) }));
 
 		const { originalTotal, totalAmount, savings, orderItems, comboInfo } =
 			await computeOrderPricing(items, { channel: channelOf(req.body.channel) });

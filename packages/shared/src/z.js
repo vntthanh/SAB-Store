@@ -68,6 +68,8 @@ function customError(iss) {
 	}
 }
 
-z.config({ customError });
+// jitless: Zod otherwise probes `new Function`, which the storefront CSP (script-src 'self')
+// reports on every page load and would block once the policy is enforced.
+z.config({ customError, jitless: true });
 
 export { z, customError };

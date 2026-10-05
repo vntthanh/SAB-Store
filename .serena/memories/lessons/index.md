@@ -12,7 +12,12 @@
 
 ## verification
 - `mem:lessons/verification/dev_compose_verify_stack` — dựng stack compose.yml ở :8088: JWT_SECRET mặc định quá ngắn, nginx cần alias `sabstore-backend`, :5000 bị AirPlay chiếm.
-- `mem:lessons/verification/husky_hooks_setup` — husky + package.json gốc chỉ cho hook; hooksPath riêng từng máy; re-exec bash ≥4; ref pre-push qua env; flake orders-route chưa tái hiện.
+- `mem:lessons/verification/husky_hooks_setup` — husky + hook theo loại file (gốc workspace/shared/frontend); hooksPath riêng từng máy; re-exec bash ≥4; ref pre-push qua env; flake orders-route chưa tái hiện.
+
+## workspace
+- `mem:lessons/workspace/workspace_docker_images` — đọc trước khi sửa Dockerfile, dockerignore hoặc dependency: root context, ignore per-Dockerfile, `pnpm deploy` không `--legacy`.
+- `mem:lessons/workspace/shared_package_build` — đọc khi sửa `packages/shared` hoặc thấy test xanh mà hành vi cũ: build cũ = xanh giả, `jitless`, không import `zod` trực tiếp.
+- `mem:lessons/workspace/validation_golden_fixtures` — đọc trước khi đổi validation của route: fixture vàng, khối `intentional`, replay qua một server.
 
 ## workflow
 - `mem:lessons/workflow/agent_tooling_pitfalls` — scout-block hook chặn chuỗi `node_modules`/`build` trong Bash; tin cross-session khác permission mode hết hạn → đọc thẳng repo anh em.

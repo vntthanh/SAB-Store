@@ -158,10 +158,11 @@ export const adminService = {
 		}
 	},
 
-	// Change password
+	// Admins use the seller route on purpose: it changes the caller's own password and
+	// admits admins; /api/admin has no change-password route.
 	changePassword: async (currentPassword, newPassword) => {
 		try {
-			const response = await api.post('/admin/change-password', {
+			const response = await api.post('/seller/change-password', {
 				currentPassword,
 				newPassword
 			});

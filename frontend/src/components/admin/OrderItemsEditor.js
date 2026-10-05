@@ -4,6 +4,8 @@ import { adminService, comboService, productService, formatCurrency, formatDate 
 import { getOrderChannel, isFinalOrderStatus } from '../../utils/order-status';
 import useFieldErrors from '../../hooks/use-field-errors';
 import FormField from '../form/FormField';
+import { orderItemsEdit } from '@sab/shared';
+import { rulesFromSchema, requiredFromSchema, leftoverIssues } from '../../lib/schema-rules';
 
 const PREVIEW_DEBOUNCE_MS = 300;
 const MAX_REASON_LENGTH = 200;
@@ -30,14 +32,10 @@ const draftSignature = (draft) =>
 		.sort()
 		.join('|');
 
-// Mirrors validateOrderItemsEdit (reason 1..200 after trim); the server stays authoritative.
-const REASON_RULES = {
-	reason: (value) => {
-		const length = value.trim().length;
-		if (length === 0) return 'Lý do sửa là bắt buộc';
-		return length > MAX_REASON_LENGTH ? `Lý do phải từ 1 đến ${MAX_REASON_LENGTH} ký tự` : null;
-	}
-};
+// The reason is the only part of the edit schema the user types; the items and the revision come
+// from the draft and the order, and are checked again in handleSave.
+const REASON_RULES = rulesFromSchema(orderItemsEdit, { fields: ['reason'] });
+const REQUIRED = requiredFromSchema(orderItemsEdit);
 
 // Its own component so the error state disappears with the edit session instead of
 // resurfacing the next time editing opens. Save stays disabled until the reason
@@ -45,7 +43,7 @@ const REASON_RULES = {
 const ReasonField = ({ value, onChange, disabled }) => {
 	const { errors, validateField, onFieldChange } = useFieldErrors(REASON_RULES);
 	return (
-		<FormField id="order-items-reason" label="Lý do sửa" required error={errors.reason}>
+		<FormField id="order-items-reason" label="Lý do sửa" required={REQUIRED.reason} error={errors.reason}>
 			<input
 				type="text"
 				className="w-full border rounded px-3 py-2 text-sm"
@@ -200,13 +198,21 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 	const canSave = hasChanges && totalMatches && trimmedReason.length > 0 && !saving;
 
 	const handleSave = useCallback(async () => {
+		const payload = {
+			items: draft.map(({ productId, quantity }) => ({ productId, quantity })),
+			expectedRevision: revision,
+			reason: trimmedReason,
+		};
+		// The reason is shown under its input; anything else the schema rejects has no field.
+		const unplaced = leftoverIssues(orderItemsEdit, payload, ['reason']);
+		if (unplaced.length > 0) {
+			toast.error(unplaced.map(({ message }) => message).join('. '));
+			return;
+		}
+
 		setSaving(true);
 		try {
-			const response = await adminService.updateOrderItems(order._id, {
-				items: draft.map(({ productId, quantity }) => ({ productId, quantity })),
-				expectedRevision: revision,
-				reason: trimmedReason,
-			});
+			const response = await adminService.updateOrderItems(order._id, payload);
 			toast.success(response.unchanged ? 'Không có thay đổi nào cần lưu' : response.message || 'Đã lưu sản phẩm trong đơn');
 			setEditing(false);
 			setReason('');
@@ -226,6 +232,8 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 				toast.warn(error.message || 'Đơn vừa được cập nhật, đã tải lại');
 				// The draft stays; only the order (revision, status) is refreshed.
 				if (onReload) await onReload();
+			} else if (error.fieldErrors?.length) {
+				toast.error(error.fieldErrors.map(({ message }) => message).join('. '));
 			} else {
 				toast.error(error.message || 'Lỗi khi lưu sản phẩm trong đơn');
 			}

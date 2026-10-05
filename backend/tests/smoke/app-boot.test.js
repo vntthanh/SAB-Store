@@ -8,8 +8,8 @@ describe('app boot', () => {
 		app = buildTestApp();
 	});
 
-	it('builds an app from createApp()', () => {
-		expect(typeof app).toBe('function');
+	it('builds a listening server around createApp()', () => {
+		expect(app.listening).toBe(true);
 	});
 
 	it('serves the health endpoint', async () => {

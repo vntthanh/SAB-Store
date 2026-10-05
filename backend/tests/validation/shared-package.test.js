@@ -2,7 +2,6 @@ const shared = require('@sab/shared');
 const {
 	validatePassword,
 	getPasswordStrengthIndicators,
-	createPasswordValidationRules,
 	COMMON_PASSWORDS,
 	PASSWORD_STRENGTH,
 } = require('../../utils/passwordValidator');
@@ -53,7 +52,6 @@ describe('utils/passwordValidator on top of @sab/shared', () => {
 		expect(COMMON_PASSWORDS).toBe(shared.COMMON_PASSWORDS);
 		expect(PASSWORD_STRENGTH).toBe(shared.PASSWORD_STRENGTH);
 		expect(COMMON_PASSWORDS).toContain('123456');
-		expect(typeof createPasswordValidationRules).toBe('function');
 	});
 
 	it('lib/auth.js still loads with the re-exported blocklist', () => {
