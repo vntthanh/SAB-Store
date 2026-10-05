@@ -203,7 +203,6 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
 			cancelReason: transitioned.cancelReason,
 			status: transitioned.status
 		};
-		console.log('Push to AppScript:', appscriptData);
 		setImmediate(() => {
 			sendOrderToAppScript(appscriptData).catch(err => {
 				console.error('AppScript push error:', err.message);

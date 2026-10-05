@@ -230,6 +230,11 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    # Shared Alloy on the host collects logs only from containers carrying these labels.
+    labels:
+      logging: david-alloy
+      logging.project: sab-store
+      logging.service: backend
     environment:
       # Fixed rather than read from .env: the shared .env.example is production-
       # shaped, and production mode refuses to initialise an empty database.
@@ -302,6 +307,11 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    # Shared Alloy on the host collects logs only from containers carrying these labels.
+    labels:
+      logging: david-alloy
+      logging.project: sab-store
+      logging.service: frontend
     ports:
       # Bound to loopback only: dev still needs host access via a browser
       # on the same machine, but never to the LAN/internet interface.

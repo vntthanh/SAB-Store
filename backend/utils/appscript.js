@@ -34,9 +34,9 @@ async function sendOrderToAppScript(orderData) {
 
 	// Every attempt failed: the order never reached AppScript and, without a
 	// dead-letter of some kind, would otherwise be lost silently. logCritical
-	// at least puts it somewhere ops can find and replay manually.
+	// makes the failure visible; the order is identified from the database, not
+	// from the log, which is shared and must not carry order codes.
 	ErrorLogger.logCritical('AppScript delivery failed after retries', lastError, {
-		orderCode: orderData?.orderCode,
 		attempts: MAX_ATTEMPTS
 	});
 	throw lastError;

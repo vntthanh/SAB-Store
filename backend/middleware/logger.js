@@ -5,7 +5,7 @@ const { monitor } = require('../utils/performanceMonitor');
 // of who made them. One line per API call lets visitors be counted by IP from
 // the container log. The query string is dropped: it can carry tokens.
 function logApiAccess(requestInfo, statusCode, duration) {
-	const path = requestInfo.url.split('?')[0];
+	const path = ErrorLogger.safePath(requestInfo.url);
 	if (!path.startsWith('/api/') || path.endsWith('/health')) {
 		return;
 	}
@@ -14,9 +14,18 @@ function logApiAccess(requestInfo, statusCode, duration) {
 		ip: requestInfo.ip,
 		method: requestInfo.method,
 		path,
+		...(requestInfo.route && { route: requestInfo.route }),
 		status: statusCode,
 		ms: duration
 	}));
+}
+
+// Grouping key per endpoint without the ids in the URL. Only known once a route
+// matched, so it is read when the response finishes.
+function routeTemplate(req) {
+	return req.route && typeof req.route.path === 'string'
+		? `${req.baseUrl || ''}${req.route.path}`
+		: undefined;
 }
 
 function requestLogger(req, res, next) {
@@ -34,6 +43,7 @@ function requestLogger(req, res, next) {
 		const duration = Date.now() - startTime;
 		const logData = {
 			...requestInfo,
+			url: ErrorLogger.safePath(requestInfo.url),
 			statusCode: res.statusCode,
 			duration: `${duration}ms`
 		};
@@ -42,7 +52,7 @@ function requestLogger(req, res, next) {
 		// whole codebase — without this, checkHealth()'s errorRate was always
 		// computed as 0/0.
 		monitor.recordRequest();
-		logApiAccess(requestInfo, res.statusCode, duration);
+		logApiAccess({ ...requestInfo, route: routeTemplate(req) }, res.statusCode, duration);
 		if (res.statusCode >= 400) {
 			monitor.recordError();
 		}
@@ -62,7 +72,7 @@ function requestLogger(req, res, next) {
 	});
 
 	res.on('error', (error) => {
-		ErrorLogger.logRoute(req.originalUrl || req.url, error, req);
+		ErrorLogger.logRoute(ErrorLogger.safePath(req.originalUrl || req.url), error, req);
 	});
 
 	next();

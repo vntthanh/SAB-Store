@@ -13,6 +13,7 @@ const { recordOrderMovements, transitionOrderWithStock } = require('../services/
 const { enqueueMovements } = require('../services/stock-ledger');
 const { ERROR_CODES, ERROR_MESSAGES } = require('../constants/errorCodes');
 const { withTransaction } = require('../utils/transaction');
+const { logEvent, orderCreatedFields } = require('../utils/log-event');
 const { asEnum, asSort, asDate, safeSearch, asPageLimit } = require('../utils/query-guard');
 const router = express.Router();
 
@@ -355,7 +356,6 @@ router.put('/orders/:id/status', validateOrderUpdate, async (req, res) => {
 			cancelReason: transitioned.cancelReason,
 			status: transitioned.status
 		};
-		console.log('Push to AppScript:', appscriptData);
 		setImmediate(() => {
 			sendOrderToAppScript(appscriptData).catch(err => {
 				console.error('Gửi đơn hàng lên App Script thất bại:', err.message);
@@ -544,9 +544,10 @@ router.post('/orders/direct', validateDirectOrder, async (req, res) => {
 			}
 		}
 
-		const { order, pricing: { comboInfo, totalAmount }, movements } = created;
+		const { order, pricing: { comboInfo, totalAmount, orderItems }, movements } = created;
 
 		// The order is durable; only now may anything leave the transaction.
+		logEvent('order.created', orderCreatedFields({ channel: 'offline', orderItems, totalAmount, comboInfo }));
 		await enqueueMovements(movements);
 
 		// Generate payment QR URL for direct sales

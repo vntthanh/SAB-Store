@@ -1,6 +1,16 @@
 const { ERROR_CODES } = require('../constants/errorCodes');
 
+// Single segment after /api/orders only, so the collection itself keeps its path.
+const PUBLIC_ORDER_LOOKUP = /^\/api\/orders\/[^/]+\/?$/i;
+
 class ErrorLogger {
+	// An order code is the only credential of the public tracking lookup and the
+	// query string can carry tokens, so neither may reach the shared log.
+	static safePath(url) {
+		const path = String(url || '').split('?')[0];
+		return PUBLIC_ORDER_LOOKUP.test(path) ? '/api/orders/:code' : path;
+	}
+
 	static log(error, context = {}) {
 		const timestamp = new Date().toISOString();
 		const errorInfo = {
@@ -26,12 +36,14 @@ class ErrorLogger {
 	}
 
 	static logRoute(routeName, error, req) {
+		const path = this.safePath(req.originalUrl || req.url);
+		const isOrderLookup = path === '/api/orders/:code';
 		const context = {
 			route: routeName,
 			method: req.method,
-			url: req.originalUrl || req.url,
-			params: req.params,
-			query: req.query,
+			url: path,
+			params: isOrderLookup ? { code: '[REDACTED]' } : req.params,
+			queryKeys: Object.keys(req.query || {}),
 			body: this.sanitizeBody(req.body),
 			ip: req.ip || req.connection?.remoteAddress,
 			userAgent: req.get('user-agent'),

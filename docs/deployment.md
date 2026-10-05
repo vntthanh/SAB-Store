@@ -338,6 +338,15 @@ curl -s -A 'facebookexternalhit/1.1' https://store.sabies.vn/p/<CODE>/x | grep -
 recreates it) starts cold; social networks keep their own copy, so use the Facebook Sharing
 Debugger to refresh a link that was shared before a change.
 
+### Logs
+
+The `frontend` and `sabstore-backend` services carry the labels `logging: david-alloy`,
+`logging.project: sab-store` and `logging.service: frontend|backend`; the shared Alloy on the
+host ships only labelled containers to the shared Loki. Both write one JSON object per line.
+Secrets are never logged: the order code in `/api/orders/<code>` is rewritten to
+`/api/orders/:code` and query strings are dropped, in nginx and in the backend alike. Scanner
+probes (`/.env`, `*.php`, …) get an unlogged 404 straight from nginx.
+
 ## Operational consequences
 
 - **Admin's DB export no longer contains `users`/`accounts`**

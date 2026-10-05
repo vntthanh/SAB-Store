@@ -8,6 +8,7 @@ const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError
 const { recordOrderMovements } = require('../services/stock');
 const { enqueueMovements } = require('../services/stock-ledger');
 const { withTransaction } = require('../utils/transaction');
+const { logEvent, orderCreatedFields } = require('../utils/log-event');
 const router = express.Router();
 
 const MAX_ORDER_CODE_ATTEMPTS = 10;
@@ -19,14 +20,7 @@ const MAX_ORDER_CODE_ATTEMPTS = 10;
  */
 router.post('/', validateOrder, async (req, res) => {
 	try {
-		console.log('📝 Order creation started:', {
-			timestamp: new Date().toISOString(),
-			body: { ...req.body, items: req.body.items?.length ? `${req.body.items.length} items` : 'no items' }
-		});
-
 		const { studentId, fullName, email, phoneNumber, additionalNote, items, expectedTotal } = req.body;
-
-		console.log('🔍 Processing items:', items.map(item => ({ productId: item.productId, quantity: item.quantity })));
 
 		// Price, order and stock movements are one transaction: nothing the client
 		// sends about price is read (expectedTotal is only compared — a mismatch
@@ -103,9 +97,9 @@ router.post('/', validateOrder, async (req, res) => {
 		}
 
 		const { order, pricing: { totalAmount, orderItems, comboInfo }, movements } = created;
-		console.log('✅ Order saved successfully:', order._id);
 
 		// The order is durable; only now may anything leave the transaction.
+		logEvent('order.created', orderCreatedFields({ channel: 'online', orderItems, totalAmount, comboInfo }));
 		await enqueueMovements(movements);
 
 		// Generate payment QR URL and description
@@ -114,7 +108,6 @@ router.post('/', validateOrder, async (req, res) => {
 		try {
 			qrUrl = await generateOrderPaymentQR(totalAmount, order.orderCode, studentId, fullName);
 			paymentDescription = await formatOrderPaymentDescription(order.orderCode, studentId, fullName);
-			console.log('✅ QR URL generated:', qrUrl);
 		} catch (qrError) {
 			console.error('❌ Failed to generate QR URL:', qrError.message);
 		}
@@ -130,7 +123,6 @@ router.post('/', validateOrder, async (req, res) => {
 			items: orderItems,
 			totalAmount
 		};
-		console.log('Push to AppScript:', appscriptData);
 		// Gửi lên App Script sau, không chờ kết quả
 		setImmediate(() => {
 			sendOrderToAppScript(appscriptData).catch(err => {
@@ -161,7 +153,7 @@ router.post('/', validateOrder, async (req, res) => {
 
 		// More specific error handling
 		if (error.name === 'ValidationError') {
-			console.error('❌ Validation error details:', error.errors);
+			console.error('❌ Validation error fields:', Object.keys(error.errors || {}));
 			return res.status(400).json({
 				success: false,
 				message: 'Dữ liệu đơn hàng không hợp lệ',
@@ -232,7 +224,7 @@ router.get('/:orderCode', async (req, res) => {
 				order.fullName
 			);
 		} catch (error) {
-			console.error('Error generating payment info:', error);
+			console.error('Error generating payment info:', error.name);
 		}
 
 		// Return order information including payment details. studentId and
@@ -258,7 +250,7 @@ router.get('/:orderCode', async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('Error fetching order:', error);
+		console.error('Error fetching order:', error.name);
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi lấy thông tin đơn hàng'

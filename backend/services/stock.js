@@ -15,6 +15,7 @@
 const Order = require('../models/Order');
 const { recordMovement } = require('./stock-ledger');
 const { withTransaction } = require('../utils/transaction');
+const { logEvent } = require('../utils/log-event');
 
 const { FINAL_ORDER_STATUSES } = Order;
 
@@ -95,8 +96,8 @@ function stockEffectOfTransition({ stockDeducted, previousStatus, newStatus }) {
  *          `final` means the order is cancelled or delivered and refuses any status
  *          change; `unchanged` means it already has `status`.
  */
-function transitionOrderWithStock({ orderId, status, setFields, historyEntry, actor }) {
-	return withTransaction(async (session) => {
+async function transitionOrderWithStock({ orderId, status, setFields, historyEntry, actor }) {
+	const result = await withTransaction(async (session) => {
 		const existing = await Order.findById(orderId).session(session).lean();
 		if (!existing) return { outcome: 'not_found' };
 		// Read inside the transaction so a cancel racing a delivery sees the winner.
@@ -118,7 +119,7 @@ function transitionOrderWithStock({ orderId, status, setFields, historyEntry, ac
 			{ new: true, runValidators: true, session }
 		);
 		if (!order) return { outcome: 'conflict' };
-		if (!effect) return { outcome: 'ok', order, movements: [] };
+		if (!effect) return { outcome: 'ok', order, movements: [], from: existing.status };
 
 		const movements = await recordOrderMovements({
 			orderId: order._id,
@@ -128,8 +129,13 @@ function transitionOrderWithStock({ orderId, status, setFields, historyEntry, ac
 			createdBy: actor,
 			reason: `Huỷ đơn ${order.orderCode}`
 		}, { session });
-		return { outcome: 'ok', order, movements };
+		return { outcome: 'ok', order, movements, from: existing.status };
 	});
+
+	// After the commit: the callback may run more than once, and a rolled-back
+	// change must leave no trace of having happened.
+	if (result.outcome === 'ok') logEvent('order.status', { from: result.from, to: status });
+	return result;
 }
 
 module.exports = { unitsByProduct, recordOrderMovements, stockEffectOfTransition, transitionOrderWithStock };

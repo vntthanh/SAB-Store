@@ -225,6 +225,11 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    # Shared Alloy on the host collects logs only from containers carrying these labels.
+    labels:
+      logging: david-alloy
+      logging.project: sab-store
+      logging.service: backend
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       # Only for the very first deploy on an empty database; the backend refuses
@@ -306,6 +311,11 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    # Shared Alloy on the host collects logs only from containers carrying these labels.
+    labels:
+      logging: david-alloy
+      logging.project: sab-store
+      logging.service: frontend
     expose:
       - 80
     depends_on:
