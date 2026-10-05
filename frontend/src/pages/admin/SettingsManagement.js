@@ -1,8 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 import api, { settingsService, DEFAULT_STORE_TITLE, STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH } from '../../services/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import MarkdownEditor from '../../components/admin/MarkdownEditor';
+import useFieldErrors from '../../hooks/use-field-errors';
+import FormField from '../../components/form/FormField';
+
+// Client rules mirror PUT /api/admin/settings (the server stays authoritative).
+const SETTINGS_RULES = {
+	storeTitle: (value) => {
+		const v = value.trim();
+		if (!v) return 'Tiêu đề cửa hàng là bắt buộc';
+		return v.length > STORE_TITLE_MAX_LENGTH ? `Tiêu đề cửa hàng phải từ 1 đến ${STORE_TITLE_MAX_LENGTH} ký tự` : null;
+	},
+	bankNameId: (value) => (value.trim() ? null : 'Bank ID là bắt buộc'),
+	bankAccountId: (value) => (value.trim() ? null : 'Số tài khoản là bắt buộc'),
+	prefixMessage: (value) => (value.trim() ? null : 'Prefix message là bắt buộc')
+};
 
 // Where each customer reminder appears; the preview reuses that box's text colour.
 const NOTICES = [
@@ -25,6 +39,8 @@ const SettingsManagement = () => {
 		paymentNotice: ''
 	});
 	const [originalSettings, setOriginalSettings] = useState(null);
+	const { errors, validateField, onFieldChange, validateAll, focusFirstError, reset: resetFieldErrors } = useFieldErrors(SETTINGS_RULES);
+	const formRef = useRef(null);
 
 	useEffect(() => {
 		fetchSettings();
@@ -65,6 +81,11 @@ const SettingsManagement = () => {
 			...prev,
 			[name]: value
 		}));
+		onFieldChange(name, value, { ...settings, [name]: value });
+	};
+
+	const handleBlur = (e) => {
+		validateField(e.target.name, e.target.value, settings);
 	};
 
 	const handleNoticeChange = (field) => (value) => {
@@ -74,23 +95,8 @@ const SettingsManagement = () => {
 	const handleSubmit = async (e) => {
 		e.preventDefault();
 
-		if (!settings.bankNameId.trim()) {
-			toast.error('Vui lòng nhập Bank ID');
-			return;
-		}
-
-		if (!settings.bankAccountId.trim()) {
-			toast.error('Vui lòng nhập số tài khoản');
-			return;
-		}
-
-		if (!settings.prefixMessage.trim()) {
-			toast.error('Vui lòng nhập prefix message');
-			return;
-		}
-
-		if (!settings.storeTitle.trim()) {
-			toast.error('Vui lòng nhập tiêu đề cửa hàng');
+		if (!validateAll(settings)) {
+			focusFirstError(formRef);
 			return;
 		}
 
@@ -125,6 +131,7 @@ const SettingsManagement = () => {
 	const handleReset = () => {
 		if (originalSettings) {
 			setSettings(originalSettings);
+			resetFieldErrors();
 		}
 	};
 
@@ -149,85 +156,77 @@ const SettingsManagement = () => {
 				<div className="bg-white rounded-lg shadow-md p-6">
 					<h1 className="text-2xl font-bold mb-6">Cấu hình cửa hàng</h1>
 
-					<form onSubmit={handleSubmit} className="space-y-6">
-						<div>
-							<label htmlFor="storeTitle" className="block text-sm font-medium text-gray-700 mb-2">
-								Tiêu đề cửa hàng <span className="text-red-500">*</span>
-							</label>
+					<form ref={formRef} onSubmit={handleSubmit} noValidate className="space-y-6">
+						<FormField
+							id="settings-storeTitle"
+							label="Tiêu đề cửa hàng" required
+							error={errors.storeTitle}
+							hint="Hiển thị trên thanh tiêu đề của trang bán hàng"
+						>
 							<input
 								type="text"
-								id="storeTitle"
 								name="storeTitle"
 								value={settings.storeTitle}
 								onChange={handleChange}
+								onBlur={handleBlur}
 								placeholder={`VD: ${DEFAULT_STORE_TITLE}`}
 								maxLength={STORE_TITLE_MAX_LENGTH}
 								className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-								required
 							/>
-							<p className="mt-1 text-sm text-gray-500">
-								Hiển thị trên thanh tiêu đề của trang bán hàng
-							</p>
-						</div>
+						</FormField>
 
 						<h2 className="text-lg font-semibold text-gray-800 pt-2">Thanh toán VietQR</h2>
 
-						<div>
-							<label htmlFor="bankNameId" className="block text-sm font-medium text-gray-700 mb-2">
-								Bank ID <span className="text-red-500">*</span>
-							</label>
+						<FormField
+							id="settings-bankNameId"
+							label="Bank ID" required
+							error={errors.bankNameId}
+							hint="Mã ngân hàng theo chuẩn VietQR (MB, VCB, TCB, ACB, v.v.)"
+						>
 							<input
 								type="text"
-								id="bankNameId"
 								name="bankNameId"
 								value={settings.bankNameId}
 								onChange={handleChange}
+								onBlur={handleBlur}
 								placeholder="VD: MB, VCB, TCB"
 								className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-								required
 							/>
-							<p className="mt-1 text-sm text-gray-500">
-								Mã ngân hàng theo chuẩn VietQR (MB, VCB, TCB, ACB, v.v.)
-							</p>
-						</div>
+						</FormField>
 
-						<div>
-							<label htmlFor="bankAccountId" className="block text-sm font-medium text-gray-700 mb-2">
-								Số tài khoản <span className="text-red-500">*</span>
-							</label>
+						<FormField
+							id="settings-bankAccountId"
+							label="Số tài khoản" required
+							error={errors.bankAccountId}
+							hint="Số tài khoản nhận thanh toán"
+						>
 							<input
 								type="text"
-								id="bankAccountId"
 								name="bankAccountId"
 								value={settings.bankAccountId}
 								onChange={handleChange}
+								onBlur={handleBlur}
 								placeholder="Nhập số tài khoản ngân hàng"
 								className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-								required
 							/>
-							<p className="mt-1 text-sm text-gray-500">
-								Số tài khoản nhận thanh toán
-							</p>
-						</div>
+						</FormField>
 
-						<div>
-							<label htmlFor="prefixMessage" className="block text-sm font-medium text-gray-700 mb-2">
-								Prefix Message <span className="text-red-500">*</span>
-							</label>
+						<FormField
+							id="settings-prefixMessage"
+							label="Prefix Message" required
+							error={errors.prefixMessage}
+							hint="Tiền tố cho nội dung chuyển khoản (thường là tên tổ chức)"
+						>
 							<input
 								type="text"
-								id="prefixMessage"
 								name="prefixMessage"
 								value={settings.prefixMessage}
 								onChange={handleChange}
+								onBlur={handleBlur}
 								placeholder="VD: SAB"
 								className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-								required
 							/>
-							<p className="mt-1 text-sm text-gray-500">
-								Tiền tố cho nội dung chuyển khoản (thường là tên tổ chức)
-							</p>
-						</div>
+						</FormField>
 
 						<h2 className="text-lg font-semibold text-gray-800 pt-2">Lời nhắc cho khách hàng</h2>
 						<p className="text-sm text-gray-500 -mt-4">

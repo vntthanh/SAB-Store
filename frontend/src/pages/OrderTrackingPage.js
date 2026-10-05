@@ -1,10 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { orderService, formatCurrency, formatDate, getStatusText, getStatusColor } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import MarkdownContent from '../components/MarkdownContent';
 import usePublicSettings from '../hooks/usePublicSettings';
+import useFieldErrors from '../hooks/use-field-errors';
+import FormField from '../components/form/FormField';
+
+// Order codes are 5 characters (generateOrderCode on the server); anything shorter cannot exist.
+const TRACKING_RULES = {
+	orderCode: (value) => {
+		const v = value.trim();
+		if (!v) return 'Vui lòng nhập mã đơn hàng';
+		return v.length < 5 ? 'Mã đơn hàng không hợp lệ' : null;
+	}
+};
 
 const OrderTrackingPage = () => {
 	const settings = usePublicSettings();
@@ -12,7 +23,10 @@ const OrderTrackingPage = () => {
 	const [orderCode, setOrderCode] = useState('');
 	const [order, setOrder] = useState(null);
 	const [loading, setLoading] = useState(false);
-	const [error, setError] = useState('');
+	// Server-side lookup failure (e.g. order not found), shown under the same input.
+	const [lookupError, setLookupError] = useState('');
+	const { errors, validateField, onFieldChange, validateAll, focusFirstError, reset: resetFieldErrors } = useFieldErrors(TRACKING_RULES);
+	const formRef = useRef(null);
 	const [paymentQR, setPaymentQR] = useState(null);
 
 	// Handle URL query parameters on component mount
@@ -31,18 +45,8 @@ const OrderTrackingPage = () => {
 
 	// Extracted search logic for reuse
 	const performSearch = async (codeToSearch) => {
-		if (!codeToSearch.trim()) {
-			setError('Vui lòng nhập mã đơn hàng');
-			return;
-		}
-
-		if (codeToSearch.trim().length < 5) {
-			setError('Mã đơn hàng không hợp lệ');
-			return;
-		}
-
 		setLoading(true);
-		setError('');
+		setLookupError('');
 		setOrder(null);
 
 		try {
@@ -53,7 +57,7 @@ const OrderTrackingPage = () => {
 				setPaymentQR(response.data.qrUrl);
 			}
 		} catch (err) {
-			setError(err.message);
+			setLookupError(err.message);
 			toast.error(err.message);
 		} finally {
 			setLoading(false);
@@ -62,6 +66,11 @@ const OrderTrackingPage = () => {
 
 	const handleSearch = async (e) => {
 		e.preventDefault();
+
+		if (!validateAll({ orderCode })) {
+			focusFirstError(formRef);
+			return;
+		}
 
 		// Update URL with current search code
 		const cleanCode = orderCode.trim().toUpperCase();
@@ -75,8 +84,9 @@ const OrderTrackingPage = () => {
 	const handleReset = () => {
 		setOrderCode('');
 		setOrder(null);
-		setError('');
+		setLookupError('');
 		setPaymentQR(null);
+		resetFieldErrors();
 
 		// Clear URL query parameters
 		setSearchParams({});
@@ -123,47 +133,46 @@ const OrderTrackingPage = () => {
 
 				{/* Search Form */}
 				<div className="card mb-8">
-					<form onSubmit={handleSearch} className="p-6">
-						<div className="space-y-4">
-							<div>
-								<label htmlFor="orderCode" className="block text-sm font-medium text-gray-700 mb-2">
-									Mã đơn hàng <span className="text-danger-500">*</span>
-								</label>
-								<div className="flex space-x-3">
+					<form ref={formRef} onSubmit={handleSearch} noValidate className="p-6">
+						<div className="flex items-start space-x-3">
+							<div className="flex-1">
+								<FormField
+									id="orderCode"
+									label="Mã đơn hàng" required
+									error={errors.orderCode || lookupError}
+								>
 									<input
 										type="text"
-										id="orderCode"
+										name="orderCode"
 										value={orderCode}
 										onChange={(e) => {
-											setOrderCode(e.target.value.toUpperCase());
-											setError('');
+											const value = e.target.value.toUpperCase();
+											setOrderCode(value);
+											setLookupError('');
+											onFieldChange('orderCode', value);
 										}}
+										onBlur={(e) => validateField('orderCode', e.target.value)}
 										placeholder="Nhập mã đơn hàng"
-										className={`form-input flex-1 ${error ? 'form-input-error' : ''}`}
+										className="form-input"
 										style={{ textTransform: 'uppercase' }}
 									/>
-									<button
-										type="submit"
-										disabled={loading}
-										className="btn-primary px-6"
-									>
-										{loading ? (
-											<LoadingSpinner size="small" />
-										) : (
-											<>
-												<i className="fas fa-search mr-2"></i>
-												Tìm kiếm
-											</>
-										)}
-									</button>
-								</div>
-								{error && (
-									<p className="text-danger-500 text-sm mt-2">
-										<i className="fas fa-exclamation-circle mr-1"></i>
-										{error}
-									</p>
-								)}
+								</FormField>
 							</div>
+							{/* mt-7 = label height + gap, so the button lines up with the input */}
+							<button
+								type="submit"
+								disabled={loading}
+								className="btn-primary px-6 mt-7"
+							>
+								{loading ? (
+									<LoadingSpinner size="small" />
+								) : (
+									<>
+										<i className="fas fa-search mr-2"></i>
+										Tìm kiếm
+									</>
+								)}
+							</button>
 						</div>
 					</form>
 				</div>

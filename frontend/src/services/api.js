@@ -52,6 +52,8 @@ const toApiError = (error, fallback) => {
 	apiError.status = error.response?.status;
 	apiError.code = error.response?.data?.code;
 	apiError.details = error.response?.data?.details;
+	// Validation 400s: [{ field, message }] so forms can show each reason under its input.
+	apiError.fieldErrors = error.response?.data?.errors;
 	return apiError;
 };
 
@@ -165,7 +167,7 @@ export const adminService = {
 			});
 			return response.data;
 		} catch (error) {
-			throw new Error(error.response?.data?.message || 'Lỗi khi đổi mật khẩu');
+			throw toApiError(error, 'Lỗi khi đổi mật khẩu');
 		}
 	},
 
@@ -424,7 +426,7 @@ export const sellerService = {
 			});
 			return response.data;
 		} catch (error) {
-			throw new Error(error.response?.data?.message || 'Lỗi khi đổi mật khẩu');
+			throw toApiError(error, 'Lỗi khi đổi mật khẩu');
 		}
 	},
 

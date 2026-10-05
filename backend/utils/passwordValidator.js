@@ -2,7 +2,7 @@
  * Password validation utility with comprehensive security checks
  * 
  * Requirements:
- * - At least 6 characters
+ * - At least 8 characters
  * - Contains lowercase letters
  * - Contains uppercase letters  
  * - Prevents common passwords
@@ -63,9 +63,11 @@ function validatePassword(password) {
 	// Remove leading/trailing whitespace for validation
 	const trimmedPassword = password.trim();
 
-	// Length validation (minimum 6 characters)
-	if (trimmedPassword.length < 6) {
-		errors.push('Mật khẩu phải có ít nhất 6 ký tự');
+	// Length validation (minimum 8 characters)
+	// Better Auth refuses anything shorter (minPasswordLength in lib/auth.js); a
+	// lower bound here would pass validation and then fail inside the auth call.
+	if (trimmedPassword.length < 8) {
+		errors.push('Mật khẩu phải có ít nhất 8 ký tự');
 	}
 
 	// Maximum length check (prevent DoS attacks)
@@ -186,7 +188,7 @@ function getPasswordStrengthIndicators(password) {
 	const validation = validatePassword(password);
 
 	const indicators = {
-		length: password?.length >= 6,
+		length: password?.length >= 8,
 		lowercase: /[a-z]/.test(password || ''),
 		uppercase: /[A-Z]/.test(password || ''),
 		notCommon: !COMMON_PASSWORDS.includes((password || '').toLowerCase()),
@@ -213,8 +215,8 @@ function createPasswordValidationRules(field = 'password') {
 		body(field)
 			.notEmpty()
 			.withMessage('Mật khẩu là bắt buộc')
-			.isLength({ min: 6, max: 128 })
-			.withMessage('Mật khẩu phải có từ 6-128 ký tự')
+			.isLength({ min: 8, max: 128 })
+			.withMessage('Mật khẩu phải có từ 8-128 ký tự')
 			.matches(/[a-z]/)
 			.withMessage('Mật khẩu phải chứa ít nhất 1 chữ cái thường')
 			.matches(/[A-Z]/)

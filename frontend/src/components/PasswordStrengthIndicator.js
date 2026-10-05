@@ -1,5 +1,5 @@
 import React from 'react';
-import { validatePassword, getStrengthColor, getStrengthText, PASSWORD_STRENGTH } from '../utils/passwordValidator';
+import { validatePassword, getStrengthColor, getStrengthText, PASSWORD_STRENGTH, MIN_PASSWORD_LENGTH } from '../utils/passwordValidator';
 
 const PasswordStrengthIndicator = ({ password, showRequirements = true }) => {
 	const validation = validatePassword(password);
@@ -34,7 +34,7 @@ const PasswordStrengthIndicator = ({ password, showRequirements = true }) => {
 				<div className="space-y-1">
 					<RequirementItem
 						met={validation.requirements.length}
-						text="Ít nhất 6 ký tự"
+						text={`Ít nhất ${MIN_PASSWORD_LENGTH} ký tự`}
 					/>
 					<RequirementItem
 						met={validation.requirements.lowercase}

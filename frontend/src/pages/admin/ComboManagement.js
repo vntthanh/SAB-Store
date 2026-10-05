@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 import Swal from 'sweetalert2';
 import { adminService } from '../../services/api';
@@ -7,14 +7,49 @@ import Modal from '../../components/Modal';
 import ShareButton from '../../components/ShareButton';
 import { SALES_CHANNELS, SALES_CHANNEL_LABELS, normalizeSalesChannel } from '../../utils/sales-channel';
 import { comboPath } from '../../utils/share-links';
+import useFieldErrors from '../../hooks/use-field-errors';
+import FormField from '../../components/form/FormField';
 
-const ComboManagement = () => {
-	const [combos, setCombos] = useState([]);
-	const [categories, setCategories] = useState([]);
-	const [loading, setLoading] = useState(true);
-	const [showModal, setShowModal] = useState(false);
-	const [editingCombo, setEditingCombo] = useState(null);
-	const [formData, setFormData] = useState({
+// Client rules mirror POST /api/combos and the Combo schema (the server stays authoritative).
+const COMBO_RULES = {
+	name: (value) => {
+		const v = value.trim();
+		if (!v) return 'Tên combo là bắt buộc';
+		return v.length > 100 ? 'Tên combo không được vượt quá 100 ký tự' : null;
+	},
+	price: (value) => {
+		if (String(value).trim() === '') return 'Giá combo là bắt buộc';
+		const n = Number(value);
+		// The server treats 0 as missing ("!price"), so 0 is rejected here too.
+		if (!Number.isFinite(n) || n <= 0) return 'Giá combo phải lớn hơn 0';
+		return Number.isInteger(n) ? null : 'Giá phải là số nguyên (VND)';
+	},
+	description: (value) => (value.length > 500 ? 'Mô tả không được vượt quá 500 ký tự' : null),
+	categoryRequirements: (rows) => {
+		if (rows.length === 0) return 'Combo phải có ít nhất một yêu cầu danh mục';
+		return rows.some((row) => !row.category || !(row.quantity >= 1))
+			? 'Mỗi yêu cầu cần chọn danh mục và số lượng từ 1 trở lên'
+			: null;
+	}
+};
+
+const INPUT_CLASS = 'w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500';
+const ROW_ERROR_CLASS = ' border-danger-500 ring-1 ring-danger-500 focus:border-danger-500 focus:ring-danger-500';
+
+// Lives inside the Modal so every open starts with fresh values and no stale errors.
+const ComboForm = ({ combo, categories, submitting, onSubmit, onCancel }) => {
+	const [formData, setFormData] = useState(() => combo ? {
+		name: combo.name,
+		description: combo.description || '',
+		price: combo.price.toString(),
+		priority: combo.priority || 0,
+		categoryRequirements: combo.categoryRequirements.map(req => ({
+			category: req.category,
+			quantity: req.quantity
+		})),
+		isActive: combo.isActive,
+		salesChannel: normalizeSalesChannel(combo.salesChannel)
+	} : {
 		name: '',
 		description: '',
 		price: '',
@@ -23,6 +58,234 @@ const ComboManagement = () => {
 		isActive: true,
 		salesChannel: 'all'
 	});
+	const { errors, validateField, onFieldChange, validateAll, focusFirstError } = useFieldErrors(COMBO_RULES);
+	const formRef = useRef(null);
+
+	const setField = (name, value) => {
+		setFormData(prev => ({ ...prev, [name]: value }));
+		onFieldChange(name, value, { ...formData, [name]: value });
+	};
+
+	const handleBlur = (e) => {
+		validateField(e.target.name, e.target.value, formData);
+	};
+
+	const setRequirements = (rows) => {
+		setFormData(prev => ({ ...prev, categoryRequirements: rows }));
+		onFieldChange('categoryRequirements', rows, { ...formData, categoryRequirements: rows });
+	};
+
+	const addCategoryRequirement = () => {
+		setRequirements([...formData.categoryRequirements, { category: '', quantity: 1 }]);
+	};
+
+	const removeCategoryRequirement = (index) => {
+		setRequirements(formData.categoryRequirements.filter((_, i) => i !== index));
+	};
+
+	const updateCategoryRequirement = (index, field, value) => {
+		setRequirements(formData.categoryRequirements.map((req, i) =>
+			i === index ? { ...req, [field]: value } : req
+		));
+	};
+
+	// The rows share one message, so the offending inputs carry the red state and aria-invalid themselves.
+	const rowInvalid = (requirement, field) => Boolean(errors.categoryRequirements) &&
+		(field === 'category' ? !requirement.category : !(requirement.quantity >= 1));
+
+	const handleSubmit = (e) => {
+		e.preventDefault();
+		if (submitting) return;
+		if (!validateAll(formData)) {
+			focusFirstError(formRef);
+			return;
+		}
+		onSubmit({
+			...formData,
+			price: parseFloat(formData.price),
+			priority: parseInt(formData.priority) || 0,
+			categoryRequirements: formData.categoryRequirements.map(req => ({
+				category: req.category,
+				quantity: parseInt(req.quantity)
+			}))
+		});
+	};
+
+	return (
+		<form ref={formRef} onSubmit={handleSubmit} noValidate className="space-y-4">
+			{/* Basic Information */}
+			<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+				<FormField id="combo-name" label="Tên combo" required error={errors.name}>
+					<input
+						type="text"
+						name="name"
+						value={formData.name}
+						onChange={(e) => setField('name', e.target.value)}
+						onBlur={handleBlur}
+						className={INPUT_CLASS}
+						placeholder="Nhập tên combo"
+						maxLength="100"
+					/>
+				</FormField>
+
+				<FormField id="combo-price" label="Giá combo" required error={errors.price}>
+					<input
+						type="number"
+						name="price"
+						value={formData.price}
+						onChange={(e) => setField('price', e.target.value)}
+						onBlur={handleBlur}
+						className={INPUT_CLASS}
+						placeholder="0"
+						min="0"
+						step="1000"
+					/>
+				</FormField>
+			</div>
+
+			<FormField id="combo-description" label="Mô tả" error={errors.description}>
+				<textarea
+					name="description"
+					value={formData.description}
+					onChange={(e) => setField('description', e.target.value)}
+					onBlur={handleBlur}
+					className={INPUT_CLASS}
+					rows="3"
+					placeholder="Mô tả combo (tùy chọn)"
+				/>
+			</FormField>
+
+			<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+				<FormField id="combo-priority" label="Độ ưu tiên" hint="Số cao hơn được ưu tiên áp dụng trước">
+					<input
+						type="number"
+						value={formData.priority}
+						onChange={(e) => setFormData(prev => ({ ...prev, priority: parseInt(e.target.value) || 0 }))}
+						className={INPUT_CLASS}
+						placeholder="0"
+						min="0"
+					/>
+				</FormField>
+
+				<div>
+					<label className="flex items-center mt-8">
+						<input
+							type="checkbox"
+							checked={formData.isActive}
+							onChange={(e) => setFormData(prev => ({ ...prev, isActive: e.target.checked }))}
+							className="mr-2"
+						/>
+						<span className="text-sm font-medium text-gray-700">
+							Combo hoạt động
+						</span>
+					</label>
+				</div>
+			</div>
+
+			<FormField id="combo-salesChannel" label="Kênh áp dụng">
+				<select
+					value={formData.salesChannel}
+					onChange={(e) => setFormData(prev => ({ ...prev, salesChannel: e.target.value }))}
+					className={INPUT_CLASS}
+				>
+					{SALES_CHANNELS.map(channel => (
+						<option key={channel} value={channel}>
+							{SALES_CHANNEL_LABELS[channel]}
+						</option>
+					))}
+				</select>
+			</FormField>
+
+			{/* Category Requirements */}
+			<div role="group" aria-labelledby="combo-requirements-label">
+				<div className="flex justify-between items-center mb-3">
+					<span id="combo-requirements-label" className="block text-sm font-medium text-gray-700">
+						Yêu cầu danh mục
+						<span className="text-danger-500 ms-1" aria-hidden="true">*</span>
+					</span>
+					<button
+						type="button"
+						onClick={addCategoryRequirement}
+						className="text-blue-600 hover:text-blue-800 text-sm"
+					>
+						<i className="fas fa-plus mr-1"></i>
+						Thêm danh mục
+					</button>
+				</div>
+
+				{formData.categoryRequirements.map((requirement, index) => (
+					<div key={index} className="flex gap-3 items-center mb-3">
+						<select
+							id={`combo-requirement-category-${index}`}
+							aria-label={`Danh mục yêu cầu ${index + 1}`}
+							aria-required="true"
+							aria-invalid={rowInvalid(requirement, 'category') ? 'true' : undefined}
+							aria-describedby={errors.categoryRequirements ? 'combo-requirements-error' : undefined}
+							value={requirement.category}
+							onChange={(e) => updateCategoryRequirement(index, 'category', e.target.value)}
+							className={`flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500${rowInvalid(requirement, 'category') ? ROW_ERROR_CLASS : ''}`}
+						>
+							<option value="">Chọn danh mục</option>
+							{categories.map(category => (
+								<option key={category} value={category}>
+									{category}
+								</option>
+							))}
+						</select>
+
+						<input
+							id={`combo-requirement-quantity-${index}`}
+							type="number"
+							aria-label={`Số lượng yêu cầu ${index + 1}`}
+							aria-required="true"
+							aria-invalid={rowInvalid(requirement, 'quantity') ? 'true' : undefined}
+							aria-describedby={errors.categoryRequirements ? 'combo-requirements-error' : undefined}
+							value={requirement.quantity}
+							onChange={(e) => updateCategoryRequirement(index, 'quantity', parseInt(e.target.value) || 1)}
+							className={`w-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center${rowInvalid(requirement, 'quantity') ? ROW_ERROR_CLASS : ''}`}
+							min="1"
+						/>
+
+						{formData.categoryRequirements.length > 1 && (
+							<button
+								type="button"
+								onClick={() => removeCategoryRequirement(index)}
+								className="text-red-600 hover:text-red-800 p-2"
+								aria-label={`Xóa yêu cầu ${index + 1}`}
+							>
+								<i className="fas fa-trash"></i>
+							</button>
+						)}
+					</div>
+				))}
+
+				{errors.categoryRequirements && (
+					<p id="combo-requirements-error" role="alert" className="mt-1 text-sm text-danger-500">
+						<i className="fas fa-exclamation-circle mr-1" aria-hidden="true"></i>
+						{errors.categoryRequirements}
+					</p>
+				)}
+			</div>
+
+			{/* Actions */}
+			<div className="flex justify-end space-x-3 pt-4">
+				<button type="button" onClick={onCancel} className="btn-secondary">
+					Hủy
+				</button>
+				<button type="submit" className="btn-primary" disabled={submitting}>
+					{submitting ? 'Đang lưu...' : combo ? 'Cập nhật' : 'Tạo combo'}
+				</button>
+			</div>
+		</form>
+	);
+};
+
+const ComboManagement = () => {
+	const [combos, setCombos] = useState([]);
+	const [categories, setCategories] = useState([]);
+	const [loading, setLoading] = useState(true);
+	const [showModal, setShowModal] = useState(false);
+	const [editingCombo, setEditingCombo] = useState(null);
 	const [submitting, setSubmitting] = useState(false);
 
 	// Fetch combos and categories
@@ -68,42 +331,10 @@ const ComboManagement = () => {
 		}).format(amount);
 	};
 
-	const handleSubmit = async (e) => {
-		e.preventDefault();
-
-		console.log('[COMBO] Form submitted with data:', formData);
-
-		// Validate form
-		if (!formData.name || !formData.price || formData.categoryRequirements.length === 0) {
-			toast.error('Vui lòng điền đầy đủ thông tin');
-			return;
-		}
-
-		// Validate category requirements
-		const hasEmptyRequirement = formData.categoryRequirements.some(req =>
-			!req.category || req.quantity < 1
-		);
-
-		if (hasEmptyRequirement) {
-			toast.error('Vui lòng điền đầy đủ yêu cầu danh mục');
-			return;
-		}
-
+	const handleSubmit = async (comboData) => {
 		if (submitting) return;
 		setSubmitting(true);
 		try {
-			const comboData = {
-				...formData,
-				price: parseFloat(formData.price),
-				priority: parseInt(formData.priority) || 0,
-				categoryRequirements: formData.categoryRequirements.map(req => ({
-					category: req.category,
-					quantity: parseInt(req.quantity)
-				}))
-			};
-
-			console.log('[COMBO] Sending combo data:', comboData);
-
 			let response;
 			if (editingCombo) {
 				response = await adminService.updateCombo(editingCombo._id, comboData);
@@ -116,7 +347,7 @@ const ComboManagement = () => {
 			if (response.success) {
 				toast.success(editingCombo ? 'Cập nhật combo thành công' : 'Tạo combo thành công');
 				setShowModal(false);
-				resetForm();
+				setEditingCombo(null);
 				fetchCombos();
 			}
 		} catch (error) {
@@ -129,18 +360,6 @@ const ComboManagement = () => {
 
 	const handleEdit = (combo) => {
 		setEditingCombo(combo);
-		setFormData({
-			name: combo.name,
-			description: combo.description || '',
-			price: combo.price.toString(),
-			priority: combo.priority || 0,
-			categoryRequirements: combo.categoryRequirements.map(req => ({
-				category: req.category,
-				quantity: req.quantity
-			})),
-			isActive: combo.isActive,
-			salesChannel: normalizeSalesChannel(combo.salesChannel)
-		});
 		setShowModal(true);
 	};
 
@@ -185,38 +404,6 @@ const ComboManagement = () => {
 
 	const resetForm = () => {
 		setEditingCombo(null);
-		setFormData({
-			name: '',
-			description: '',
-			price: '',
-			priority: 0,
-			categoryRequirements: [{ category: '', quantity: 1 }],
-			isActive: true,
-			salesChannel: 'all'
-		});
-	};
-
-	const addCategoryRequirement = () => {
-		setFormData(prev => ({
-			...prev,
-			categoryRequirements: [...prev.categoryRequirements, { category: '', quantity: 1 }]
-		}));
-	};
-
-	const removeCategoryRequirement = (index) => {
-		setFormData(prev => ({
-			...prev,
-			categoryRequirements: prev.categoryRequirements.filter((_, i) => i !== index)
-		}));
-	};
-
-	const updateCategoryRequirement = (index, field, value) => {
-		setFormData(prev => ({
-			...prev,
-			categoryRequirements: prev.categoryRequirements.map((req, i) =>
-				i === index ? { ...req, [field]: value } : req
-			)
-		}));
 	};
 
 	if (loading) {
@@ -405,171 +592,13 @@ const ComboManagement = () => {
 					onClose={() => setShowModal(false)} 
 					title={editingCombo ? 'Chỉnh sửa combo' : 'Tạo combo mới'}
 				>
-					<form onSubmit={handleSubmit} className="space-y-4">
-							{/* Basic Information */}
-							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-								<div>
-									<label className="block text-sm font-medium text-gray-700 mb-2">
-										Tên combo *
-									</label>
-									<input
-										type="text"
-										value={formData.name}
-										onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-										className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-										placeholder="Nhập tên combo"
-										required
-									/>
-								</div>
-
-								<div>
-									<label className="block text-sm font-medium text-gray-700 mb-2">
-										Giá combo *
-									</label>
-									<input
-										type="number"
-										value={formData.price}
-										onChange={(e) => setFormData(prev => ({ ...prev, price: e.target.value }))}
-										className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-										placeholder="0"
-										min="0"
-										step="1000"
-										required
-									/>
-								</div>
-							</div>
-
-							<div>
-								<label className="block text-sm font-medium text-gray-700 mb-2">
-									Mô tả
-								</label>
-								<textarea
-									value={formData.description}
-									onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-									className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-									rows="3"
-									placeholder="Mô tả combo (tùy chọn)"
-								/>
-							</div>
-
-							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-								<div>
-									<label className="block text-sm font-medium text-gray-700 mb-2">
-										Độ ưu tiên
-									</label>
-									<input
-										type="number"
-										value={formData.priority}
-										onChange={(e) => setFormData(prev => ({ ...prev, priority: parseInt(e.target.value) || 0 }))}
-										className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-										placeholder="0"
-										min="0"
-									/>
-									<p className="text-xs text-gray-500 mt-1">
-										Số cao hơn được ưu tiên áp dụng trước
-									</p>
-								</div>
-
-								<div>
-									<label className="flex items-center mt-8">
-										<input
-											type="checkbox"
-											checked={formData.isActive}
-											onChange={(e) => setFormData(prev => ({ ...prev, isActive: e.target.checked }))}
-											className="mr-2"
-										/>
-										<span className="text-sm font-medium text-gray-700">
-											Combo hoạt động
-										</span>
-									</label>
-								</div>
-							</div>
-
-							<div>
-								<label className="block text-sm font-medium text-gray-700 mb-2">
-									Kênh áp dụng
-								</label>
-								<select
-									value={formData.salesChannel}
-									onChange={(e) => setFormData(prev => ({ ...prev, salesChannel: e.target.value }))}
-									className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-								>
-									{SALES_CHANNELS.map(channel => (
-										<option key={channel} value={channel}>
-											{SALES_CHANNEL_LABELS[channel]}
-										</option>
-									))}
-								</select>
-							</div>
-
-							{/* Category Requirements */}
-							<div>
-								<div className="flex justify-between items-center mb-3">
-									<label className="block text-sm font-medium text-gray-700">
-										Yêu cầu danh mục *
-									</label>
-									<button
-										type="button"
-										onClick={addCategoryRequirement}
-										className="text-blue-600 hover:text-blue-800 text-sm"
-									>
-										<i className="fas fa-plus mr-1"></i>
-										Thêm danh mục
-									</button>
-								</div>
-
-								{formData.categoryRequirements.map((requirement, index) => (
-									<div key={index} className="flex gap-3 items-center mb-3">
-										<select
-											value={requirement.category}
-											onChange={(e) => updateCategoryRequirement(index, 'category', e.target.value)}
-											className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-											required
-										>
-											<option value="">Chọn danh mục</option>
-											{categories.map(category => (
-												<option key={category} value={category}>
-													{category}
-												</option>
-											))}
-										</select>
-
-										<input
-											type="number"
-											value={requirement.quantity}
-											onChange={(e) => updateCategoryRequirement(index, 'quantity', parseInt(e.target.value) || 1)}
-											className="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center"
-											min="1"
-											required
-										/>
-
-										{formData.categoryRequirements.length > 1 && (
-											<button
-												type="button"
-												onClick={() => removeCategoryRequirement(index)}
-												className="text-red-600 hover:text-red-800 p-2"
-											>
-												<i className="fas fa-trash"></i>
-											</button>
-										)}
-									</div>
-								))}
-							</div>
-
-							{/* Actions */}
-							<div className="flex justify-end space-x-3 pt-4">
-								<button
-									type="button"
-									onClick={() => setShowModal(false)}
-									className="btn-secondary"
-								>
-									Hủy
-								</button>
-								<button type="submit" className="btn-primary" disabled={submitting}>
-									{submitting ? 'Đang lưu...' : editingCombo ? 'Cập nhật' : 'Tạo combo'}
-								</button>
-							</div>
-						</form>
+					<ComboForm
+						combo={editingCombo}
+						categories={categories}
+						submitting={submitting}
+						onSubmit={handleSubmit}
+						onCancel={() => setShowModal(false)}
+					/>
 					</Modal>
 			</div>
 		</div>

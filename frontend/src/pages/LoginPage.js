@@ -1,13 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { authClient } from '../lib/auth-client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Logo from '../components/Logo';
+import useFieldErrors from '../hooks/use-field-errors';
+import FormField from '../components/form/FormField';
 
 const ROLE_REDIRECTS = {
 	admin: '/admin/dashboard',
 	seller: '/seller/dashboard'
+};
+
+// Only shape checks: whether the credentials are right is the auth server's call, and it is
+// reported as a toast because it does not belong to a single field.
+const LOGIN_RULES = {
+	username: (value) => {
+		const v = value.trim();
+		if (!v) return 'Tên đăng nhập là bắt buộc';
+		return v.length < 3 ? 'Tên đăng nhập phải có ít nhất 3 ký tự' : null;
+	},
+	password: (value) => (value ? null : 'Mật khẩu là bắt buộc')
 };
 
 const LoginPage = () => {
@@ -18,7 +31,8 @@ const LoginPage = () => {
 		username: '',
 		password: ''
 	});
-	const [errors, setErrors] = useState({});
+	const { errors, validateField, onFieldChange, validateAll, focusFirstError } = useFieldErrors(LOGIN_RULES);
+	const formRef = useRef(null);
 	const [isLoading, setIsLoading] = useState(false);
 
 	// Check if already logged in and redirect appropriately
@@ -64,37 +78,12 @@ const LoginPage = () => {
 
 	const handleInputChange = (e) => {
 		const { name, value } = e.target;
-		setFormData(prev => ({
-			...prev,
-			[name]: value
-		}));
-
-		// Clear error when user starts typing
-		if (errors[name]) {
-			setErrors(prev => ({
-				...prev,
-				[name]: ''
-			}));
-		}
+		setFormData(prev => ({ ...prev, [name]: value }));
+		onFieldChange(name, value);
 	};
 
-	const validateForm = () => {
-		const newErrors = {};
-
-		if (!formData.username.trim()) {
-			newErrors.username = 'Tên đăng nhập là bắt buộc';
-		} else if (formData.username.length < 3) {
-			newErrors.username = 'Tên đăng nhập phải có ít nhất 3 ký tự';
-		}
-
-		if (!formData.password) {
-			newErrors.password = 'Mật khẩu là bắt buộc';
-		} else if (formData.password.length < 6) {
-			newErrors.password = 'Mật khẩu phải có ít nhất 6 ký tự';
-		}
-
-		setErrors(newErrors);
-		return Object.keys(newErrors).length === 0;
+	const handleBlur = (e) => {
+		validateField(e.target.name, e.target.value);
 	};
 
 	const getErrorMessage = (error) => {
@@ -137,8 +126,8 @@ const LoginPage = () => {
 	const handleSubmit = async (e) => {
 		e.preventDefault();
 
-		if (!validateForm()) {
-			toast.error('Vui lòng kiểm tra lại thông tin đăng nhập');
+		if (!validateAll(formData)) {
+			focusFirstError(formRef);
 			return;
 		}
 
@@ -234,63 +223,52 @@ const LoginPage = () => {
 			<div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
 				<div className="card">
 					<div className="px-6 py-8">
-						<form onSubmit={handleSubmit} className="space-y-6">
-							{/* Username */}
-							<div>
-								<label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
-									Tên đăng nhập <span className="text-danger-500">*</span>
-								</label>
-								<div className="relative">
-									<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-										<i className="fas fa-user text-gray-400"></i>
-									</div>
+						<form ref={formRef} onSubmit={handleSubmit} noValidate className="space-y-6">
+							{/* The icons sit over the input, so they are positioned against the label height (28px) and input height (42px) */}
+							<div className="relative">
+								<div className="absolute left-0 top-7 h-[2.625rem] pl-3 flex items-center pointer-events-none z-10">
+									<i className="fas fa-user text-gray-400"></i>
+								</div>
+								<FormField
+									id="username"
+									label="Tên đăng nhập" required
+									error={errors.username}
+								>
 									<input
 										type="text"
-										id="username"
 										name="username"
 										value={formData.username}
 										onChange={handleInputChange}
+										onBlur={handleBlur}
 										placeholder="Nhập tên đăng nhập"
-										className={`form-input pl-10 ${errors.username ? 'form-input-error' : ''}`}
+										className="form-input pl-10"
 										autoComplete="username"
 										disabled={isLoading}
 									/>
-								</div>
-								{errors.username && (
-									<p className="text-danger-500 text-sm mt-1">
-										<i className="fas fa-exclamation-circle mr-1"></i>
-										{errors.username}
-									</p>
-								)}
+								</FormField>
 							</div>
 
-							{/* Password */}
-							<div>
-								<label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
-									Mật khẩu <span className="text-danger-500">*</span>
-								</label>
-								<div className="relative">
-									<div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-										<i className="fas fa-lock text-gray-400"></i>
-									</div>
+							<div className="relative">
+								<div className="absolute left-0 top-7 h-[2.625rem] pl-3 flex items-center pointer-events-none z-10">
+									<i className="fas fa-lock text-gray-400"></i>
+								</div>
+								<FormField
+									id="password"
+									label="Mật khẩu" required
+									error={errors.password}
+								>
 									<input
 										type="password"
-										id="password"
 										name="password"
 										value={formData.password}
 										onChange={handleInputChange}
+										onBlur={handleBlur}
 										placeholder="Nhập mật khẩu"
-										className={`form-input pl-10 ${errors.password ? 'form-input-error' : ''}`}
+										className="form-input pl-10"
 										autoComplete="current-password"
 										disabled={isLoading}
 									/>
-								</div>
-								{errors.password && (
-									<p className="text-danger-500 text-sm mt-1">
-										<i className="fas fa-exclamation-circle mr-1"></i>
-										{errors.password}
-									</p>
-								)}
+								</FormField>
 							</div>
 
 							{/* Submit Button */}
