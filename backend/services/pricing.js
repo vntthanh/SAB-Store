@@ -412,8 +412,6 @@ function assertExpectedTotal(expectedTotal, totalAmount) {
 module.exports = {
 	computeOrderPricing,
 	assertExpectedTotal,
-	loadSellableProducts,
-	describePricingError,
 	pricingErrorBody,
 	PricingError,
 	MAX_UNITS_PER_ORDER,

@@ -372,7 +372,6 @@ async function countPendingByProduct(productIds) {
 }
 
 module.exports = {
-	StockLedgerError,
 	recordMovement,
 	recordAppliedOpening,
 	enqueueMovements,

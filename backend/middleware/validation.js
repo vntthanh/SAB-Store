@@ -70,8 +70,6 @@ const validateComboItems = validateBody(makeComboItems({ maxUnits: MAX_UNITS_PER
 const validatePasswordChange = validateBody(passwordChange);
 
 module.exports = {
-	validateRequest,
-	validateBody,
 	trimText,
 	trimStatusText,
 	validateOrder,

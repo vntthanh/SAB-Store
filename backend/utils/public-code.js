@@ -125,8 +125,6 @@ function publicCodePlugin(schema) {
 }
 
 module.exports = {
-	PUBLIC_CODE_ALPHABET,
-	PUBLIC_CODE_LENGTH,
 	PUBLIC_CODE_PATTERN,
 	generatePublicCode,
 	normalizePublicCode,

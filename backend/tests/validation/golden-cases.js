@@ -513,4 +513,4 @@ statusCases(ADMIN_STATUS);
 	add(NOTES_EDIT, 'additionalNote empty string clears the note', { additionalNote: '' }, { params });
 }
 
-module.exports = { cases, OID, MISSING };
+module.exports = { cases, MISSING };

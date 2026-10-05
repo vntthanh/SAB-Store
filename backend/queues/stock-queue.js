@@ -241,9 +241,7 @@ async function closeStockQueue() {
 }
 
 module.exports = {
-	QUEUE_NAME,
 	isConfigured,
-	getQueue,
 	enqueueMovementJobs,
 	sweepOnce,
 	pendingBacklog,

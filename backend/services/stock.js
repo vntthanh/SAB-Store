@@ -138,4 +138,4 @@ async function transitionOrderWithStock({ orderId, status, setFields, historyEnt
 	return result;
 }
 
-module.exports = { unitsByProduct, recordOrderMovements, stockEffectOfTransition, transitionOrderWithStock };
+module.exports = { unitsByProduct, recordOrderMovements, transitionOrderWithStock };

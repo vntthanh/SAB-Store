@@ -43,27 +43,6 @@ function formatDate(date) {
 }
 
 /**
- * Validate email format
- * @param {string} email 
- * @returns {boolean}
- */
-function isValidEmail(email) {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-}
-
-/**
- * Calculate total amount from order items
- * @param {Array} items 
- * @returns {number}
- */
-function calculateTotal(items) {
-  return items.reduce((total, item) => {
-    return total + (item.price * item.quantity);
-  }, 0);
-}
-
-/**
  * Generate pagination info
  * @param {number} page 
  * @param {number} limit 
@@ -89,7 +68,5 @@ module.exports = {
   generateOrderCode,
   formatCurrency,
   formatDate,
-  isValidEmail,
-  calculateTotal,
   getPaginationInfo
 };

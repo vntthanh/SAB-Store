@@ -114,9 +114,6 @@ module.exports = {
 	findPublicProductByCode,
 	findPublicComboByCode,
 	toPublicProduct,
-	toPublicCombo,
-	productPath,
-	comboPath,
 	comboImageUrls,
 	ogVersion
 };
