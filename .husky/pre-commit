@@ -5,6 +5,9 @@
 #   shared contract (models, pricing, stock, auth, middleware, query guard, test
 #   harness, dependencies) changed;
 # - frontend: the production bundle must build (no frontend tests are checked in);
+# - workspace plumbing (packages/*, root manifest, lockfile, workspace file): every
+#   consumer is affected, so the full backend suite, the frontend build and the
+#   shared package's own tests all run;
 # - anything else (Markdown, hooks, compose files): nothing to run.
 # Tests and the build run under the machine-wide heavy lock (lib/heavy-lock.sh),
 # which is only taken when there is work to do.
@@ -29,12 +32,15 @@ fi
 backend_full=false
 backend_files=()
 frontend_changed=false
+shared_changed=false
 for entry in "${STAGED[@]}"; do
 	status="${entry%%$'\t'*}"
 	f="${entry#*$'\t'}"
 	case "$f" in
 		*.md) ;;
-		backend/package.json | backend/pnpm-lock.yaml | backend/jest.config.js | \
+		package.json | pnpm-lock.yaml | pnpm-workspace.yaml | .npmrc | packages/*)
+			backend_full=true; frontend_changed=true; shared_changed=true ;;
+		backend/package.json | backend/jest.config.js | \
 			backend/tests/helpers/* | backend/tests/global-setup.js | backend/tests/global-teardown.js | \
 			backend/tests/setup.js | backend/tests/env.js | \
 			backend/models/* | backend/services/pricing.js | backend/services/ComboService.js | \
@@ -52,7 +58,7 @@ for entry in "${STAGED[@]}"; do
 	esac
 done
 
-if [[ "$backend_full" == false && ${#backend_files[@]} -eq 0 && "$frontend_changed" == false ]]; then
+if [[ "$backend_full" == false && ${#backend_files[@]} -eq 0 && "$frontend_changed" == false && "$shared_changed" == false ]]; then
 	echo "pre-commit: no backend or frontend code staged, nothing to run"
 	exit 0
 fi
@@ -72,4 +78,10 @@ fi
 if [[ "$frontend_changed" == true ]]; then
 	echo "pre-commit: frontend changed, building the production bundle"
 	(cd "$ROOT/frontend" && pnpm --silent build >/dev/null)
+fi
+
+# No-op until the package exists, so the hook keeps working on a tree without it.
+if [[ "$shared_changed" == true && -f "$ROOT/packages/shared/package.json" ]]; then
+	echo "pre-commit: workspace or shared package changed, running the shared package tests"
+	(cd "$ROOT" && pnpm --silent --filter @sab/shared test)
 fi

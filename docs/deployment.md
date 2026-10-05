@@ -25,7 +25,22 @@ covers `prod.compose.yml` on a host without Coolify and is kept as the fallback 
   Deploy in the Coolify UI.
 - **Build-time variables**: Coolify injects every variable marked "Available during build" as an
   `ARG` into every Dockerfile stage. Keep secrets NOT available during build; the Dockerfiles
-  pass `--production` explicitly so an injected `NODE_ENV` cannot change what gets installed.
+  pass `--prod` / `--prod=false` explicitly so an injected `NODE_ENV` cannot change what gets installed.
+- **Build context = repository root.** The repo is a pnpm workspace (`pnpm-workspace.yaml`:
+  `backend`, `frontend`, `packages/*`) with one `pnpm-lock.yaml` at the root, so both images
+  build with `context: .` and `dockerfile: backend/Dockerfile` / `frontend/Dockerfile`. Coolify
+  needs no setting change (Base Directory `/`, Compose Location `/coolify.compose.yml`). What
+  enters a build is decided by the root `.dockerignore` and, per image, by
+  `backend/Dockerfile.dockerignore` / `frontend/Dockerfile.dockerignore` (BuildKit prefers the
+  per-Dockerfile file). Rules there use `**/`: a bare name such as `uploads` only matches at the
+  context root. The backend image is made with `pnpm deploy --prod` (with `inject-workspace-packages`
+  set for that one command), not `pnpm prune`. Do not add `--legacy`: it re-resolves optional
+  peers and pulls react/react-dom into the backend image. To check an image, list its files
+  (`docker run --rm --entrypoint find <image> /app -maxdepth 3`): no `tests/`, `*.md`,
+  `Dockerfile*`, `.claude` or host `uploads`.
+- **Rollback of the workspace move**: redeploy the last `main` commit before it in Coolify
+  (the one-commit revert on `dev` restores the per-package lockfiles and `./backend` /
+  `./frontend` contexts). The registry tags below are for infrastructure disasters only.
 - **Rollback** (both services together): revert the change that introduced `build:` in
   `coolify.compose.yml`, i.e. restore
   `image: 127.0.0.1:5000/sab-store-{backend,frontend}:migrated-260921` with
@@ -97,6 +112,23 @@ case "$ACTION" in
   drop-target) echo "$AUTH conn.getDB(process.env.TO).dropDatabase(); print('dropped ' + process.env.TO);" | msh ;;
 esac
 ```
+
+## After pulling the workspace move (dev machines)
+
+- **Every machine** (Mac and Windows, they share the working tree through Syncthing): wait for
+  Syncthing to report "Up to Date", run `pnpm install` once at the repository root **before any
+  git command that runs a hook** (the hooks call `pnpm`/Jest against the tree and would test a
+  half-migrated one), then `git reset` (the index is per machine) and check that `HEAD` and
+  `git status` are clean. Old `backend/node_modules` and `frontend/node_modules` are replaced by
+  workspace links; delete them first if pnpm complains.
+- **Dev compose stack** (`compose.yml`): the backend's `/app/node_modules` volume is now
+  `backend_deps`. The old `backend_node_modules` volume is no longer used; remove it with
+  `docker volume rm <project>_backend_node_modules` if you want the space back (never
+  `down -v`, which also drops the dev database and storage volumes). The frontend's anonymous `/app/node_modules` volume is created empty by every `up`, so
+  it cannot hold a stale copy.
+- **Dependencies are frozen** between the commit that introduces the workspace and the deploy
+  that confirms it: do not add or upgrade a package on any branch in that window, so a lockfile
+  difference cannot be mistaken for a build problem.
 
 ## Architecture in one paragraph
 

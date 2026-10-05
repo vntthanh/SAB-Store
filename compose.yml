@@ -219,8 +219,8 @@ services:
   # SAB Store Backend API
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     pull_policy: always
     container_name: sabstore_backend
     restart: unless-stopped
@@ -276,7 +276,10 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-      - backend_node_modules:/app/node_modules
+      # Renamed from backend_node_modules when the repo became a pnpm workspace:
+      # the old volume holds an install laid out for the per-package lockfile.
+      # Run `docker compose down -v` once to drop it (docs/deployment.md).
+      - backend_deps:/app/node_modules
       - ./uploads:/app/uploads
     networks:
       - sabstore_network
@@ -294,8 +297,8 @@ services:
     # No VITE_API_URL build arg/env: the SPA calls the API via the relative
     # path /api (AD-3), so nothing domain-specific is baked into the bundle.
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
     pull_policy: always
     container_name: sabstore_frontend
     restart: unless-stopped
@@ -337,7 +340,7 @@ volumes:
   mongodb_data:
   seaweedfs_data:
   redis_data:
-  backend_node_modules:
+  backend_deps:
 
 
 networks:

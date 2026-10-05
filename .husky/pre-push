@@ -1,5 +1,7 @@
 # Pre-push gate over every file in the pushed range: the full backend suite when
-# backend/ changed, the frontend production bundle when frontend/ changed.
+# backend/ changed, the frontend production bundle when frontend/ changed, and all
+# three plus the shared package tests when workspace plumbing (packages/*, root
+# manifest, lockfile, workspace file) changed.
 # Anything else (Markdown, hooks, compose files) runs nothing. Work runs under
 # the machine-wide heavy lock (lib/heavy-lock.sh).
 . "$(dirname "$0")/lib/require-bash.sh"
@@ -16,6 +18,7 @@ REFS="${CC_SAB_PUSH_REFS-$(cat)}"
 
 backend_changed=false
 frontend_changed=false
+shared_changed=false
 while read -r local_ref local_sha remote_ref remote_sha; do
 	[[ -z "${local_ref:-}" || "$local_sha" == "$ZERO_SHA" ]] && continue
 	if [[ "$remote_sha" == "$ZERO_SHA" ]]; then
@@ -30,18 +33,21 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 		echo "pre-push: cannot diff $range, running every check" >&2
 		backend_changed=true
 		frontend_changed=true
+		shared_changed=true
 		continue
 	fi
 	while IFS= read -r f; do
 		case "$f" in
 			*.md) ;;
+			package.json | pnpm-lock.yaml | pnpm-workspace.yaml | .npmrc | packages/*)
+				backend_changed=true; frontend_changed=true; shared_changed=true ;;
 			backend/*) backend_changed=true ;;
 			frontend/*) frontend_changed=true ;;
 		esac
 	done <<<"$files"
 done <<<"$REFS"
 
-if [[ "$backend_changed" == false && "$frontend_changed" == false ]]; then
+if [[ "$backend_changed" == false && "$frontend_changed" == false && "$shared_changed" == false ]]; then
 	echo "pre-push: no backend or frontend code pushed, nothing to run"
 	exit 0
 fi
@@ -58,4 +64,10 @@ fi
 if [[ "$frontend_changed" == true ]]; then
 	echo "pre-push: frontend changed, building the production bundle"
 	(cd "$ROOT/frontend" && pnpm --silent build >/dev/null)
+fi
+
+# No-op until the package exists, so the hook keeps working on a tree without it.
+if [[ "$shared_changed" == true && -f "$ROOT/packages/shared/package.json" ]]; then
+	echo "pre-push: workspace or shared package changed, running the shared package tests"
+	(cd "$ROOT" && pnpm --silent --filter @sab/shared test)
 fi

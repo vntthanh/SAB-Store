@@ -1,0 +1,11 @@
+packages:
+  - backend
+  - frontend
+  - packages/*
+
+# Install-script allowlist for the whole workspace (pnpm 10 skips every
+# dependency build script otherwise). Per-package settings are ignored in a
+# workspace, so these must live here, at the root.
+onlyBuiltDependencies:
+  - esbuild
+  - sharp

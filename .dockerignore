@@ -1,13 +1,41 @@
-node_modules
+# Build context for every image is the repository root. Safe superset: the
+# per-image lists (backend/Dockerfile.dockerignore, frontend/Dockerfile.dockerignore)
+# take precedence for their image and repeat the essential rules, so nothing
+# here is the only line of defence.
+#
+# `**/` throughout: a bare name only matches at the context root, so
+# `uploads` would not stop backend/uploads, `tests` would not stop
+# backend/tests, and a host install or build nested in a workspace member
+# would leak into COPY and clobber the clean in-image one.
 **/node_modules
-.env
-.env.*
-!.env.example
+**/dist
+**/build
+**/coverage
+**/*.tsbuildinfo
+# Monaco bundle copied by frontend/scripts/copy-monaco.mjs; its version stamp
+# must come from the in-image install, not the host.
+**/public/monaco
 .git
-plans/
-docs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.DS_Store
+**/.claude
+**/.serena
+**/.code-review-graph
+**/.playwright-mcp
+# Operator-owned data and tooling, never part of an image.
+**/uploads
+**/monitoring
+**/plans
+**/docs
+# dotenv files can hold secrets; only the example is allowed through.
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+**/.DS_Store
+**/*.md
+# Not needed at runtime: tests and their config.
+**/tests
+**/jest.config.js
+**/email.html
+# Dockerfiles and ignore lists are read by the builder itself, not COPY'd.
+**/Dockerfile*
+**/.dockerignore
