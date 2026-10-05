@@ -5,6 +5,8 @@
 	"description": "Backend API for Mini Preorder System",
 	"main": "server.js",
 	"scripts": {
+		"pretest": "pnpm --filter @sab/shared build",
+		"predev": "pnpm --filter @sab/shared build",
 		"start": "node start.js",
 		"start:direct": "node server.js",
 		"dev": "nodemon server.js",
@@ -13,6 +15,7 @@
 		"debug": "node check-env.js && node start.js"
 	},
 	"dependencies": {
+		"@sab/shared": "workspace:*",
 		"axios": "^1.11.0",
 		"better-auth": "^1.0.0",
 		"bullmq": "^6.3.11",

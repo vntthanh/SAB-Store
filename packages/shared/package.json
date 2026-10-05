@@ -1,0 +1,31 @@
+{
+	"name": "@sab/shared",
+	"version": "1.0.0",
+	"private": true,
+	"description": "Validation schemas shared by the backend (CommonJS) and the frontend (ESM).",
+	"type": "module",
+	"main": "./dist/index.cjs",
+	"module": "./dist/index.js",
+	"exports": {
+		".": {
+			"import": "./dist/index.js",
+			"require": "./dist/index.cjs"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "node esbuild.config.mjs",
+		"build:watch": "node esbuild.config.mjs --watch",
+		"pretest": "node esbuild.config.mjs",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"zod": "^4.1.12"
+	},
+	"devDependencies": {
+		"esbuild": "^0.25.11",
+		"vitest": "^2.1.8"
+	}
+}

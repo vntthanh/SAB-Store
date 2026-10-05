@@ -10,6 +10,7 @@ RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
 # The build context is the repository root (the workspace lockfile lives there).
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY packages/shared/package.json ./packages/shared/
 COPY frontend/package.json ./frontend/
 # `--prod=false` is load-bearing. The deploy platform injects every environment
 # variable as an ARG into every stage, NODE_ENV=production included; a package
@@ -20,8 +21,11 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 # ── builder ──────────────────────────────────────────────────────────────────
 FROM deps AS builder
+COPY packages/shared ./packages/shared
 COPY frontend ./frontend
 WORKDIR /app/frontend
+# `pnpm build` compiles @sab/shared first (the `prebuild` script), in this stage,
+# so a stale package build can never come from the host.
 # No VITE_API_URL: the SPA calls the API via the relative path /api, so nothing
 # domain-specific gets baked into the bundle.
 RUN pnpm build

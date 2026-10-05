@@ -5,6 +5,7 @@
 	"packageManager": "pnpm@10.33.0",
 	"type": "module",
 	"dependencies": {
+		"@sab/shared": "workspace:*",
 		"@monaco-editor/react": "^4.7.0",
 		"axios": "^1.11.0",
 		"better-auth": "^1.0.0",
@@ -19,9 +20,12 @@
 		"web-vitals": "^5.1.0"
 	},
 	"scripts": {
+		"predev": "pnpm --filter @sab/shared build",
 		"dev": "node scripts/copy-monaco.mjs && vite",
+		"prebuild": "pnpm --filter @sab/shared build",
 		"build": "node scripts/copy-monaco.mjs && vite build",
 		"preview": "vite preview",
+		"pretest": "pnpm --filter @sab/shared build",
 		"test": "vitest"
 	},
 	"devDependencies": {
