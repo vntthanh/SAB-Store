@@ -4,9 +4,11 @@
 	"packageManager": "pnpm@10.33.0",
 	"description": "pnpm workspace root (backend, frontend, packages/*) and repository tooling (git hooks).",
 	"scripts": {
-		"prepare": "husky"
+		"prepare": "husky",
+		"knip": "knip"
 	},
 	"devDependencies": {
-		"husky": "9.1.7"
+		"husky": "9.1.7",
+		"knip": "6.39.0"
 	}
 }
