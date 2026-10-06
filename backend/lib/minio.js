@@ -117,23 +117,6 @@ const deleteFile = async (objectName) => {
 };
 
 /**
- * Check if file exists in object storage
- * @param {string} objectName - Object name in bucket
- * @returns {Promise<boolean>} True if exists
- */
-const fileExists = async (objectName) => {
-	try {
-		await minioClient.statObject(MINIO_BUCKET_NAME, objectName);
-		return true;
-	} catch (error) {
-		if (error.code === 'NotFound') {
-			return false;
-		}
-		throw error;
-	}
-};
-
-/**
  * Get file metadata
  * @param {string} objectName - Object name in bucket
  * @returns {Promise<Object>} File metadata
@@ -154,7 +137,6 @@ module.exports = {
 	uploadFile,
 	getFile,
 	deleteFile,
-	fileExists,
 	getFileMetadata,
 	MINIO_BUCKET_NAME
 };

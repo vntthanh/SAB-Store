@@ -1,6 +1,8 @@
 # Pre-commit gate, scoped to what is staged:
 # - more than MAX_STAGED files: refused, split the commit by module (keeps each
 #   commit small enough for the multi-agent review before it);
+# - knip (unused files, exports, dependencies) runs first, before any test or build,
+#   whenever code or a manifest is staged: it is cheap and fails the commit early;
 # - backend: Jest on the staged files' related tests, or the full suite when a
 #   shared contract (models, pricing, stock, auth, middleware, query guard, test
 #   harness, dependencies) changed;
@@ -33,9 +35,18 @@ backend_full=false
 backend_files=()
 frontend_changed=false
 shared_changed=false
+knip_needed=false
 for entry in "${STAGED[@]}"; do
 	status="${entry%%$'\t'*}"
 	f="${entry#*$'\t'}"
+	# An import added or removed, or a manifest edit, can leave a file, an export
+	# or a dependency unused (or used but undeclared) anywhere in the workspace.
+	case "$f" in
+		*.md) ;;
+		package.json | */package.json | pnpm-lock.yaml | pnpm-workspace.yaml | knip.jsonc | \
+			backend/* | frontend/* | packages/*)
+			knip_needed=true ;;
+	esac
 	case "$f" in
 		*.md) ;;
 		package.json | pnpm-lock.yaml | pnpm-workspace.yaml | .npmrc | packages/*)
@@ -58,7 +69,7 @@ for entry in "${STAGED[@]}"; do
 	esac
 done
 
-if [[ "$backend_full" == false && ${#backend_files[@]} -eq 0 && "$frontend_changed" == false && "$shared_changed" == false ]]; then
+if [[ "$backend_full" == false && ${#backend_files[@]} -eq 0 && "$frontend_changed" == false && "$shared_changed" == false && "$knip_needed" == false ]]; then
 	echo "pre-commit: no backend or frontend code staged, nothing to run"
 	exit 0
 fi
@@ -66,6 +77,13 @@ fi
 # shellcheck source=lib/heavy-lock.sh
 source "$ROOT/.husky/lib/heavy-lock.sh"
 heavy_lock_hook SAB-Store pre-commit "$0" "$@"
+
+# Before every test and build step: knip is the cheapest whole-repo check, so an
+# unused file, export or dependency must fail here, not after a full suite.
+if [[ "$knip_needed" == true ]]; then
+	echo "pre-commit: knip (unused files, exports, dependencies)"
+	(cd "$ROOT" && pnpm --silent knip)
+fi
 
 if [[ "$backend_full" == true ]]; then
 	echo "pre-commit: shared backend contract changed, running the full backend suite"

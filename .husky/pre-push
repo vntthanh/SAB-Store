@@ -2,6 +2,7 @@
 # backend/ changed, the frontend production bundle and unit tests when frontend/ changed, and all
 # three plus the shared package tests when workspace plumbing (packages/*, root
 # manifest, lockfile, workspace file) changed.
+# knip (unused files, exports, dependencies) runs first, before any test or build.
 # Anything else (Markdown, hooks, compose files) runs nothing. Work runs under
 # the machine-wide heavy lock (lib/heavy-lock.sh).
 . "$(dirname "$0")/lib/require-bash.sh"
@@ -55,6 +56,10 @@ fi
 # shellcheck source=lib/heavy-lock.sh
 source "$ROOT/.husky/lib/heavy-lock.sh"
 CC_SAB_PUSH_REFS="$REFS" heavy_lock_hook SAB-Store pre-push "$0" "$@"
+
+# Before every test and build step: the cheapest whole-repo check goes first.
+echo "pre-push: knip (unused files, exports, dependencies)"
+(cd "$ROOT" && pnpm --silent knip)
 
 if [[ "$backend_changed" == true ]]; then
 	echo "pre-push: full backend suite"

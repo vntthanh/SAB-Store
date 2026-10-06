@@ -67,42 +67,46 @@ Class tạo và format error response chuẩn cho client.
 #### Sử dụng trong Routes
 
 ```javascript
-const { ErrorResponse, catchAsync } = require('../utils/errorResponse');
+const { ErrorResponse } = require('../utils/errorResponse');
 
-// Wrap route handler với catchAsync
-router.post('/orders', catchAsync(async (req, res) => {
-	// Validation error
-	if (!items || items.length === 0) {
-		throw ErrorResponse.validationError('Danh sách sản phẩm không hợp lệ', {
-			field: 'items',
-			received: items
+// Express 4 không bắt lỗi của handler async: bọc try/catch và chuyển lỗi cho next()
+router.post('/orders', async (req, res, next) => {
+	try {
+		// Validation error
+		if (!items || items.length === 0) {
+			throw ErrorResponse.validationError('Danh sách sản phẩm không hợp lệ', {
+				field: 'items',
+				received: items
+			});
+		}
+
+		// Not found error
+		if (!product) {
+			throw ErrorResponse.notFoundError('Sản phẩm', {
+				productId: req.params.id
+			});
+		}
+
+		// Product unavailable error
+		throw ErrorResponse.productUnavailableError('Sản phẩm X', {
+			productId: 'xxx',
+			stockQuantity: 0
 		});
-	}
 
-	// Not found error
-	if (!product) {
-		throw ErrorResponse.notFoundError('Sản phẩm', {
-			productId: req.params.id
+		// Order processing error
+		throw ErrorResponse.orderProcessingError('Không thể tạo mã đơn hàng', {
+			attempts: 10
 		});
+
+		// Bad request
+		throw ErrorResponse.badRequestError('Tham số không hợp lệ', {
+			param: 'quantity',
+			value: -1
+		});
+	} catch (error) {
+		next(error);
 	}
-
-	// Product unavailable error
-	throw ErrorResponse.productUnavailableError('Sản phẩm X', {
-		productId: 'xxx',
-		stockQuantity: 0
-	});
-
-	// Order processing error
-	throw ErrorResponse.orderProcessingError('Không thể tạo mã đơn hàng', {
-		attempts: 10
-	});
-
-	// Bad request
-	throw ErrorResponse.badRequestError('Tham số không hợp lệ', {
-		param: 'quantity',
-		value: -1
-	});
-}));
+});
 ```
 
 #### Error Response Format
@@ -196,21 +200,21 @@ mongoose.connection.on('reconnected', () => {
 
 ## Best Practices
 
-### 1. Luôn sử dụng catchAsync wrapper
+### 1. Chuyển lỗi của handler async cho next()
 
 ```javascript
-// [OK] CORRECT
-router.get('/:id', catchAsync(async (req, res) => {
-	// Code có thể throw error
-}));
-
-// [ERROR] WRONG - Phải tự handle try-catch
-router.get('/:id', async (req, res) => {
+// [OK] CORRECT - Express 4 không tự bắt lỗi của handler async
+router.get('/:id', async (req, res, next) => {
 	try {
-		// Code
+		// Code có thể throw error
 	} catch (error) {
-		// Phải tự xử lý error
+		next(error);
 	}
+});
+
+// [ERROR] WRONG - Handler async không try/catch: lỗi thành unhandled rejection
+router.get('/:id', async (req, res) => {
+	// Code có thể throw error
 });
 ```
 
@@ -258,21 +262,21 @@ console.log('Items:', items);
 
 ```javascript
 // [OK] CORRECT
-try {
-	await sendEmail(data);
-} catch (error) {
-	ErrorLogger.logExternalService('EmailService', error, {
-		endpoint: '/send',
-		recipient: email
-	});
-}
+	try {
+		await sendEmail(data);
+	} catch (error) {
+		ErrorLogger.logExternalService('EmailService', error, {
+			endpoint: '/send',
+			recipient: email
+		});
+	}
 
 // [ERROR] WRONG
-try {
-	await sendEmail(data);
-} catch (error) {
-	console.error('Email failed:', error.message);
-}
+	try {
+		await sendEmail(data);
+	} catch (error) {
+		console.error('Email failed:', error.message);
+	}
 ```
 
 ## Testing Error Responses
@@ -297,7 +301,7 @@ curl -X POST http://localhost:5000/api/orders \
       "received": []
     }
   }
-}
+	}
 
 # Not found error
 curl http://localhost:5000/api/products/invalid-id
@@ -310,7 +314,7 @@ curl http://localhost:5000/api/products/invalid-id
     "message": "ID không hợp lệ: invalid-id",
     "timestamp": "2025-11-21T15:30:45.123Z"
   }
-}
+	}
 ```
 
 ## Error Codes Reference
@@ -360,40 +364,44 @@ curl http://localhost:5000/api/products/invalid-id
 
 ```javascript
 router.post('/orders', async (req, res) => {
-	try {
-		if (!items) {
-			return res.status(400).json({
+		try {
+			if (!items) {
+				return res.status(400).json({
+					success: false,
+					message: 'Invalid items'
+				});
+			}
+			// ...
+		} catch (error) {
+			console.error('Error:', error);
+			res.status(500).json({
 				success: false,
-				message: 'Invalid items'
+				message: 'Server error'
 			});
 		}
-		// ...
-	} catch (error) {
-		console.error('Error:', error);
-		res.status(500).json({
-			success: false,
-			message: 'Server error'
-		});
-	}
 });
 ```
 
 ### After
 
 ```javascript
-const { ErrorResponse, catchAsync } = require('../utils/errorResponse');
+const { ErrorResponse } = require('../utils/errorResponse');
 const ErrorLogger = require('../utils/errorLogger');
 
-router.post('/orders', catchAsync(async (req, res) => {
-	if (!items) {
-		throw ErrorResponse.validationError('Danh sách sản phẩm không hợp lệ', {
-			field: 'items'
-		});
+router.post('/orders', async (req, res, next) => {
+	try {
+		if (!items) {
+			throw ErrorResponse.validationError('Danh sách sản phẩm không hợp lệ', {
+				field: 'items'
+			});
+		}
+		
+		ErrorLogger.logInfo('[ORDER] Order created', { orderId });
+		// ...
+	} catch (error) {
+		next(error);
 	}
-	
-	ErrorLogger.logInfo('[ORDER] Order created', { orderId });
-	// ...
-}));
+});
 ```
 
 ## Monitoring & Analytics

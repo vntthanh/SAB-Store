@@ -99,4 +99,3 @@ stockMovementSchema.index(
 
 module.exports = mongoose.model('StockMovement', stockMovementSchema);
 module.exports.MOVEMENT_TYPES = MOVEMENT_TYPES;
-module.exports.MOVEMENT_STATUSES = MOVEMENT_STATUSES;

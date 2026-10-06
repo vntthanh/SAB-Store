@@ -98,10 +98,6 @@ async function buildMetaFragment(type, code) {
 }
 
 module.exports = {
-	IMAGE_WIDTH,
-	IMAGE_HEIGHT,
-	escapeHtml,
 	findPublicByType,
-	renderMetaFragment,
 	buildMetaFragment
 };

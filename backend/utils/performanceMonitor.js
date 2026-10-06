@@ -170,6 +170,5 @@ function setupProcessMonitoring() {
 
 module.exports = {
 	monitor,
-	setupProcessMonitoring,
-	trackMemoryLeaks
+	setupProcessMonitoring
 };

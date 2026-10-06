@@ -4,7 +4,7 @@
  */
 
 // Standard ratio for product images (width / height) - matches fallback-product.png (800x533)
-export const PRODUCT_IMAGE_RATIO = 1.50093808630394;
+const PRODUCT_IMAGE_RATIO = 1.50093808630394;
 
 /**
  * Get image dimensions from file or URL
@@ -131,7 +131,7 @@ export const processImageFile = async (file, maxWidth = 800, quality = 0.9) => {
  * @param {number} bytes 
  * @returns {string}
  */
-export const formatFileSize = (bytes) => {
+const formatFileSize = (bytes) => {
 	if (bytes === 0) return '0 Bytes';
 
 	const k = 1024;

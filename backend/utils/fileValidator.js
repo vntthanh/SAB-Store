@@ -190,6 +190,5 @@ module.exports = {
 	validateImageFile,
 	sanitizeFilename,
 	generateSecureFilename,
-	MAX_FILE_SIZE,
-	ALLOWED_IMAGE_TYPES
+	MAX_FILE_SIZE
 };

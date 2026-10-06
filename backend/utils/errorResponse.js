@@ -147,12 +147,6 @@ class ErrorResponse {
 	}
 }
 
-function catchAsync(fn) {
-	return (req, res, next) => {
-		Promise.resolve(fn(req, res, next)).catch(next);
-	};
-}
-
 function handleMongooseError(error) {
 	if (error.name === 'ValidationError') {
 		const errors = Object.values(error.errors).map(err => ({
@@ -184,8 +178,6 @@ function handleMongooseError(error) {
 }
 
 module.exports = {
-	AppError,
 	ErrorResponse,
-	catchAsync,
 	handleMongooseError
 };

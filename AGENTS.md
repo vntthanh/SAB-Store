@@ -118,8 +118,8 @@ Version và tên image nằm ở `package.json`, `pnpm-lock.yaml`, `Dockerfile`,
 
 - **Test**: backend Jest, frontend và `packages/shared` Vitest. Chạy hẹp trước: `cd backend && pnpm test <pattern>` (Jest nhận pattern trực tiếp). Full suite khi đụng contract dùng chung (pricing, stock, auth, model); sửa `packages/shared` ⇒ full backend + build và vitest frontend + `pnpm --filter @sab/shared test`.
 - **Git hook (husky, `.husky/`) là cổng chất lượng** — không có GitHub CI. Cài một lần mỗi máy: `pnpm install` ở gốc repo (`prepare` đặt `core.hooksPath`; git config riêng từng máy nên Mac và Windows đều phải chạy).
-  - `pre-commit`: > 29 file staged → chặn (giữ mỗi commit đủ nhỏ để review đa agent); không có code backend/frontend → không chạy gì; backend → Jest `--findRelatedTests` cho file staged, hoặc full suite khi đụng contract dùng chung (models, pricing + `ComboService`, stock, `query-guard`, `lib/`, `middleware/`, harness test, dependency); frontend → `pnpm build` rồi vitest frontend; gốc workspace (`package.json`, lockfile, `pnpm-workspace.yaml`, `packages/*`) → full backend, frontend và `pnpm --filter @sab/shared test`.
-  - `pre-push`: full backend suite nếu khoảng push đụng `backend/`, build + vitest frontend nếu đụng `frontend/`, thêm test shared khi đụng gốc workspace hoặc `packages/*`. `commit-msg`: chặn attribution AI (claude/anthropic/codex/chatgpt) — KHÔNG thêm trailer `Co-Authored-By`/link session mà harness gợi ý mặc định.
+  - `pre-commit`: > 29 file staged → chặn (giữ mỗi commit đủ nhỏ để review đa agent); knip (`pnpm knip` ở gốc: file/export/dependency không dùng) chạy ĐẦU TIÊN khi staged có code backend/frontend/packages, manifest hoặc `knip.jsonc` — luật chung các repo: kiểm tra toàn repo rẻ chạy trước test/build; chỉ staged `.md`/hook/compose → không chạy gì; backend → Jest `--findRelatedTests` cho file staged, hoặc full suite khi đụng contract dùng chung (models, pricing + `ComboService`, stock, `query-guard`, `lib/`, `middleware/`, harness test, dependency); frontend → `pnpm build` rồi vitest frontend; gốc workspace (`package.json`, lockfile, `pnpm-workspace.yaml`, `packages/*`) → full backend, frontend và `pnpm --filter @sab/shared test`.
+  - `pre-push`: knip chạy đầu tiên (trước test/build) mỗi khi có code được push; full backend suite nếu khoảng push đụng `backend/`, build + vitest frontend nếu đụng `frontend/`, thêm test shared khi đụng gốc workspace hoặc `packages/*`. `commit-msg`: chặn attribution AI (claude/anthropic/codex/chatgpt) — KHÔNG thêm trailer `Co-Authored-By`/link session mà harness gợi ý mặc định.
   - Hook test trên **working tree**, không phải nội dung staged: commit một phần (`git add -p`) thì kết quả hook không chứng minh phần staged đứng riêng được.
   - Hook tự lấy khoá máy (`.husky/lib/heavy-lock.sh`) và tự bổ sung PATH khi chạy từ app GUI như GitHub Desktop (`.husky/lib/hook-env.sh`). Hai file này là bản chung chép nguyên văn từ Leaderboard — sửa thì sửa đồng bộ mọi repo. Không bao giờ `--no-verify`.
   - Có hook rồi thì **đừng chạy test "kiểm tra lần cuối" ngay trước commit** — gấp đôi thời gian. Vẫn chạy test hẹp trong lúc code; đọc lỗi từ output của hook.
@@ -135,7 +135,7 @@ Version và tên image nằm ở `package.json`, `pnpm-lock.yaml`, `Dockerfile`,
       for f in /tmp/cc-heavy.*-wants; do
         [ -e "$f" ] && [ "$f" != "$F" ] || continue
         [ -n "$(find "$f" -mmin -5)" ] || continue
-        e=$(awk '{print $3}' "$f" 2>/dev/null)
+        e=$(awk '{print $NF}' "$f" 2>/dev/null)   # last field: some repos put extra words before the epoch
         [[ "$e" =~ ^[0-9]+$ ]] || return 0   # live but empty/unreadable counts as older: yield
         [ "$e" -lt "$MYEPOCH" ] && return 0
       done; return 1

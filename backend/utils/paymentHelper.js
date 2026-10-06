@@ -178,9 +178,6 @@ const generateDirectSalePaymentQR = async (amount, orderCode, username) => {
 };
 
 module.exports = {
-	toAscii,
-	generateShortName,
-	getPaymentSettings,
 	formatOrderPaymentDescription,
 	generateOrderPaymentQR,
 	generateDirectSalePaymentQR

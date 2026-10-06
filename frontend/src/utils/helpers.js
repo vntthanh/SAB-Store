@@ -27,37 +27,6 @@ export const formatDate = (date) => {
 };
 
 /**
- * Validate email format
- * @param {string} email 
- * @returns {boolean}
- */
-export const isValidEmail = (email) => {
-	const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-	return emailRegex.test(email);
-};
-
-/**
- * Sanitize string to prevent XSS
- * @param {string} str 
- * @returns {string}
- */
-export const sanitizeString = (str) => {
-	if (typeof str !== 'string') return '';
-	return str.replace(/[<>]/g, '');
-};
-
-/**
- * Calculate total from items array
- * @param {Array} items - Array of items with price and quantity
- * @returns {number}
- */
-export const calculateTotal = (items) => {
-	return items.reduce((total, item) => {
-		return total + (item.price * item.quantity);
-	}, 0);
-};
-
-/**
  * Get the correct image URL for display
  * @param {string} imageUrl - The image URL from database
  * @returns {string} - The correct URL for displaying the image
