@@ -27,7 +27,7 @@
 
 ## process (luật chung của owner — Leaderboard/JudgeHub/QR/SAB)
 - `mem:lessons/process/subagent_model_cap` — mọi Agent truyền `model: "sonnet"`; opus chỉ kongming/leo thang (tối đa 1); không fable.
-- `mem:lessons/process/heavy_work_lock` — không worktree; một agent nặng cả máy; giao thức `/tmp/cc-heavy.lock` (cờ rỗng = nhường, stale 45', cổng RAM 35%, `CC_HEAVY_OWNER` cho hook); bản chung heavy-lock/hook-env của Leaderboard (chờ ≤1800 s, cổng RAM Windows/Linux, PATH cho GitHub Desktop).
+- `mem:lessons/process/heavy_work_lock` — không worktree; một agent nặng cả máy; giao thức `/tmp/cc-heavy.lock` (cờ rỗng = nhường, stale 45', cổng RAM 35% (Windows 21%), `CC_HEAVY_OWNER` cho hook); bản chung heavy-lock/hook-env của Leaderboard (chờ ≤1800 s, cổng RAM Windows/Linux, PATH cho GitHub Desktop).
 - `mem:lessons/process/processes_and_quality_gates` — theo dõi/dừng tiến trình mình đẻ; không `--no-verify`; ≥2 reviewer; ≤29 file/commit; không attribution AI.
 - `mem:lessons/process/deploy_coordination` — một tên tmux mỗi project; báo peer trước/sau deploy; `df -h` + build từng image; bind-mount file đơn giữ inode cũ; backup mongo bằng mongodump trong container.
 - `mem:lessons/process/tools_secrets_user_facing` — MCP trước; không in secret; `.gitguardian.yaml` cho fixture; trả lời tiếng Việt.
