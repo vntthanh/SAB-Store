@@ -5,6 +5,12 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 import MarkdownEditor from '../../components/admin/MarkdownEditor';
 import useFieldErrors from '../../hooks/use-field-errors';
 import FormField from '../../components/form/FormField';
+import { contactEmail, contactUrl, CONTACT_EMAIL_MAX_LENGTH, CONTACT_URL_MAX_LENGTH } from '@sab/shared';
+
+const firstIssue = (schema, value) => {
+	const result = schema.safeParse(value);
+	return result.success ? null : result.error.issues[0].message;
+};
 
 // Client rules mirror PUT /api/admin/settings (the server stays authoritative).
 const SETTINGS_RULES = {
@@ -15,8 +21,17 @@ const SETTINGS_RULES = {
 	},
 	bankNameId: (value) => (value.trim() ? null : 'Bank ID là bắt buộc'),
 	bankAccountId: (value) => (value.trim() ? null : 'Số tài khoản là bắt buộc'),
-	prefixMessage: (value) => (value.trim() ? null : 'Prefix message là bắt buộc')
+	prefixMessage: (value) => (value.trim() ? null : 'Prefix message là bắt buộc'),
+	contactEmail: (value) => firstIssue(contactEmail, value),
+	contactFacebookUrl: (value) => firstIssue(contactUrl, value)
 };
+
+// Footer contact lines; both optional, empty hides the line.
+const CONTACTS = [
+	{ field: 'contactEmail', label: 'Email liên hệ', type: 'email', maxLength: CONTACT_EMAIL_MAX_LENGTH, placeholder: 'VD: sab@fit.hcmus.edu.vn' },
+	{ field: 'contactFacebookUrl', label: 'Link Facebook Page', type: 'url', maxLength: CONTACT_URL_MAX_LENGTH, placeholder: 'VD: https://facebook.com/...' }
+];
+const CONTACT_FIELDS = CONTACTS.map(({ field }) => field);
 
 // Where each customer reminder appears; the preview reuses that box's text colour.
 const NOTICES = [
@@ -36,7 +51,9 @@ const SettingsManagement = () => {
 		storeTitle: DEFAULT_STORE_TITLE,
 		checkoutNotice: '',
 		eventNotice: '',
-		paymentNotice: ''
+		paymentNotice: '',
+		contactEmail: '',
+		contactFacebookUrl: ''
 	});
 	const [originalSettings, setOriginalSettings] = useState(null);
 	const { errors, validateField, onFieldChange, validateAll, focusFirstError, reset: resetFieldErrors } = useFieldErrors(SETTINGS_RULES);
@@ -60,11 +77,11 @@ const SettingsManagement = () => {
 				// is what customers currently see, instead of blank (= hidden).
 				const publicSettings = await settingsService.getPublicSettings().catch(() => null);
 				if (!publicSettings) {
-					toast.warn('Không tải được lời nhắc mặc định; lưu lúc này sẽ ẩn các lời nhắc đang để trống');
+					toast.warn('Không tải được lời nhắc và thông tin liên hệ mặc định; lưu lúc này sẽ ẩn các mục đang để trống');
 				} else {
 					setSettings(prev => ({
 						...prev,
-						...Object.fromEntries(NOTICE_FIELDS.map(field => [field, publicSettings[field] ?? '']))
+						...Object.fromEntries([...NOTICE_FIELDS, ...CONTACT_FIELDS].map(field => [field, publicSettings[field] ?? '']))
 					}));
 				}
 			} else {
@@ -112,7 +129,8 @@ const SettingsManagement = () => {
 				bankAccountId: settings.bankAccountId.trim(),
 				prefixMessage: settings.prefixMessage.trim(),
 				storeTitle: settings.storeTitle.trim(),
-				...Object.fromEntries(NOTICE_FIELDS.map(field => [field, settings[field]]))
+				...Object.fromEntries(NOTICE_FIELDS.map(field => [field, settings[field]])),
+				...Object.fromEntries(CONTACT_FIELDS.map(field => [field, settings[field].trim()]))
 			});
 
 			if (response.data.success) {
@@ -142,7 +160,7 @@ const SettingsManagement = () => {
 			settings.bankAccountId !== originalSettings.bankAccountId ||
 			settings.prefixMessage !== originalSettings.prefixMessage ||
 			settings.storeTitle !== originalSettings.storeTitle ||
-			NOTICE_FIELDS.some(field => settings[field] !== originalSettings[field])
+			[...NOTICE_FIELDS, ...CONTACT_FIELDS].some(field => settings[field] !== originalSettings[field])
 		);
 	};
 
@@ -174,6 +192,24 @@ const SettingsManagement = () => {
 								className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
 							/>
 						</FormField>
+
+						<h2 className="text-lg font-semibold text-gray-800 pt-2">Thông tin liên hệ</h2>
+						<p className="text-sm text-gray-500 -mt-4">Hiển thị ở chân trang. Để trống để ẩn dòng đó.</p>
+
+						{CONTACTS.map(({ field, label, type, maxLength, placeholder }) => (
+							<FormField key={field} id={`settings-${field}`} label={label} error={errors[field]}>
+								<input
+									type={type}
+									name={field}
+									value={settings[field]}
+									onChange={handleChange}
+									onBlur={handleBlur}
+									placeholder={placeholder}
+									maxLength={maxLength}
+									className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+								/>
+							</FormField>
+						))}
 
 						<h2 className="text-lg font-semibold text-gray-800 pt-2">Thanh toán VietQR</h2>
 

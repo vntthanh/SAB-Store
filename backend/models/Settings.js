@@ -26,6 +26,16 @@ const DEFAULT_NOTICES = {
 };
 const NOTICE_FIELDS = Object.keys(DEFAULT_NOTICES);
 
+// Footer contact details; same empty-versus-missing rule as the notices.
+// Format and length are checked by the admin route against @sab/shared. The
+// model does not import it: the payment QR (money path) loads this model and
+// must not depend on the shared build artifact.
+const DEFAULT_CONTACT = {
+	contactEmail: 'sab@fit.hcmus.edu.vn',
+	contactFacebookUrl: 'https://t.sab.edu.vn/'
+};
+const CONTACT_FIELDS = Object.keys(DEFAULT_CONTACT);
+
 const noticeField = (field, description) => ({
 	type: String,
 	maxlength: NOTICE_MAX_LENGTH,
@@ -70,6 +80,18 @@ const settingsSchema = new mongoose.Schema({
 	checkoutNotice: noticeField('checkoutNotice', 'Markdown reminder on the checkout page'),
 	eventNotice: noticeField('eventNotice', 'Markdown reminder on the event order page'),
 	paymentNotice: noticeField('paymentNotice', 'Markdown reminder above the payment QR code'),
+	contactEmail: {
+		type: String,
+		trim: true,
+		default: DEFAULT_CONTACT.contactEmail,
+		description: 'Contact email shown in the public footer'
+	},
+	contactFacebookUrl: {
+		type: String,
+		trim: true,
+		default: DEFAULT_CONTACT.contactFacebookUrl,
+		description: 'Facebook page link shown in the public footer'
+	},
 	updatedAt: {
 		type: Date,
 		default: Date.now
@@ -96,3 +118,5 @@ module.exports.STORE_TITLE_MAX_LENGTH = STORE_TITLE_MAX_LENGTH;
 module.exports.NOTICE_MAX_LENGTH = NOTICE_MAX_LENGTH;
 module.exports.DEFAULT_NOTICES = DEFAULT_NOTICES;
 module.exports.NOTICE_FIELDS = NOTICE_FIELDS;
+module.exports.DEFAULT_CONTACT = DEFAULT_CONTACT;
+module.exports.CONTACT_FIELDS = CONTACT_FIELDS;

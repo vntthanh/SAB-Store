@@ -1,8 +1,10 @@
 const express = require('express');
+const { contactEmail, contactUrl } = require('@sab/shared');
 const Settings = require('../../models/Settings');
-
-const { SETTINGS_KEY, STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH, NOTICE_FIELDS } = Settings;
 const { authenticateAdmin } = require('../../middleware/better-auth');
+
+const { SETTINGS_KEY, STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH, NOTICE_FIELDS, CONTACT_FIELDS } = Settings;
+const CONTACT_SCHEMAS = { contactEmail, contactFacebookUrl: contactUrl };
 const router = express.Router();
 
 const toResponse = (settings) => ({
@@ -10,7 +12,7 @@ const toResponse = (settings) => ({
 	bankAccountId: settings.bankAccountId,
 	prefixMessage: settings.prefixMessage,
 	storeTitle: settings.storeTitle,
-	...Object.fromEntries(NOTICE_FIELDS.map((field) => [field, settings[field]])),
+	...Object.fromEntries([...NOTICE_FIELDS, ...CONTACT_FIELDS].map((field) => [field, settings[field]])),
 	updatedAt: settings.updatedAt,
 	updatedBy: settings.updatedBy
 });
@@ -95,6 +97,19 @@ router.put('/', async (req, res) => {
 				});
 			}
 			updateData[field] = value.trim();
+		}
+
+		// Optional too; an empty string hides that footer line.
+		for (const field of CONTACT_FIELDS) {
+			if (req.body[field] === undefined) continue;
+			const parsed = CONTACT_SCHEMAS[field].safeParse(req.body[field]);
+			if (!parsed.success) {
+				return res.status(400).json({
+					success: false,
+					message: parsed.error.issues[0].message
+				});
+			}
+			updateData[field] = parsed.data;
 		}
 
 		const settings = await Settings.findOneAndUpdate(

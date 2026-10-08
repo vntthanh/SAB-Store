@@ -23,7 +23,7 @@ Bối cảnh sự cố (máy crash 30/09/2026): `mem:lessons/machine/shared_mac_
 ## Khoá trong git hook (SAB dùng husky từ 03/10/2026, cùng mẫu JudgeHub/Leaderboard)
 - Hook pre-commit/pre-push tự lấy khoá qua `.husky/lib/heavy-lock.sh` (bản chép nguyên văn từ Leaderboard); commit/push chỉ `.md` bỏ qua khoá.
 - Ctrl-C/TERM/HUP nhả khoá chỉ khi owner line vẫn là của mình. Sau SIGKILL khoá kẹt lại: kiểm owner line trước khi xoá tay.
-- Hook cũng chờ `memory_pressure` free ≥ 35% → commit có thể đứng lâu; đọc dòng "heavy-lock: waiting".
+- Hook cũng chờ bộ nhớ trống ≥ 35% (macOS/Linux) hoặc ≥ 21% (Windows; ghi đè bằng `CC_HEAVY_MIN_FREE_PCT`) → commit có thể đứng lâu; đọc dòng "heavy-lock: waiting".
 - Có hook chạy test thì KHÔNG chạy test/lint "kiểm tra lần cuối" ngay trước commit — gấp đôi thời gian cho cùng kết quả. Chi tiết hook của SAB: AGENTS.md §4.
 - Từ 04/10 (commit 07c8326): `heavy-lock.sh` + `hook-env.sh` là bản chuẩn của Leaderboard (8e52781), chép nguyên văn —
   cổng memory cả Windows (`powershell.exe`) và Linux (`/proc/meminfo`), chờ tối đa 1800 s rồi lỗi (không bao giờ chạy

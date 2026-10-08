@@ -9,9 +9,12 @@
 #   `<root>/cc-heavy.<repo>-<pid>-wants`, oldest epoch first; a live flag
 #   (mtime <= 5 min) that is empty or unreadable counts as older than ours;
 #   flags older than 5 min are dead and are ignored, never deleted;
-# - free memory must be >= 35%: macOS `memory_pressure -Q`; Windows available
-#   bytes (free + standby cache, as Task Manager counts it) through
-#   powershell.exe; Linux MemAvailable. Skipped where none can be read;
+# - free memory must be >= 35% (21% on Windows): macOS `memory_pressure -Q`;
+#   Windows available bytes (free + standby cache, as Task Manager counts it)
+#   through powershell.exe; Linux MemAvailable. Skipped where none can be read.
+#   Windows gets the lower floor because WSL's vmmem and memory compression
+#   keep a large share reserved on the owner's 48 GB machine: 35% there blocked
+#   a hook for ~19 min with 13 GB free (owner decision 2026-10-07);
 # - give up after CC_HEAVY_WAIT_MAX seconds (default 30 min) with a failing
 #   hook rather than ever running the heavy steps without the lock;
 # - acquire with an atomic `mkdir <root>/cc-heavy.lock` and an exact owner line
@@ -40,11 +43,17 @@
 #   directory, for a GUI client whose git resolves /tmp elsewhere (Windows).
 # - CC_HEAVY_WAIT_MAX (or CC_HEAVY_WAIT_MAX_SECONDS): seconds to wait before
 #   giving up (default 1800).
-# - Tests only: CC_HEAVY_POLL_SECONDS, CC_HEAVY_MIN_FREE_PCT.
+# - CC_HEAVY_MIN_FREE_PCT: the free-memory floor in percent (default above).
+# - Tests only: CC_HEAVY_POLL_SECONDS.
 
 CC_HEAVY_ROOT="${CC_HEAVY_ROOT:-${CC_HEAVY_TMP:-/tmp}}"
 CC_HEAVY_LOCK="$CC_HEAVY_ROOT/cc-heavy.lock"
-CC_HEAVY_MIN_FREE_PCT="${CC_HEAVY_MIN_FREE_PCT:-35}"
+if [ -z "${CC_HEAVY_MIN_FREE_PCT:-}" ]; then
+  case "$(uname -s 2>/dev/null)" in
+    MINGW* | MSYS* | CYGWIN*) CC_HEAVY_MIN_FREE_PCT=21 ;;
+    *) CC_HEAVY_MIN_FREE_PCT=35 ;;
+  esac
+fi
 CC_HEAVY_POLL_SECONDS="${CC_HEAVY_POLL_SECONDS:-10}"
 CC_HEAVY_WAIT_MAX="${CC_HEAVY_WAIT_MAX:-${CC_HEAVY_WAIT_MAX_SECONDS:-1800}}"
 # A non-number would make every deadline test false and silently drop the cap.
