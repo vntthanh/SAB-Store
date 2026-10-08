@@ -1,7 +1,11 @@
 const express = require('express');
 const Settings = require('../models/Settings');
 
-const { SETTINGS_KEY, DEFAULT_STORE_TITLE, DEFAULT_NOTICES, NOTICE_FIELDS } = Settings;
+const { SETTINGS_KEY, DEFAULT_STORE_TITLE, DEFAULT_NOTICES, NOTICE_FIELDS, DEFAULT_CONTACT, CONTACT_FIELDS } = Settings;
+// Free-text storefront fields: a missing one falls back to its default, an
+// admin-saved empty string means "hide it".
+const TEXT_DEFAULTS = { ...DEFAULT_NOTICES, ...DEFAULT_CONTACT };
+const TEXT_FIELDS = [...NOTICE_FIELDS, ...CONTACT_FIELDS];
 const router = express.Router();
 
 /**
@@ -12,7 +16,7 @@ const router = express.Router();
  */
 router.get('/', async (req, res) => {
 	try {
-		const settings = await Settings.findOne({ key: SETTINGS_KEY }).select(['storeTitle', ...NOTICE_FIELDS]).lean();
+		const settings = await Settings.findOne({ key: SETTINGS_KEY }).select(['storeTitle', ...TEXT_FIELDS]).lean();
 
 		res.json({
 			success: true,
@@ -20,10 +24,10 @@ router.get('/', async (req, res) => {
 				// A document saved before storeTitle existed has no such field, and
 				// lean() skips schema defaults.
 				storeTitle: settings?.storeTitle || DEFAULT_STORE_TITLE,
-				// `??` rather than `||`: an admin-saved empty notice means "hide it".
-				...Object.fromEntries(NOTICE_FIELDS.map((field) => [
+				// `??` rather than `||`: an admin-saved empty string means "hide it".
+				...Object.fromEntries(TEXT_FIELDS.map((field) => [
 					field,
-					settings?.[field] ?? DEFAULT_NOTICES[field]
+					settings?.[field] ?? TEXT_DEFAULTS[field]
 				]))
 			}
 		});

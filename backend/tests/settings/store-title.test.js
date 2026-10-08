@@ -34,7 +34,7 @@ describe('store title setting', () => {
 			const res = await request(app).get('/api/settings');
 
 			expect(Object.keys(res.body.data).sort()).toEqual(
-				['checkoutNotice', 'eventNotice', 'paymentNotice', 'storeTitle']
+				['checkoutNotice', 'contactEmail', 'contactFacebookUrl', 'eventNotice', 'paymentNotice', 'storeTitle']
 			);
 			expect(res.body.data.storeTitle).toBe('Shop');
 		});
