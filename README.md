@@ -149,7 +149,7 @@ Hệ thống sử dụng `compose.yml` (dev) / `prod.compose.yml` (production) �
 - **mongodb**: Database chính
 - **sabstore-seaweedfs**: Object storage (SeaweedFS, S3 API) cho hình ảnh sản phẩm
 - **backend**: ExpressJS API server (internal port 5000)
-- **frontend**: React (Vite) build, **nginx nằm bên trong image này** (`frontend/Dockerfile` build từ `nginx:alpine`, internal port 80) — không phải service tách biệt
+- **frontend**: React (Vite) build, **nginx nằm bên trong image này** (`frontend/Dockerfile` build từ `nginx:1.31.6-alpine`, internal port 80) — không phải service tách biệt
 
 Production chỉ có một cổng vào: `store.sabies.vn` → NPM → container `frontend` (nginx) → `backend:5000` cho `/api/*`, → `sabstore-seaweedfs:9000` trực tiếp cho `/uploads/*` (không qua backend). Domain `api.store.sabies.vn` riêng đã bị gỡ.
 

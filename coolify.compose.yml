@@ -56,7 +56,7 @@
 services:
   # SAB Store MongoDB Database
   mongodb:
-    image: mongo:6.0
+    image: mongo:6.0.28@sha256:8b6d8f5bbedb25cb73517b65cf99f13aeb75ad5b157a56c479287a840bbad3ac
     cpus: 2
     restart: unless-stopped
     # Default WiredTiger cache is 50% x (RAM - 1GB) ~= 4.3GB on this box,
@@ -224,8 +224,10 @@ services:
   # a sweeper re-enqueues anything Redis lost - so losing this data only delays stock
   # updates. `noeviction` is deliberate: Redis must refuse writes when full rather than
   # silently drop queued jobs.
+  # Redis 8 rewrites its AOF/RDB in a format 7.x cannot load, so an image rollback to 7.x
+  # must start on an EMPTY data dir (move the bind aside); the sweeper refills the queue.
   sabstore-redis:
-    image: redis:7.4.11-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    image: redis:8.10.2-alpine@sha256:72cedd9603038893af961e90ac5e1a1a0d8377d5e338dbdad8fe284ea25de18f
     cpus: 0.5
     restart: unless-stopped
     # Fail-closed on purpose: the platform turns an unset variable into an empty
@@ -243,7 +245,9 @@ services:
         esac
         [ "$${#pw}" -ge 16 ] || fail "REDIS_PASSWORD must be at least 16 characters"
         exec docker-entrypoint.sh redis-server --appendonly yes --appendfsync everysec --maxmemory 64mb --maxmemory-policy noeviction --requirepass "$$pw"
-    mem_limit: 128m
+    # Redis 8 idles at ~48 MiB (bundled modules; 7.4 was ~18), measured 2026-10-10:
+    # 64 MB maxmemory on top of that left no headroom for the AOF-rewrite fork.
+    mem_limit: 192m
     security_opt:
       - "no-new-privileges:true"
     logging:

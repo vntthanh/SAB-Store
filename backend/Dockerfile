@@ -1,6 +1,6 @@
 # Base image pinned by digest (multi-arch index) so a rebuild of the same commit
 # gets the same toolchain; bump deliberately.
-ARG NODE_IMAGE=node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+ARG NODE_IMAGE=node:24.21.0-alpine3.23@sha256:9ec4a2e289874ed0d722e1772ec2de45d2801541db8612f3638b26f128c69ac2
 
 # ── shared-build: compile the @sab/shared workspace package ──────────────────
 FROM ${NODE_IMAGE} AS shared-build
