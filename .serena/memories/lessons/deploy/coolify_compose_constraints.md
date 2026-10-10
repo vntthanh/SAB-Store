@@ -79,3 +79,4 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
   phần còn lại là Coolify xoá + tạo lại cả stack. Vẫn > 30 s.
   Hướng tiếp (user chọn để sau): tách mongo/redis/seaweedfs sang resource Coolify riêng để deploy code không restart dữ liệu
   (JudgeHub deploy bằng `compose up -d` nên chỉ tạo lại service đổi ảnh/cấu hình).
+  **Deploy 94 (10/10 14:28, đổi ảnh node 24 + redis 8, probe 1 req/s): trang 58 s, API 62 s** — ổn định quanh 60 s.
