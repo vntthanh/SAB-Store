@@ -15,12 +15,17 @@ const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct } = require('../helpers/factories');
 const Order = require('../../models/Order');
+const StockMovement = require('../../models/StockMovement');
 
 describe('POST /api/orders — orderCode collision retry', () => {
 	let app;
 
-	beforeAll(() => {
+	beforeAll(async () => {
 		app = buildTestApp();
+		// The first insert into a collection that does not exist yet aborts the
+		// surrounding transaction with a retryable WriteConflict, and that retry
+		// would draw an extra order code the mocked sequence below does not cover.
+		await StockMovement.createCollection();
 	});
 
 	afterEach(() => {

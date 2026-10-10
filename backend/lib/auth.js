@@ -7,6 +7,7 @@ const { jwt } = require("better-auth/plugins");
 const { customSession } = require("better-auth/plugins");
 const { createAuthMiddleware, APIError } = require("better-auth/api");
 const { COMMON_PASSWORDS } = require("../utils/passwordValidator");
+const { buildTrustedProxies, toCidrs } = require("./trusted-proxies");
 
 // Get MongoDB URI from environment variables
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -40,33 +41,61 @@ function getAllowedOrigins() {
 	];
 }
 
+// Better Auth enforces this on its own sign-in/change/reset routes but not on
+// /admin/create-user, which the hook below covers.
+const MIN_PASSWORD_LENGTH = 8;
+
+// Endpoints that set a password, and the body field carrying it.
+const PASSWORD_FIELD_BY_PATH = {
+	"/admin/create-user": "password",
+	"/admin/set-user-password": "newPassword",
+	"/change-password": "newPassword",
+	"/reset-password": "newPassword",
+};
+
 const auth = betterAuth({
 	database: mongodbAdapter(db),
 	baseURL: process.env.BASE_URL || "http://localhost:5000",
 	secret: JWT_SECRET,
 	trustedOrigins: getAllowedOrigins(),
+	advanced: {
+		// Better Auth refuses a multi-hop X-Forwarded-For unless told which hops to
+		// trust (the leftmost entry is client-controlled) and would key every
+		// request into one shared rate-limit bucket. With the list, the chain is
+		// stripped from the right to the first untrusted hop: the client Express sees.
+		ipAddress: { trustedProxies: toCidrs(buildTrustedProxies()) },
+	},
 	emailAndPassword: {
 		enabled: true,
 		// Raised from the previous 6: at 6, "123456" — the single most common
 		// leaked password — satisfied the length check on its own, ahead of
 		// even reaching the common-password blocklist below. Existing users'
 		// stored password hashes are untouched; this only gates new/changed
-		// passwords (sign-up, reset-password, change-password).
-		minPasswordLength: 8,
+		// passwords (admin create/reset, reset-password, change-password).
+		minPasswordLength: MIN_PASSWORD_LENGTH,
 		maxPasswordLength: 128,
+		// Accounts are created only by the admin (admin.createUser, and
+		// auth.api.createUser when seeding); there is no public registration.
+		disableSignUp: true,
 		requireEmailVerification: false,
 		sendEmailVerificationOnSignUp: false,
 	},
 	// better-auth's own HTTP handler is mounted ahead of any route-level
-	// validation middleware, so sign-up never reaches the request schemas;
-	// reuse the shared blocklist here so registration gets the same defense
-	// ("123456" is its first entry).
+	// validation middleware, so the password endpoints never reach the request
+	// schemas; reuse the shared blocklist here so every route that sets a
+	// password gets the same defense ("123456" is its first entry).
 	hooks: {
 		before: createAuthMiddleware(async (ctx) => {
-			if (ctx.path !== "/sign-up/email") {
+			const passwordField = PASSWORD_FIELD_BY_PATH[ctx.path];
+			if (!passwordField) {
 				return;
 			}
-			const password = ctx.body?.password;
+			const password = ctx.body?.[passwordField];
+			if (ctx.path === "/admin/create-user" && typeof password === "string" && password.length < MIN_PASSWORD_LENGTH) {
+				throw new APIError("BAD_REQUEST", {
+					message: `Mật khẩu phải có ít nhất ${MIN_PASSWORD_LENGTH} ký tự`,
+				});
+			}
 			if (typeof password === "string" && COMMON_PASSWORDS.includes(password.toLowerCase())) {
 				throw new APIError("BAD_REQUEST", {
 					message: "Mật khẩu này quá phổ biến và không an toàn. Vui lòng chọn mật khẩu khác",
@@ -131,9 +160,8 @@ const auth = betterAuth({
 				type: "string",
 				defaultValue: "user",
 				required: false,
-				// Must never be settable from the request body. Without this, `role`
-				// joins the public /sign-up/email and /update-user schemas and any
-				// visitor can register straight into the admin role.
+				// Must never be settable from a self-service request body: otherwise
+				// /update-user would let any signed-in user choose their own role.
 				input: false,
 			},
 		},

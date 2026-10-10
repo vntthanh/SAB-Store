@@ -1,0 +1,10 @@
+version: 2
+
+secret:
+  # Test fixtures only. backend/tests/auth/legacy-auth-data.test.js holds a
+  # scrypt password hash and an encrypted JWKS private key generated locally
+  # with the test-only JWT_SECRET from backend/tests/env.js (never a production
+  # value), plus a session token produced at run time. They exist to prove old
+  # data still decrypts, so they must stay literal in the file.
+  ignored_paths:
+    - backend/tests/auth/legacy-auth-data.test.js
