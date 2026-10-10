@@ -22,7 +22,7 @@ describe('initDatabase seed guard', () => {
 		process.env.ADMIN_USERNAME = 'initadmin';
 		process.env.ADMIN_PASSWORD = 'Init-Admin-Pass-123';
 		delete process.env.INIT_EMPTY_DATABASE;
-		logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 	});
 
 	afterEach(() => {
@@ -85,7 +85,7 @@ describe('initDatabase seed guard', () => {
 
 		it('leaves payment settings for the admin instead of inventing a bank account', async () => {
 			process.env.INIT_EMPTY_DATABASE = mongoose.connection.name;
-			const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
 			await initDatabase();
 

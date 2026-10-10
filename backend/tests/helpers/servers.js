@@ -2,7 +2,7 @@
  * Registry of listening servers built by helpers/app.js. Kept apart from the
  * app helper so tests/setup.js can close them without requiring server.js:
  * loading the app from a setup file binds every route module before a test
- * file's jest.mock() calls run.
+ * file's module mocks are installed.
  */
 const servers = new Set();
 

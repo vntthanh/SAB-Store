@@ -1,40 +1,42 @@
+const { clearAppModules } = require('../helpers/require-cache');
+
 /**
  * lib/auth.js validates JWT_SECRET at require time (module top level), so each
  * case here mutates process.env then forces a fresh module evaluation with
- * jest.resetModules(). MONGODB_URI is left untouched — the constructor for
+ * clearAppModules(). MONGODB_URI is left untouched — the constructor for
  * MongoClient does not connect eagerly, so these cases fail (or don't) purely
  * on the JWT_SECRET check, before any network I/O.
  */
 describe('JWT_SECRET fail-fast', () => {
 	const originalSecret = process.env.JWT_SECRET;
 
-	afterEach(() => {
+	afterEach(async () => {
 		process.env.JWT_SECRET = originalSecret;
-		jest.resetModules();
+		await clearAppModules();
 	});
 
-	it('throws when JWT_SECRET is missing', () => {
+	it('throws when JWT_SECRET is missing', async () => {
 		delete process.env.JWT_SECRET;
-		jest.resetModules();
+		await clearAppModules();
 		expect(() => require('../../lib/auth')).toThrow(/JWT_SECRET/);
 	});
 
-	it('throws when JWT_SECRET is shorter than 32 characters', () => {
+	it('throws when JWT_SECRET is shorter than 32 characters', async () => {
 		process.env.JWT_SECRET = 'too-short';
-		jest.resetModules();
+		await clearAppModules();
 		expect(() => require('../../lib/auth')).toThrow(/at least 32 characters/);
 	});
 
-	it('throws when JWT_SECRET is a known placeholder value', () => {
+	it('throws when JWT_SECRET is a known placeholder value', async () => {
 		// 32+ chars so it passes the length check and exercises the placeholder check.
 		process.env.JWT_SECRET = 'change-this-in-production-please';
-		jest.resetModules();
+		await clearAppModules();
 		expect(() => require('../../lib/auth')).toThrow(/placeholder/);
 	});
 
-	it('boots with a real secret', () => {
+	it('boots with a real secret', async () => {
 		process.env.JWT_SECRET = 'a-real-secret-value-that-is-at-least-32-chars';
-		jest.resetModules();
+		await clearAppModules();
 		expect(() => require('../../lib/auth')).not.toThrow();
 	});
 });

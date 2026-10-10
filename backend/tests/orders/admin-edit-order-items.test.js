@@ -37,7 +37,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-	jest.restoreAllMocks();
+	vi.restoreAllMocks();
 });
 
 // Products start at 0 stock so the cache equals the (empty) ledger sum and
@@ -256,8 +256,8 @@ describe('PUT /api/admin/orders/:id/items', () => {
 		const order = await placeOrder([line(a)]);
 		const before = await reload(order);
 		const movementsBefore = await StockMovement.countDocuments();
-		jest.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('ledger down'));
-		jest.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('ledger down'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const res = await edit(order._id, { items: [line(b)] });
 

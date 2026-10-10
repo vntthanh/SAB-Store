@@ -25,7 +25,7 @@ function loggedApp() {
 describe('access log line', () => {
 	let logSpy;
 	beforeEach(() => {
-		logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 	});
 	afterEach(() => logSpy.mockRestore());
 
@@ -61,7 +61,7 @@ describe('access log line', () => {
 	});
 
 	it('keeps the order code and the query out of the client-error warning', async () => {
-		const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+		const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		await request(loggedApp()).put('/api/orders/ABCDE12345?token=secret');
 		await settle();
 		expect(warnSpy).toHaveBeenCalled();

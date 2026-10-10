@@ -1,7 +1,7 @@
 /**
  * Environment defaults for tests.
  *
- * Loaded via jest `setupFiles`, which runs before any test module is imported.
+ * Loaded first in vitest `setupFiles`, which run before any test module is imported.
  * That ordering is required: lib/auth.js reads MONGODB_URI and JWT_SECRET at
  * require time and opens its own MongoClient there, so setting these from a
  * beforeAll hook would be too late and better-auth would hold a client pointed
@@ -13,9 +13,11 @@
  * other.
  */
 
-// Each worker gets its own database so suites running in parallel cannot see
-// each other's documents.
-const workerDb = `test_${process.env.JEST_WORKER_ID || '1'}`;
+// Each test file runs in its own forked process, so the pid names a database no
+// concurrent suite can share. VITEST_POOL_ID is not used: ids are recycled as
+// soon as a worker is replaced, while the previous process may still be tearing
+// down against the same database.
+const workerDb = `test_${process.pid}`;
 
 if (process.env.MONGO_TEST_URI) {
 	// getUri() yields mongodb://host:port/?replicaSet=... — set the path without
@@ -31,4 +33,9 @@ if (process.env.MONGO_TEST_URI) {
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-only-secret-value-at-least-32-chars-long';
 process.env.CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:3000';
-process.env.BASE_URL = process.env.BASE_URL || 'http://localhost:5000';
+// Vitest pre-fills process.env.BASE_URL with Vite's own "/" (the public base
+// path), which is not a URL: lib/auth.js would hand it to better-auth, which
+// rejects it. Only a real URL set by the caller is kept.
+if (!process.env.BASE_URL || process.env.BASE_URL === '/') {
+	process.env.BASE_URL = 'http://localhost:5000';
+}

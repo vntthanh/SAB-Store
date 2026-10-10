@@ -20,7 +20,7 @@ describe('admin create routes assign public codes', () => {
 		({ cookies } = await makeAdminSession(app));
 	});
 
-	afterEach(() => jest.restoreAllMocks());
+	afterEach(() => vi.restoreAllMocks());
 
 	const createProduct = (body = {}) => request(app)
 		.post('/api/admin/products')
@@ -45,7 +45,7 @@ describe('admin create routes assign public codes', () => {
 
 	it('POST product redoes the whole transaction with a new code after a collision', async () => {
 		await makeProduct({ publicCode: COLLIDING });
-		jest.spyOn(publicCode, 'generatePublicCode').mockReturnValueOnce(COLLIDING);
+		vi.spyOn(publicCode, 'generatePublicCode').mockReturnValueOnce(COLLIDING);
 
 		const res = await createProduct();
 
@@ -58,8 +58,8 @@ describe('admin create routes assign public codes', () => {
 
 	it('POST product gives up after 5 collisions and leaves nothing half-written', async () => {
 		await makeProduct({ publicCode: COLLIDING });
-		const spy = jest.spyOn(publicCode, 'generatePublicCode').mockReturnValue(COLLIDING);
-		jest.spyOn(console, 'error').mockImplementation(() => {});
+		const spy = vi.spyOn(publicCode, 'generatePublicCode').mockReturnValue(COLLIDING);
+		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const res = await createProduct();
 
@@ -72,7 +72,7 @@ describe('admin create routes assign public codes', () => {
 	it('POST product draws a fresh code when the driver reruns the transaction callback', async () => {
 		const draws = [];
 		const realGenerate = publicCode.generatePublicCode;
-		jest.spyOn(publicCode, 'generatePublicCode').mockImplementation(() => {
+		vi.spyOn(publicCode, 'generatePublicCode').mockImplementation(() => {
 			const code = realGenerate();
 			draws.push(code);
 			return code;
@@ -80,7 +80,7 @@ describe('admin create routes assign public codes', () => {
 		// The first attempt completes its write, then fails the way a transient
 		// transaction error does, so the driver reruns the callback.
 		const realSave = Product.prototype.save;
-		jest.spyOn(Product.prototype, 'save').mockImplementationOnce(async function (...args) {
+		vi.spyOn(Product.prototype, 'save').mockImplementationOnce(async function (...args) {
 			await realSave.apply(this, args);
 			const error = new mongoose.mongo.MongoServerError({ message: 'transient' });
 			error.addErrorLabel('TransientTransactionError');

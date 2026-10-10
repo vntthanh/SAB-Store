@@ -31,11 +31,11 @@ beforeAll(async () => {
 
 beforeEach(async () => {
 	admin = await makeAdminSession(app);
-	logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+	logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
 afterEach(() => {
-	jest.restoreAllMocks();
+	vi.restoreAllMocks();
 });
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -99,8 +99,8 @@ describe('order.created', () => {
 	it('is not logged when the transaction fails after the order was written', async () => {
 		const product = await makeProduct({ price: 100000, stockQuantity: 5 });
 		const items = [{ productId: String(product._id), quantity: 1 }];
-		jest.spyOn(console, 'error').mockImplementation(() => {});
-		jest.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('movement write failed'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('movement write failed'));
 
 		const res = await request(app)
 			.post('/api/orders')
@@ -212,8 +212,8 @@ describe('stock movement events', () => {
 	it('logs stock.movement.failed with attempts and a truncated error', async () => {
 		const product = await makeProduct({ stockQuantity: 0 });
 		const movement = await adjust(product._id, 3);
-		jest.spyOn(console, 'error').mockImplementation(() => {});
-		jest.spyOn(mongoose, 'startSession').mockRejectedValueOnce(new Error('x'.repeat(500)));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(mongoose, 'startSession').mockRejectedValueOnce(new Error('x'.repeat(500)));
 
 		await expect(applyMovement(movement._id)).rejects.toThrow();
 
@@ -249,7 +249,7 @@ describe('stock.sweeper', () => {
 	});
 
 	it('still reports the backlog when the re-enqueue step fails, and surfaces that failure', async () => {
-		jest.spyOn(StockMovement, 'find').mockImplementationOnce(() => { throw new Error('redis down'); });
+		vi.spyOn(StockMovement, 'find').mockImplementationOnce(() => { throw new Error('redis down'); });
 
 		await expect(stockQueue.sweepAndReport({ olderThanMs: 60_000 })).rejects.toThrow('redis down');
 

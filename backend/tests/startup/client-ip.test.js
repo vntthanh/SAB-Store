@@ -46,7 +46,7 @@ describe('req.ip behind the proxy chain', () => {
 describe('requestLogger access line', () => {
 	let logSpy;
 	beforeEach(() => {
-		logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 	});
 	afterEach(() => logSpy.mockRestore());
 

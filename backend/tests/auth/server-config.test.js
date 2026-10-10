@@ -1,5 +1,6 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
+const { clearAppModules } = require('../helpers/require-cache');
 
 describe('server hardening config', () => {
 	let app;
@@ -34,15 +35,17 @@ describe('server hardening config', () => {
 	it('disables the better-auth OpenAPI reference outside development', async () => {
 		const originalEnv = process.env.NODE_ENV;
 		process.env.NODE_ENV = 'production';
-		jest.resetModules();
-		// eslint-disable-next-line global-require
-		const { createApp } = require('../../server');
-		const prodApp = createApp();
+		try {
+			await clearAppModules();
+			// eslint-disable-next-line global-require
+			const { createApp } = require('../../server');
+			const prodApp = createApp();
 
-		const res = await request(prodApp).get('/api/auth/reference');
-		expect(res.status).toBe(404);
-
-		process.env.NODE_ENV = originalEnv;
-		jest.resetModules();
+			const res = await request(prodApp).get('/api/auth/reference');
+			expect(res.status).toBe(404);
+		} finally {
+			process.env.NODE_ENV = originalEnv;
+			await clearAppModules();
+		}
 	});
 });
