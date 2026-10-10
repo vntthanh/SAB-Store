@@ -18,6 +18,7 @@
 - `mem:lessons/workspace/workspace_docker_images` — đọc trước khi sửa Dockerfile, dockerignore hoặc dependency: root context, ignore per-Dockerfile, `pnpm deploy` không `--legacy`.
 - `mem:lessons/workspace/shared_package_build` — đọc khi sửa `packages/shared` hoặc thấy test xanh mà hành vi cũ: build cũ = xanh giả, `jitless`, không import `zod` trực tiếp.
 - `mem:lessons/workspace/validation_golden_fixtures` — đọc trước khi đổi validation của route: fixture vàng, khối `intentional`, replay qua một server.
+- `mem:lessons/workspace/dependency_upgrade_limits` — đọc trước khi nâng package/ảnh: better-auth >1.3.8 vỡ Jest 29 (ESM-only), ảnh dùng chung trên david-host, Redis 8 một chiều + RAM, đường lên mongo.
 
 ## workflow
 - `mem:lessons/workflow/agent_tooling_pitfalls` — scout-block hook chặn chuỗi `node_modules`/`build` trong Bash; tin cross-session khác permission mode hết hạn → đọc thẳng repo anh em.

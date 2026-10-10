@@ -1,7 +1,7 @@
 # Base images pinned by digest (multi-arch index) so a rebuild of the same commit
 # gets the same toolchain; bump deliberately.
-ARG NODE_IMAGE=node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
-ARG NGINX_IMAGE=nginx:alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
+ARG NODE_IMAGE=node:24.21.0-alpine3.23@sha256:9ec4a2e289874ed0d722e1772ec2de45d2801541db8612f3638b26f128c69ac2
+ARG NGINX_IMAGE=nginx:1.31.6-alpine@sha256:df221db836e1754089190208cee7eeda94f233197056426eda74a43ab1abeac2
 
 # ── deps ─────────────────────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS deps
