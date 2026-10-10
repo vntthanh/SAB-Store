@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const ErrorLogger = require('../utils/errorLogger');
 const { requireReplicaSet } = require('./require-replica-set');
 

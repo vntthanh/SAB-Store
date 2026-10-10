@@ -55,7 +55,7 @@ async function run({ apply = false } = {}) {
 }
 
 async function main() {
-	require('dotenv').config();
+	require('dotenv').config({ quiet: true });
 	const apply = process.argv.includes('--apply');
 
 	const uri = process.env.MONGODB_URI;
