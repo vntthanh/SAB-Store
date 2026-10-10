@@ -39,7 +39,7 @@ describe('admin settings mount does not double-authenticate', () => {
 	});
 
 	it('calls getSession exactly once for GET /api/admin/settings', async () => {
-		const spy = jest.spyOn(auth.api, 'getSession');
+		const spy = vi.spyOn(auth.api, 'getSession');
 
 		await request(app)
 			.get('/api/admin/settings')

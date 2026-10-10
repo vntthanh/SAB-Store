@@ -12,7 +12,7 @@ const {
 } = publicCode;
 
 beforeAll(() => Product.init());
-afterEach(() => jest.restoreAllMocks());
+afterEach(() => vi.restoreAllMocks());
 
 describe('generatePublicCode', () => {
 	it('always yields 8 characters from the unambiguous alphabet', () => {
@@ -60,7 +60,7 @@ describe('createWithPublicCodeRetry', () => {
 
 	it('draws a new code when the first one collides', async () => {
 		await makeProduct({ publicCode: COLLIDING });
-		const spy = jest.spyOn(publicCode, 'generatePublicCode').mockReturnValueOnce(COLLIDING);
+		const spy = vi.spyOn(publicCode, 'generatePublicCode').mockReturnValueOnce(COLLIDING);
 
 		const created = await createWithPublicCodeRetry(Product, { name: 'Retry me', price: 1000, category: 'general' });
 
@@ -71,7 +71,7 @@ describe('createWithPublicCodeRetry', () => {
 
 	it('gives up after 5 collisions and rethrows the duplicate-key error', async () => {
 		await makeProduct({ publicCode: COLLIDING });
-		const spy = jest.spyOn(publicCode, 'generatePublicCode').mockReturnValue(COLLIDING);
+		const spy = vi.spyOn(publicCode, 'generatePublicCode').mockReturnValue(COLLIDING);
 
 		await expect(createWithPublicCodeRetry(Product, { name: 'Never', price: 1000, category: 'general' }))
 			.rejects.toMatchObject({ code: 11000 });
@@ -81,7 +81,7 @@ describe('createWithPublicCodeRetry', () => {
 
 	it('tries a caller-supplied code once: redrawing cannot fix a fixed code', async () => {
 		await makeProduct({ publicCode: COLLIDING });
-		const spy = jest.spyOn(publicCode, 'generatePublicCode');
+		const spy = vi.spyOn(publicCode, 'generatePublicCode');
 
 		await expect(createWithPublicCodeRetry(Product, { name: 'Restore', price: 1000, category: 'general', publicCode: COLLIDING }))
 			.rejects.toMatchObject({ code: 11000 });
@@ -92,7 +92,7 @@ describe('createWithPublicCodeRetry', () => {
 describe('withPublicCodeRetry', () => {
 	it('does not retry an E11000 on another field', async () => {
 		const error = Object.assign(new Error('dup sku'), { code: 11000, keyPattern: { sku: 1 } });
-		const fn = jest.fn().mockRejectedValue(error);
+		const fn = vi.fn().mockRejectedValue(error);
 
 		await expect(withPublicCodeRetry(fn)).rejects.toBe(error);
 		expect(fn).toHaveBeenCalledTimes(1);

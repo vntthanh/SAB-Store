@@ -2,11 +2,9 @@
  * Own-password change as the UI performs it: the admin screen and the seller
  * screen both post to /api/seller/change-password with their session cookie.
  */
-const { randomUUID } = require('crypto');
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeAdminSession } = require('../helpers/factories');
-const User = require('../../models/User');
+const { makeAdminSession, makeSellerSession } = require('../helpers/factories');
 
 const CURRENT = 'factory-test-password-1';
 const NEXT = 'Zq9xK2mW4vB';
@@ -21,17 +19,9 @@ describe('POST /api/seller/change-password', () => {
 
 	const signIn = (email, password) => request(app).post('/api/auth/sign-in/email').send({ email, password });
 
-	async function makeSellerSession() {
-		const id = randomUUID().slice(0, 8);
-		const email = `seller-${id}@test.local`;
-		const signUp = await request(app)
-			.post('/api/auth/sign-up/email')
-			.send({ email, password: CURRENT, name: 'Seller', username: `seller_${id}` });
-		expect(signUp.status).toBe(200);
-		await User.updateOne({ email }, { $set: { role: 'seller' } });
-		const res = await signIn(email, CURRENT);
-		expect(res.status).toBe(200);
-		return { email, cookies: res.headers['set-cookie'] };
+	async function sellerWithCookies() {
+		const seller = await makeSellerSession(app);
+		return { email: seller.email, cookies: seller.cookies };
 	}
 
 	it('lets an admin change their own password', async () => {
@@ -62,7 +52,7 @@ describe('POST /api/seller/change-password', () => {
 	});
 
 	it('keeps working for a seller, with the same wrong-password answer', async () => {
-		const seller = await makeSellerSession();
+		const seller = await sellerWithCookies();
 
 		const wrong = await request(app).post(URL).set('Cookie', seller.cookies)
 			.send({ currentPassword: 'not-the-password-1', newPassword: NEXT });

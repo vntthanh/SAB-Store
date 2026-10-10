@@ -10,7 +10,6 @@ const { randomUUID } = require('crypto');
 const request = require('supertest');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
-const User = require('../../models/User');
 
 let sequence = 0;
 function nextSequence() {
@@ -87,53 +86,51 @@ function makeLegacyCombo(overrides = {}) {
 	});
 }
 
+const TEST_PASSWORD = 'factory-test-password-1';
+
 /**
- * Signs up a real user through better-auth on the app under test, then
- * promotes it to admin directly in Mongo, and signs in to mint a session
- * cookie.
- *
- * There is no public endpoint that can create an admin directly: the
- * Phase 00 fix for anonymous admin escalation makes `role` unsettable from
- * request bodies (`lib/auth.js`, `user.additionalFields.role.input: false`),
- * so the DB write here is the only way to reach that role in a test.
- *
- * Requires the app to have been built with createApp() (see helpers/app.js)
- * so the real better-auth handler is mounted at /api/auth/*.
+ * Creates an account the way the app does: public sign-up is disabled, so
+ * accounts come from the server-side admin API (init-database seeding uses the
+ * same call) with the role set at creation.
  */
-async function makeAdminSession(app) {
+async function createAccount({ role, prefix = 'user', password = TEST_PASSWORD } = {}) {
 	const n = nextSequence();
-	const email = `admin-${n}-${randomUUID()}@test.local`;
-	const password = 'factory-test-password-1';
-	const username = `admin_${n}_${randomUUID().slice(0, 8)}`;
-
-	const signUpRes = await request(app)
-		.post('/api/auth/sign-up/email')
-		.send({ email, password, name: `Admin ${n}`, username });
-	if (signUpRes.status !== 200) {
-		throw new Error(
-			`makeAdminSession: sign-up failed with ${signUpRes.status}: ${JSON.stringify(signUpRes.body)}`
-		);
-	}
-
-	// Direct DB write — see the function-level comment for why this cannot go
-	// through the public API.
-	await User.updateOne({ email }, { $set: { role: 'admin' } });
-
-	const signInRes = await request(app)
-		.post('/api/auth/sign-in/email')
-		.send({ email, password });
-	if (signInRes.status !== 200) {
-		throw new Error(
-			`makeAdminSession: sign-in failed with ${signInRes.status}: ${JSON.stringify(signInRes.body)}`
-		);
-	}
-
-	const cookies = signInRes.headers['set-cookie'];
-	if (!cookies || cookies.length === 0) {
-		throw new Error('makeAdminSession: sign-in did not return a session cookie');
-	}
-
-	return { cookies, email, username };
+	const email = `${prefix}-${n}-${randomUUID()}@test.local`;
+	const username = `${prefix}_${n}_${randomUUID().slice(0, 8)}`;
+	// Loaded on use: pulling lib/auth in at import time would load the app's
+	// dependency graph before a test that spies on a module the routes destructure.
+	const { auth } = require('../../lib/auth');
+	await auth.api.createUser({
+		body: { email, password, name: `${prefix} ${n}`, ...(role ? { role } : {}), data: { username } },
+	});
+	return { email, password, username };
 }
 
-module.exports = { makeProduct, makeCombo, makeLegacyProduct, makeLegacyCombo, makeAdminSession };
+async function signInSession(app, { email, password }) {
+	const res = await request(app).post('/api/auth/sign-in/email').send({ email, password });
+	if (res.status !== 200) {
+		throw new Error(`sign-in failed with ${res.status}: ${JSON.stringify(res.body)}`);
+	}
+	const cookies = res.headers['set-cookie'];
+	if (!cookies || cookies.length === 0) {
+		throw new Error('sign-in did not return a session cookie');
+	}
+	return cookies;
+}
+
+/** An admin account plus a signed-in session cookie, through the real auth handler. */
+async function makeAdminSession(app) {
+	const account = await createAccount({ role: 'admin', prefix: 'admin' });
+	return { ...account, cookies: await signInSession(app, account) };
+}
+
+/** A seller account plus a signed-in session cookie. */
+async function makeSellerSession(app) {
+	const account = await createAccount({ role: 'seller', prefix: 'seller' });
+	return { ...account, cookies: await signInSession(app, account) };
+}
+
+module.exports = {
+	makeProduct, makeCombo, makeLegacyProduct, makeLegacyCombo,
+	createAccount, makeAdminSession, makeSellerSession,
+};

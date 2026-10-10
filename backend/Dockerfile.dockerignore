@@ -18,7 +18,7 @@
 **/.DS_Store
 # Not needed at runtime: tests and their config, docs.
 **/tests
-**/jest.config.js
+**/vitest.config.mjs
 **/docs
 **/*.md
 # Read by the builder itself, never COPY'd into an image.

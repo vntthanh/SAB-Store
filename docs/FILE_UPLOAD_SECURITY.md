@@ -72,7 +72,7 @@ Updated upload routes with security integration:
 - File deletion: `DELETE /product-image/:filename`
 
 ### `backend/tests/validation/upload-file-guards.test.js`
-Jest suite covering the upload path end to end: `MAX_FILE_SIZE` value, oversized-file
+Vitest suite covering the upload path end to end: `MAX_FILE_SIZE` value, oversized-file
 rejection, RIFF-without-WEBP signature rejection, genuine WebP signature acceptance, and that
 500 responses carry a `correlationId` with no raw error leaked.
 

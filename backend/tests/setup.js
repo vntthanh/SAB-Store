@@ -18,6 +18,12 @@ beforeAll(async () => {
 	}
 
 	await mongoose.connect(uri);
+
+	// Every test file gets a fresh database, and mongoose builds indexes in the
+	// background after connecting. A test that relies on a unique index (a
+	// duplicate orderCode, a colliding public code) would otherwise race it and
+	// silently insert the duplicate.
+	await Promise.all(Object.values(mongoose.models).map((model) => model.init()));
 });
 
 // Clear every collection between tests so ordering never leaks state.

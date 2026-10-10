@@ -14,7 +14,7 @@ describe('initDatabase seed', () => {
 		process.env.ADMIN_USERNAME = 'seedadmin';
 		process.env.ADMIN_PASSWORD = 'Seed-Admin-Pass-123';
 		delete process.env.INIT_EMPTY_DATABASE;
-		jest.spyOn(console, 'log').mockImplementation(() => {});
+		vi.spyOn(console, 'log').mockImplementation(() => {});
 		return Product.init();
 	});
 
@@ -23,7 +23,7 @@ describe('initDatabase seed', () => {
 			if (saved[key] === undefined) delete process.env[key];
 			else process.env[key] = saved[key];
 		}
-		jest.restoreAllMocks();
+		vi.restoreAllMocks();
 	});
 
 	it('gives every sample product, created by insertMany, a unique code and a slug', async () => {

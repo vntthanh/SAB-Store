@@ -3,14 +3,12 @@
  * order, and the order's stored total never changes. Every assertion re-reads
  * MongoDB instead of trusting the response or a mock.
  */
-const { randomUUID } = require('crypto');
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
+const { makeProduct, makeCombo, makeAdminSession, makeSellerSession } = require('../helpers/factories');
 const { applyPendingMovements } = require('../helpers/stock');
 const { expectedTotalFor } = require('../helpers/pricing');
 const Order = require('../../models/Order');
-const User = require('../../models/User');
 const Product = require('../../models/Product');
 const StockMovement = require('../../models/StockMovement');
 const { reconcile } = require('../../services/stock-ledger');
@@ -37,7 +35,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-	jest.restoreAllMocks();
+	vi.restoreAllMocks();
 });
 
 // Products start at 0 stock so the cache equals the (empty) ledger sum and
@@ -67,17 +65,8 @@ const reload = (order) => Order.findById(order._id).lean();
 const stockOf = async (p) => (await Product.findById(p._id).lean()).stockQuantity;
 const editMovements = (filter = {}) => StockMovement.find({ type: 'order_edit', ...filter }).lean();
 
-async function makeSellerSession() {
-	const email = `seller-${randomUUID()}@test.local`;
-	const password = 'factory-test-password-1';
-	const signUp = await request(app)
-		.post('/api/auth/sign-up/email')
-		.send({ email, password, name: 'Seller', username: `seller_${randomUUID().slice(0, 8)}` });
-	expect(signUp.status).toBe(200);
-	await User.updateOne({ email }, { $set: { role: 'seller' } });
-	const signIn = await request(app).post('/api/auth/sign-in/email').send({ email, password });
-	expect(signIn.status).toBe(200);
-	return signIn.headers['set-cookie'];
+async function makeSellerCookies() {
+	return (await makeSellerSession(app)).cookies;
 }
 
 describe('PUT /api/admin/orders/:id/items', () => {
@@ -256,8 +245,8 @@ describe('PUT /api/admin/orders/:id/items', () => {
 		const order = await placeOrder([line(a)]);
 		const before = await reload(order);
 		const movementsBefore = await StockMovement.countDocuments();
-		jest.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('ledger down'));
-		jest.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('ledger down'));
+		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const res = await edit(order._id, { items: [line(b)] });
 
@@ -269,7 +258,7 @@ describe('PUT /api/admin/orders/:id/items', () => {
 	it('refuses a seller with 403 and an anonymous caller with 401', async () => {
 		const [a, b] = [await product(), await product()];
 		const order = await placeOrder([line(a)]);
-		const sellerCookies = await makeSellerSession();
+		const sellerCookies = await makeSellerCookies();
 		const body = { items: [line(b)], expectedRevision: 0, reason: 'x' };
 
 		const asSeller = await request(app).put(`/api/admin/orders/${order._id}/items`).set('Cookie', sellerCookies).send(body);

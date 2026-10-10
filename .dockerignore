@@ -34,7 +34,7 @@
 **/*.md
 # Not needed at runtime: tests and their config.
 **/tests
-**/jest.config.js
+**/vitest.config.mjs
 **/email.html
 # Dockerfiles and ignore lists are read by the builder itself, not COPY'd.
 **/Dockerfile*

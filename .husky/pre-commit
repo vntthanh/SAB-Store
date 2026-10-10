@@ -3,9 +3,10 @@
 #   commit small enough for the multi-agent review before it);
 # - knip (unused files, exports, dependencies) runs first, before any test or build,
 #   whenever code or a manifest is staged: it is cheap and fails the commit early;
-# - backend: Jest on the staged files' related tests, or the full suite when a
-#   shared contract (models, pricing, stock, auth, middleware, query guard, test
-#   harness, dependencies) changed;
+# - backend: Vitest on the staged test files, or the full suite when any backend
+#   module, the test harness or the backend manifest changed. `vitest related` is not used
+#   for source files: the backend loads its modules with native require(), which
+#   Vitest's module graph cannot see, so it would find no tests and skip them silently;
 # - frontend: the production bundle must build and the frontend unit tests must pass;
 # - workspace plumbing (packages/*, root manifest, lockfile, workspace file): every
 #   consumer is affected, so the full backend suite, the frontend build and tests and the
@@ -51,19 +52,15 @@ for entry in "${STAGED[@]}"; do
 		*.md) ;;
 		package.json | pnpm-lock.yaml | pnpm-workspace.yaml | .npmrc | packages/*)
 			backend_full=true; frontend_changed=true; shared_changed=true ;;
-		backend/package.json | backend/jest.config.js | \
-			backend/tests/helpers/* | backend/tests/global-setup.js | backend/tests/global-teardown.js | \
-			backend/tests/setup.js | backend/tests/env.js | \
-			backend/models/* | backend/services/pricing.js | backend/services/ComboService.js | \
-			backend/services/stock.js | backend/utils/query-guard.js | \
-			backend/lib/* | backend/middleware/*)
+		backend/package.json | backend/vitest.config.mjs | \
+			backend/tests/helpers/* | backend/tests/global-setup.js | \
+			backend/tests/setup.js | backend/tests/env.js)
 			backend_full=true ;;
 		backend/tests/*)
 			if [[ "$status" != D ]]; then backend_files+=("${f#backend/}"); fi ;;
 		backend/*.js)
-			# A deleted module cannot seed --findRelatedTests, and whatever still
-			# imports it is unknown here: run everything.
-			if [[ "$status" == D ]]; then backend_full=true; else backend_files+=("${f#backend/}"); fi ;;
+			# Vitest cannot map a module to the tests that require() it: run everything.
+			backend_full=true ;;
 		frontend/*)
 			frontend_changed=true ;;
 	esac
@@ -86,11 +83,11 @@ if [[ "$knip_needed" == true ]]; then
 fi
 
 if [[ "$backend_full" == true ]]; then
-	echo "pre-commit: shared backend contract changed, running the full backend suite"
+	echo "pre-commit: backend module or test harness changed, running the full backend suite"
 	(cd "$ROOT/backend" && pnpm --silent test)
 elif ((${#backend_files[@]} > 0)); then
-	echo "pre-commit: backend tests related to ${#backend_files[@]} staged file(s)"
-	(cd "$ROOT/backend" && pnpm --silent test --findRelatedTests --passWithNoTests "${backend_files[@]}")
+	echo "pre-commit: ${#backend_files[@]} staged backend test file(s)"
+	(cd "$ROOT/backend" && pnpm --silent test --passWithNoTests "${backend_files[@]}")
 fi
 
 if [[ "$frontend_changed" == true ]]; then

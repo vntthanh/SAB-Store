@@ -5,10 +5,9 @@
 const { randomUUID } = require('crypto');
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeProduct, makeAdminSession } = require('../helpers/factories');
+const { makeProduct, makeAdminSession, makeSellerSession } = require('../helpers/factories');
 const { applyPendingMovements } = require('../helpers/stock');
 const Order = require('../../models/Order');
-const User = require('../../models/User');
 const StockMovement = require('../../models/StockMovement');
 const { recordMovement } = require('../../services/stock-ledger');
 
@@ -46,17 +45,8 @@ async function placeOrder(quantity = 2, price = 10000) {
 
 const movementCount = (product) => StockMovement.countDocuments({ productId: product._id });
 
-async function makeSellerSession() {
-	const email = `seller-${randomUUID()}@test.local`;
-	const password = 'factory-test-password-1';
-	const signUp = await request(app)
-		.post('/api/auth/sign-up/email')
-		.send({ email, password, name: 'Seller', username: `seller_${randomUUID().slice(0, 8)}` });
-	expect(signUp.status).toBe(200);
-	await User.updateOne({ email }, { $set: { role: 'seller' } });
-	const signIn = await request(app).post('/api/auth/sign-in/email').send({ email, password });
-	expect(signIn.status).toBe(200);
-	return signIn.headers['set-cookie'];
+async function makeSellerCookies() {
+	return (await makeSellerSession(app)).cookies;
 }
 
 describe.each([
@@ -195,7 +185,7 @@ describe('PATCH /api/admin/orders/:id/notes', () => {
 
 	it('refuses a seller with 403 and an anonymous caller with 401', async () => {
 		const { order } = await placeOrder();
-		const sellerCookies = await makeSellerSession();
+		const sellerCookies = await makeSellerCookies();
 
 		expect((await patch(order._id, { note: 'x' }, sellerCookies)).status).toBe(403);
 		expect((await request(app).patch(`/api/admin/orders/${order._id}/notes`).send({ note: 'x' })).status).toBe(401);

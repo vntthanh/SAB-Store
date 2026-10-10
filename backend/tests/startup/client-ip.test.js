@@ -1,6 +1,6 @@
 const express = require('express');
 const request = require('supertest');
-const { buildTrustedProxies, DEFAULT_TRUSTED_PROXIES } = require('../../lib/trusted-proxies');
+const { buildTrustedProxies, toCidrs, DEFAULT_TRUSTED_PROXIES } = require('../../lib/trusted-proxies');
 const { requestLogger } = require('../../middleware/logger');
 const { createApp } = require('../../server');
 
@@ -25,6 +25,35 @@ describe('buildTrustedProxies', () => {
 	});
 });
 
+describe('toCidrs', () => {
+	it('expands the default list to the CIDR form Better Auth reads', () => {
+		expect(toCidrs([...DEFAULT_TRUSTED_PROXIES])).toEqual(['127.0.0.0/8', '::1/128', '10.0.0.0/16']);
+	});
+
+	it('expands uniquelocal and linklocal', () => {
+		expect(toCidrs(['uniquelocal'])).toEqual(['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', 'fc00::/7']);
+		expect(toCidrs(['linklocal'])).toEqual(['169.254.0.0/16', 'fe80::/10']);
+	});
+
+	it('passes bare addresses and CIDRs through unchanged', () => {
+		expect(toCidrs(['203.0.113.7', '2001:db8::1', '172.20.0.0/16', '2001:db8::/32'])).toEqual([
+			'203.0.113.7', '2001:db8::1', '172.20.0.0/16', '2001:db8::/32',
+		]);
+	});
+
+	it.each(['1', 'loopbak', '10.0.0.0/255.0.0.0', '10.0.0.0/33', '::1/129', '10.0.0.0/', 'not-an-ip/8', '10.0.0.256', 'fe80::1%eth0', '1.2.3.4/0', '::/0'])(
+		'throws on %s instead of letting Better Auth drop it',
+		(entry) => {
+			expect(() => toCidrs(['loopback', entry])).toThrow(/Invalid trusted proxy/);
+		}
+	);
+
+	it('validates a TRUSTED_PROXY_IPS override through buildTrustedProxies', () => {
+		expect(() => toCidrs(buildTrustedProxies('loopback,10.0.0.0/16'))).not.toThrow();
+		expect(() => toCidrs(buildTrustedProxies('loopback,1'))).toThrow(/"1"/);
+	});
+});
+
 describe('req.ip behind the proxy chain', () => {
 	it('is resolved by the app with the shared trust list', () => {
 		expect(createApp().get('trust proxy')).toEqual(buildTrustedProxies());
@@ -46,7 +75,7 @@ describe('req.ip behind the proxy chain', () => {
 describe('requestLogger access line', () => {
 	let logSpy;
 	beforeEach(() => {
-		logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+		logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 	});
 	afterEach(() => logSpy.mockRestore());
 

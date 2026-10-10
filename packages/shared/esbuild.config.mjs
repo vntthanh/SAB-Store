@@ -1,5 +1,5 @@
 // Builds the one source into the two formats consumers load: ESM for Vite and
-// CommonJS for the backend (Jest 29 cannot require() an ES module). The output folder is wiped first so a deleted module never
+// CommonJS for the backend, which loads it with native require(). The output folder is wiped first so a deleted module never
 // lingers.
 import { rmSync } from 'node:fs';
 import { context, build } from 'esbuild';

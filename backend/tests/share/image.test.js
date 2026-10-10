@@ -8,7 +8,7 @@ const Combo = require('../../models/Combo');
 const minio = require('../../lib/minio');
 const { ogVersion, findPublicProductByCode, findPublicComboByCode } = require('../../services/public-catalog');
 
-jest.setTimeout(20000);
+vi.setConfig({ testTimeout: 20000 });
 
 const png = (size = 800) => sharp({ create: { width: size, height: size, channels: 3, background: '#cc3333' } }).png().toBuffer();
 
@@ -19,8 +19,8 @@ const collectBody = (res, callback) => {
 };
 
 const stubMinio = (buffer, { size = buffer.length } = {}) => {
-	jest.spyOn(minio, 'getFileMetadata').mockResolvedValue({ size });
-	return jest.spyOn(minio, 'getFile').mockImplementation(async () => Readable.from([buffer]));
+	vi.spyOn(minio, 'getFileMetadata').mockResolvedValue({ size });
+	return vi.spyOn(minio, 'getFile').mockImplementation(async () => Readable.from([buffer]));
 };
 
 const expectCompositedJpeg = async (res) => {
@@ -37,10 +37,10 @@ describe('GET /api/share/image/:type/:code.jpg', () => {
 	beforeAll(() => Promise.all([Product.init(), Combo.init()]));
 	beforeEach(() => {
 		app = buildTestApp();
-		jest.spyOn(console, 'warn').mockImplementation(() => {});
-		jest.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
 	});
-	afterEach(() => jest.restoreAllMocks());
+	afterEach(() => vi.restoreAllMocks());
 
 	const fetchImage = (type, code, version) => request(app)
 		.get(`/api/share/image/${type}/${code}.jpg`)
@@ -87,7 +87,7 @@ describe('GET /api/share/image/:type/:code.jpg', () => {
 	});
 
 	it('falls back to the stock picture when storage fails', async () => {
-		jest.spyOn(minio, 'getFileMetadata').mockRejectedValue(new Error('storage down'));
+		vi.spyOn(minio, 'getFileMetadata').mockRejectedValue(new Error('storage down'));
 		const product = await makeProduct({ salesChannel: 'online', imageUrl: '/uploads/products/a.png' });
 
 		await expectCompositedJpeg(await productImage(product));
@@ -118,7 +118,7 @@ describe('GET /api/share/image/:type/:code.jpg', () => {
 	});
 
 	it('falls back to the stock picture when storage never answers', async () => {
-		jest.spyOn(minio, 'getFileMetadata').mockImplementation(() => new Promise(() => {}));
+		vi.spyOn(minio, 'getFileMetadata').mockImplementation(() => new Promise(() => {}));
 		const product = await makeProduct({ salesChannel: 'online', imageUrl: '/uploads/products/slow.png' });
 
 		await expectCompositedJpeg(await productImage(product));
@@ -147,14 +147,14 @@ describe('GET /api/share/image/:type/:code.jpg', () => {
 		const gate = new Promise((resolve) => { release = resolve; });
 		// The first render is held open by the gate, so the only response that can
 		// arrive before release() is the one refused because the queue is full.
-		jest.spyOn(minio, 'getFileMetadata').mockImplementation(async () => {
+		vi.spyOn(minio, 'getFileMetadata').mockImplementation(async () => {
 			inFlight += 1;
 			peak = Math.max(peak, inFlight);
 			await gate;
 			inFlight -= 1;
 			return { size: source.length };
 		});
-		jest.spyOn(minio, 'getFile').mockImplementation(async () => Readable.from([source]));
+		vi.spyOn(minio, 'getFile').mockImplementation(async () => Readable.from([source]));
 		const product = await makeProduct({ salesChannel: 'online', imageUrl: '/uploads/products/a.png' });
 		const version = ogVersion(await findPublicProductByCode(product.publicCode));
 

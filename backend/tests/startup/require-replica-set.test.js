@@ -1,7 +1,7 @@
 const { requireReplicaSet } = require('../../lib/require-replica-set');
 
 const connectionReplying = (reply) => {
-	const command = jest.fn().mockResolvedValue(reply);
+	const command = vi.fn().mockResolvedValue(reply);
 	return { connection: { db: { admin: () => ({ command }) } }, command };
 };
 
@@ -18,7 +18,7 @@ describe('requireReplicaSet', () => {
 	});
 
 	it('propagates a failing hello command instead of swallowing it', async () => {
-		const connection = { db: { admin: () => ({ command: jest.fn().mockRejectedValue(new Error('boom')) }) } };
+		const connection = { db: { admin: () => ({ command: vi.fn().mockRejectedValue(new Error('boom')) }) } };
 		await expect(requireReplicaSet(connection)).rejects.toThrow('boom');
 	});
 

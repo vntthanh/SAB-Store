@@ -24,7 +24,7 @@ describe('GET /api/share/meta', () => {
 	beforeEach(() => {
 		app = buildTestApp();
 	});
-	afterEach(() => jest.restoreAllMocks());
+	afterEach(() => vi.restoreAllMocks());
 
 	it('renders exactly the contract tag set for a public product', async () => {
 		const product = await makeProduct({ salesChannel: 'online', name: 'Móc khoá', price: 25000, description: 'Xinh xắn' });
@@ -99,10 +99,10 @@ describe('GET /api/share/meta', () => {
 	});
 
 	it('answers an empty 500, not the JSON error body, when the database fails', async () => {
-		jest.spyOn(Product, 'findSellable').mockImplementation(() => {
+		vi.spyOn(Product, 'findSellable').mockImplementation(() => {
 			throw new Error('db down');
 		});
-		jest.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const res = await meta(app, 'p', 'ABCDEFGH');
 

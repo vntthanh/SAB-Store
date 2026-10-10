@@ -3,9 +3,8 @@ const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession, makeCombo } = require('../helpers/factories');
 
 // Proves the harness can mint a real authenticated admin session end to end
-// (sign-up through better-auth -> role promotion in Mongo -> sign-in ->
-// reusable cookie) — every phase-04+ suite that needs an authenticated
-// request depends on this working.
+// (account creation through the auth API -> sign-in -> reusable cookie);
+// every suite that needs an authenticated request depends on this working.
 describe('makeAdminSession', () => {
 	let app;
 
