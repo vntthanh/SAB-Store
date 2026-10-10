@@ -45,7 +45,7 @@
  *   docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
  *     node scripts/backfill-stock-deducted.js --apply
  */
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const mongoose = require('mongoose');
 const Order = require('../models/Order');
 

@@ -4,7 +4,7 @@ const { auth } = require('./lib/auth');
 const Product = require('./models/Product');
 const User = require('./models/User');
 const Settings = require('./models/Settings');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 const { SETTINGS_KEY } = Settings;
 

@@ -1,5 +1,5 @@
 const Minio = require('minio');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 const MINIO_ENDPOINT = process.env.MINIO_ENDPOINT || 'localhost';
 const MINIO_PORT = parseInt(process.env.MINIO_PORT || '9000');

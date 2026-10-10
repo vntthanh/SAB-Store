@@ -6,7 +6,7 @@
  * WITHOUT printing any value: this runs on a shared host and its output ends up
  * in logs and pasted into chats.
  */
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 // Missing any of these means the process cannot serve traffic correctly.
 const REQUIRED = [
