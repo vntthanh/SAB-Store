@@ -4,21 +4,6 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
 	plugins: [react()],
 
-	esbuild: {
-		loader: 'jsx',
-		include: /src\/.*\.jsx?$/,
-		exclude: [],
-		target: 'es2015',
-	},
-
-	optimizeDeps: {
-		esbuildOptions: {
-			loader: {
-				'.js': 'jsx',
-			},
-		},
-	},
-
 	// Development server configuration
 	server: {
 		port: 3000,
@@ -39,14 +24,14 @@ export default defineConfig({
 	build: {
 		outDir: 'build',
 		sourcemap: false,
-		minify: 'esbuild',
-		target: 'es2015',
 		chunkSizeWarningLimit: 1000,
-		rollupOptions: {
+		rolldownOptions: {
 			output: {
-				manualChunks: {
-					vendor: ['react', 'react-dom', 'react-router-dom'],
-					ui: ['react-toastify', 'sweetalert2'],
+				codeSplitting: {
+					groups: [
+						{ name: 'vendor', test: /node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/ },
+						{ name: 'ui', test: /node_modules[\\/](react-toastify|sweetalert2)[\\/]/ },
+					],
 				},
 			},
 		},
@@ -58,14 +43,4 @@ export default defineConfig({
 		host: true,
 		strictPort: true,
 	},
-
-	// Path resolution
-	resolve: {
-		alias: {
-			'@': '/src',
-		},
-	},
-
-	// Environment variables prefix
-	envPrefix: 'VITE_',
 });
