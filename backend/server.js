@@ -47,8 +47,10 @@ function createApp() {
 	// lib/trusted-proxies.js.
 	app.set('trust proxy', buildTrustedProxies());
 
-	// Parse query strings into plain strings only. Express' default parser turns
-	// ?status[$ne]= into a nested object that reaches Mongo as a live operator.
+	// Parse query strings into plain strings or arrays only. Pinned on purpose
+	// even though 'simple' is Express 5's default: if the default ever changed to
+	// a nesting parser, ?status[$ne]= would become an object and reach Mongo as
+	// a live operator.
 	app.set('query parser', 'simple');
 
 	// Security middleware
@@ -119,6 +121,15 @@ function createApp() {
 	app.use(express.json({ limit: '1mb' }));
 	app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
+	// Express 5 leaves req.body undefined when no parser ran (no body, or an
+	// unparsed content type); Express 4 gave {}. Handlers destructure req.body
+	// directly, so keep the {} shape instead of turning an empty POST into a
+	// TypeError.
+	app.use((req, res, next) => {
+		if (req.body === undefined) req.body = {};
+		next();
+	});
+
 	// Request logging middleware
 	app.use(requestLogger);
 
@@ -150,7 +161,7 @@ function createApp() {
 	}
 
 	// Better-auth API routes - Must be AFTER body parsing middleware
-	app.all('/api/auth/*', toNodeHandler(auth));
+	app.all('/api/auth/*splat', toNodeHandler(auth));
 
 	// Routes
 	// Upload writes to and deletes from object storage. Only the admin product UI
@@ -215,7 +226,7 @@ function createApp() {
 	});
 
 	// 404 handler
-	app.use('*', (req, res) => {
+	app.use((req, res) => {
 		applyCorsHeaders(req, res);
 
 		const error = ErrorResponse.notFoundError('Route', {
