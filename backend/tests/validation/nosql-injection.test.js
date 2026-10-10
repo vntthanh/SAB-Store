@@ -30,7 +30,7 @@ describe('NoSQL operator injection — public product routes', () => {
 		// asString() must have coerced the object to undefined, not forwarded
 		// it into Product.find() as a live operator. The caller's filter is the
 		// first $and clause; the second is the channel rule.
-		const querySpy = jest.spyOn(require('../../models/Product'), 'find');
+		const querySpy = vi.spyOn(require('../../models/Product'), 'find');
 		const product = await makeProduct({ category: 'lanyard' });
 
 		const res = await request(app).get('/api/products').query('category[$ne]=x');

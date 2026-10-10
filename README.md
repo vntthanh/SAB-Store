@@ -174,7 +174,7 @@ Client Request
 Không package nào có script `lint` (`backend/package.json`, `frontend/package.json`) — bỏ qua bước đó. Chạy test:
 
 ```bash
-# Backend (Jest)
+# Backend (Vitest)
 cd backend && pnpm test
 
 # Frontend (Vitest)

@@ -141,8 +141,7 @@ const auth = betterAuth({
 	},
 });
 
-// Exposed so a caller that owns process shutdown (see tests/setup.js /
-// jest.config.js forceExit) can close this connection explicitly — better-auth
-// never exposes it, so nothing else closes this handle in tests, and jest
-// hangs after the last test without --forceExit.
+// Exposed so a caller that owns process shutdown (tests/setup.js) can close this
+// connection explicitly: better-auth never exposes it, and an open handle keeps
+// the test worker alive after the last test.
 module.exports = { auth, getAllowedOrigins, client };

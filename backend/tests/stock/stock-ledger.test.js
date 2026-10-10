@@ -212,7 +212,7 @@ describe('applyMovement', () => {
 		const movement = await adjust(product._id, 5);
 
 		// Product write fails after the movement was already flipped inside the transaction.
-		const spy = jest.spyOn(Product, 'updateOne').mockRejectedValueOnce(new Error('disk on fire'));
+		const spy = vi.spyOn(Product, 'updateOne').mockRejectedValueOnce(new Error('disk on fire'));
 		try {
 			await expect(applyMovement(movement._id)).rejects.toThrow('disk on fire');
 		} finally {
@@ -234,8 +234,8 @@ describe('applyMovement', () => {
 		await StockMovement.updateOne({ _id: movement._id }, { $set: { attempts: ledger.CRITICAL_AFTER_ATTEMPTS - 1 } });
 
 		const ErrorLogger = require('../../utils/errorLogger');
-		const critical = jest.spyOn(ErrorLogger, 'logCritical').mockImplementation(() => {});
-		const spy = jest.spyOn(Product, 'updateOne').mockRejectedValueOnce(new Error('still broken'));
+		const critical = vi.spyOn(ErrorLogger, 'logCritical').mockImplementation(() => {});
+		const spy = vi.spyOn(Product, 'updateOne').mockRejectedValueOnce(new Error('still broken'));
 		try {
 			await expect(applyMovement(movement._id)).rejects.toThrow('still broken');
 			expect(critical).toHaveBeenCalledTimes(1);

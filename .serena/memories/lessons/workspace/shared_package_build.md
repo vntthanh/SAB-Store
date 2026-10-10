@@ -1,6 +1,6 @@
 # `@sab/shared` is consumed from its build: stale build = false green
 
-- Source is ESM; esbuild emits ESM + CJS (`exports` import/require, `zod` external) because backend Jest cannot `require` ESM.
+- Source is ESM; esbuild emits ESM + CJS (`exports` import/require, `zod` external) because the backend loads it with native `require()`.
 - `pretest`/`predev`/`prebuild` rebuild it; `**/dist` is dockerignored so images always build it from source. A direct `node server.js` / `npx jest` skips the rebuild.
 - No `sideEffects:false`: `z.config` (Vietnamese `customError`, `jitless` for the `script-src 'self'` CSP) is a load-bearing side effect.
 - Consumers never import `zod`; they import `z` from `@sab/shared` so one Zod instance carries the config.

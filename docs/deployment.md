@@ -121,7 +121,7 @@ esac
 
 - **Every machine** (Mac and Windows, they share the working tree through Syncthing): wait for
   Syncthing to report "Up to Date", run `pnpm install` once at the repository root **before any
-  git command that runs a hook** (the hooks call `pnpm`/Jest against the tree and would test a
+  git command that runs a hook** (the hooks call `pnpm`/Vitest against the tree and would test a
   half-migrated one), then `git reset` (the index is per machine) and check that `HEAD` and
   `git status` are clean. Old `backend/node_modules` and `frontend/node_modules` are replaced by
   workspace links; delete them first if pnpm complains.
@@ -399,7 +399,7 @@ probes (`/.env`, `*.php`, …) get an unlogged 404 straight from nginx.
   transactions work. The keyfile comes from the runtime variable `MONGO_REPLICA_KEY`
   (base64, no newlines, 6–1024 chars, e.g. `openssl rand -base64 756 | tr -d '\n'`); the
   healthcheck initiates the set on first start. `MONGODB_URI` carries `replicaSet=rs0`. The
-  backend refuses to boot against a standalone mongod, so the Jest harness (also a replica
+  backend refuses to boot against a standalone mongod, so the Vitest harness (also a replica
   set) and production behave the same.
 
 ## Rollback

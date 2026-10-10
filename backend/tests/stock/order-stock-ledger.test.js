@@ -35,7 +35,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-	jest.restoreAllMocks();
+	vi.restoreAllMocks();
 });
 
 const placeOnline = (items, expectedTotal, extra = {}) =>
@@ -88,7 +88,7 @@ describe('POST /api/orders — stock ledger', () => {
 		const product = await makeProduct({ price: 10000 });
 		let ordersVisibleAtEnqueue = null;
 		let enqueued = null;
-		jest.spyOn(stockQueue, 'enqueueMovementJobs').mockImplementation(async (ids) => {
+		vi.spyOn(stockQueue, 'enqueueMovementJobs').mockImplementation(async (ids) => {
 			ordersVisibleAtEnqueue = await Order.countDocuments();
 			enqueued = ids;
 		});
@@ -103,7 +103,7 @@ describe('POST /api/orders — stock ledger', () => {
 
 	it('still creates the order when the queue is unreachable', async () => {
 		const product = await makeProduct({ price: 10000 });
-		jest.spyOn(stockQueue, 'enqueueMovementJobs').mockRejectedValue(new Error('redis down'));
+		vi.spyOn(stockQueue, 'enqueueMovementJobs').mockRejectedValue(new Error('redis down'));
 
 		const res = await placeOnline([line(product, 1)], 10000);
 
@@ -114,7 +114,7 @@ describe('POST /api/orders — stock ledger', () => {
 
 	it('leaves no order and no movement when the transaction fails after the order was written', async () => {
 		const product = await makeProduct({ price: 10000 });
-		jest.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('disk full'));
+		vi.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('disk full'));
 
 		const res = await placeOnline([line(product, 1)], 10000);
 
@@ -204,7 +204,7 @@ describe('POST /api/seller/orders/direct — stock ledger', () => {
 
 	it('leaves no order and no movement when the transaction fails after the order was written', async () => {
 		const product = await makeProduct({ price: 20000 });
-		jest.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('disk full'));
+		vi.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('disk full'));
 
 		const res = await placeDirect([line(product, 1)], 20000);
 
@@ -347,7 +347,7 @@ describe.each([
 	it('leaves status, flag and movements untouched when the transaction fails', async () => {
 		const { order, product } = await placeOrderWithStock(2);
 		const before = (await movementsOf(product)).length;
-		jest.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('disk full'));
+		vi.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('disk full'));
 
 		const res = await change(order._id, { status: 'cancelled' });
 
@@ -404,7 +404,7 @@ describe.each([
 	it('hands the movements to the queue after the commit', async () => {
 		const { order, product } = await placeOrderWithStock(2);
 		let statusAtEnqueue = null;
-		jest.spyOn(stockQueue, 'enqueueMovementJobs').mockImplementation(async () => {
+		vi.spyOn(stockQueue, 'enqueueMovementJobs').mockImplementation(async () => {
 			statusAtEnqueue = (await Order.findById(order._id).lean()).status;
 		});
 
