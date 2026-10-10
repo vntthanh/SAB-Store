@@ -23,7 +23,7 @@ Frontend đã được chuyển từ **Create React App (react-scripts)** sang *
 ### 2. HTML Entry Point
 - **`index.html`**: Di chuyển từ `public/index.html` ra root directory
   - Thay `%PUBLIC_URL%` bằng `/` (relative paths)
-  - Thêm `<script type="module" src="/src/index.js"></script>`
+  - Thêm `<script type="module" src="/src/index.jsx"></script>`
 
 ### 3. Environment Variables
 - **Prefix thay đổi**: `REACT_APP_*` → `VITE_*`

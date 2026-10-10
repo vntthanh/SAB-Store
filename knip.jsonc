@@ -1,9 +1,9 @@
 {
 	"$schema": "https://unpkg.com/knip@6/schema.json",
 	// Entry points that package.json scripts/main, the jest, vitest and vite plugins
-	// already discover (start.js, server.js, src/index.js, tests, setup files) are
+	// already discover (backend start.js/server.js, frontend src/index.jsx, tests, setup files) are
 	// deliberately not repeated here: knip reports redundant entries as hints.
-	// `project` globs narrow analysis (no uploaded files, frontend src/scripts/css, shared .mjs and
+	// `project` globs narrow analysis (no uploaded files, frontend src (js/jsx), scripts and css, shared .mjs and
 	// tests); files outside them are not analysed and their imports do not count as usage.
 	"ignoreBinaries": [
 		// Husky hooks call `pnpm build` (a frontend script name) and `pnpm exec vitest`
@@ -31,14 +31,7 @@
 			"project": ["**/*.js", "!uploads/**"]
 		},
 		"frontend": {
-			"project": ["src/**/*.{js,css}", "scripts/**/*.mjs"],
-			"ignoreDependencies": [
-				// Loaded through a dynamic import() inside a React.lazy factory
-				// (components/admin/MarkdownEditor.js); knip does not see that import.
-				"@monaco-editor/react",
-				// scripts/copy-monaco.mjs resolves the package by name at runtime, not by import.
-				"monaco-editor"
-			]
+			"project": ["src/**/*.{js,jsx,css}", "scripts/**/*.mjs"]
 		},
 		"packages/shared": {
 			"project": ["src/**/*.js", "tests/**/*.js", "*.mjs"]
