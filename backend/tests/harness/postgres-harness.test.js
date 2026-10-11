@@ -49,8 +49,8 @@ describe('database per file', () => {
 		const client = await connect(process.env.DATABASE_URL);
 		await client.query('CREATE TABLE truncate_probe (id serial PRIMARY KEY, name text)');
 		await client.query('CREATE TABLE truncate_child (id serial PRIMARY KEY, parent int REFERENCES truncate_probe(id))');
-		await client.query('CREATE TABLE _prisma_migrations (id text PRIMARY KEY)');
-		await client.query(`INSERT INTO _prisma_migrations VALUES ('kept')`);
+		const ledgerBefore = (await client.query('SELECT count(*)::int AS n FROM _prisma_migrations')).rows[0].n;
+		expect(ledgerBefore).toBeGreaterThan(0);
 		await client.query(`INSERT INTO truncate_probe (name) VALUES ('a'), ('b')`);
 		await client.query('INSERT INTO truncate_child (parent) VALUES (2)');
 
@@ -58,11 +58,11 @@ describe('database per file', () => {
 
 		expect((await client.query('SELECT count(*)::int AS n FROM truncate_probe')).rows[0].n).toBe(0);
 		expect((await client.query('SELECT count(*)::int AS n FROM truncate_child')).rows[0].n).toBe(0);
-		expect((await client.query('SELECT count(*)::int AS n FROM _prisma_migrations')).rows[0].n).toBe(1);
+		expect((await client.query('SELECT count(*)::int AS n FROM _prisma_migrations')).rows[0].n).toBe(ledgerBefore);
 		const inserted = await client.query(`INSERT INTO truncate_probe (name) VALUES ('c') RETURNING id`);
 		expect(inserted.rows[0].id).toBe(1);
 
-		await client.query('DROP TABLE truncate_child, truncate_probe, _prisma_migrations');
+		await client.query('DROP TABLE truncate_child, truncate_probe');
 	});
 });
 

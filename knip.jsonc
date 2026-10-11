@@ -22,14 +22,18 @@
 		"backend/lib/minio.js": ["exports"],
 		"backend/services/stock-ledger.js": ["exports"],
 		"backend/utils/public-code.js": ["exports"],
-		"backend/tests/helpers/postgres.js": ["exports"]
+		"backend/tests/helpers/postgres.js": ["exports"],
+		"backend/lib/prisma.js": ["exports"]
 	},
 	"workspaces": {
 		".": {},
 		"backend": {
 			// Operational scripts are run by hand (`node scripts/x.js`), never imported.
 			"entry": ["scripts/*.js"],
-			"project": ["**/*.js", "!uploads/**"]
+			"project": ["**/*.{js,prisma}", "!uploads/**"],
+			// The generated Prisma client (generated/prisma) requires it at runtime;
+			// the generated code is not part of the analysed project.
+			"ignoreDependencies": ["@prisma/client-runtime-utils"]
 		},
 		"frontend": {
 			"project": ["src/**/*.{js,jsx,css}", "scripts/**/*.mjs"]

@@ -1,0 +1,13 @@
+// The client is generated outside node_modules by `prisma generate` (pretest and
+// predev run it), gitignored and never copied from the host.
+// prisma-client-js with a custom output needs @prisma/client-runtime-utils as a
+// direct dependency.
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../generated/prisma"
+}
+
+// The connection URL lives in prisma.config.cjs, not here.
+datasource db {
+  provider = "postgresql"
+}

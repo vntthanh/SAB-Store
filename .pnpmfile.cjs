@@ -5,7 +5,7 @@
 // dropped here. `react`/`react-dom` stay: the frontend imports better-auth/react.
 const DROPPED_PEERS = ['vitest', 'prisma'];
 // Add a package here when it brings the same optional peers into the deploy tree.
-const PACKAGES = new Set(['better-auth']);
+const PACKAGES = new Set(['better-auth', '@better-auth/prisma-adapter', '@prisma/client']);
 
 function readPackage(pkg) {
 	if (PACKAGES.has(pkg.name)) {

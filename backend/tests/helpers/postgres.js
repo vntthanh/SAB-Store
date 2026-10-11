@@ -16,8 +16,12 @@ const fs = require('fs');
 const net = require('net');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
+const { promisify } = require('util');
 const { Client } = require('pg');
+
+const execFileAsync = promisify(execFile);
+const backendRoot = path.resolve(__dirname, '..', '..');
 
 // Identical to POSTGRES_INITDB_ARGS in production: the builtin provider gives the
 // same case mapping and codepoint ordering on macOS, glibc and the musl image,
@@ -78,9 +82,29 @@ function templateName() {
 	return `sab_template_${process.pid}`;
 }
 
+// The template is built by the same `prisma migrate deploy` production runs, so
+// the tests exercise the migration files themselves and the template carries the
+// _prisma_migrations ledger the boot check reads. Applying the SQL by hand would
+// be faster but would skip both.
+async function applyMigrations(templateUrl) {
+	const manifest = require.resolve('prisma/package.json');
+	const cli = path.join(path.dirname(manifest), require(manifest).bin.prisma);
+	try {
+		await execFileAsync(process.execPath, [cli, 'migrate', 'deploy'], {
+			cwd: backendRoot,
+			env: { ...process.env, DATABASE_URL: templateUrl },
+			// A hung engine must fail the run, not block globalSetup forever.
+			timeout: 120000,
+		});
+	} catch (err) {
+		throw new Error(`prisma migrate deploy failed on the test template:\n${err.stdout || ''}${err.stderr || err.message}`);
+	}
+}
+
 async function buildTemplate(uri, template) {
 	await dropDatabase(uri, template);
 	await withClient(uri, (client) => client.query(`CREATE DATABASE ${client.escapeIdentifier(template)}`));
+	await applyMigrations(databaseUrl(uri, template));
 }
 
 /** Clones the run's template (PG_TEST_TEMPLATE). Returns the new database's URL. */
