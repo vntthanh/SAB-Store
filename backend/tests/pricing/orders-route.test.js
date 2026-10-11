@@ -6,7 +6,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct } = require('../helpers/factories');
-const Order = require('../../models/Order');
+const { countRows } = require('../helpers/db');
 
 function validOrderBody(overrides = {}) {
 	// expectedTotal is mandatory; tests that care about it set their own.
@@ -37,7 +37,7 @@ describe('POST /api/orders', () => {
 		expect(refused.status).toBe(409);
 		expect(refused.body.code).toBe('PRICE_CHANGED');
 		expect(refused.body.details).toEqual({ expectedTotal: 0, totalAmount: 300000 });
-		expect(await Order.countDocuments({})).toBe(0);
+		expect(await countRows('order')).toBe(0);
 
 		const res = await request(app).post('/api/orders').send(validOrderBody({ items, expectedTotal: 300000 }));
 

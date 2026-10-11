@@ -5,8 +5,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
-const Product = require('../../models/Product');
-const Combo = require('../../models/Combo');
+const { countRows, findProduct, findProductByName, findComboByName, insertRawProduct } = require('../helpers/db');
 
 describe('admin products: salesChannel', () => {
 	let app;
@@ -31,7 +30,7 @@ describe('admin products: salesChannel', () => {
 	it('rejects an unknown salesChannel on create and update with 400, writing nothing', async () => {
 		const create = await request(app).post('/api/admin/products').set('Cookie', cookies).send(newProduct({ salesChannel: 'xyz' }));
 		expect(create.status).toBe(400);
-		expect(await Product.countDocuments({})).toBe(0);
+		expect(await countRows('product')).toBe(0);
 
 		const product = await makeProduct({ salesChannel: 'online', name: 'Before' });
 		const update = await request(app)
@@ -40,7 +39,7 @@ describe('admin products: salesChannel', () => {
 			.send({ salesChannel: 'xyz', name: 'After' });
 		expect(update.status).toBe(400);
 
-		const stored = await Product.findById(product._id);
+		const stored = await findProduct(String(product._id));
 		expect(stored.salesChannel).toBe('online');
 		expect(stored.name).toBe('Before');
 	});
@@ -68,14 +67,14 @@ describe('admin products: salesChannel', () => {
 			.set('Cookie', cookies)
 			.send({ isActive: false });
 		expect(updated.status).toBe(200);
-		expect((await Product.findById(product._id)).isActive).toBe(true);
+		expect((await findProduct(String(product._id))).isActive).toBe(true);
 	});
 
 	it('filters the admin list by channel; "all" includes legacy documents without the field', async () => {
 		await makeProduct({ name: 'P online', salesChannel: 'online' });
 		await makeProduct({ name: 'P offline', salesChannel: 'offline' });
 		await makeProduct({ name: 'P both', salesChannel: 'all' });
-		await Product.collection.insertOne({ name: 'P legacy', price: 1, category: 'general', available: true, stockQuantity: 0 });
+		await insertRawProduct({ name: 'P legacy', price: 1, category: 'general', available: true, stockQuantity: 0 });
 
 		const names = async (query) => {
 			const res = await request(app).get('/api/admin/products').query(query).set('Cookie', cookies);
@@ -108,7 +107,7 @@ describe('admin dashboard stats by channel', () => {
 		await makeProduct({ salesChannel: 'online' });
 		await makeProduct({ salesChannel: 'online' });
 		await makeProduct({ salesChannel: 'offline' });
-		await Product.collection.insertOne({ name: 'Legacy', price: 1, category: 'general', available: true, stockQuantity: 0 });
+		await insertRawProduct({ name: 'Legacy', price: 1, category: 'general', available: true, stockQuantity: 0 });
 
 		const res = await request(app).get('/api/admin/dashboard/stats').set('Cookie', cookies);
 
@@ -146,8 +145,8 @@ describe('database import/export: salesChannel', () => {
 		});
 
 		expect(res.status).toBe(200);
-		expect((await Product.findOne({ name: 'Imported offline' })).salesChannel).toBe('offline');
-		expect((await Combo.findOne({ name: 'Imported online combo' })).salesChannel).toBe('online');
+		expect((await findProductByName('Imported offline')).salesChannel).toBe('offline');
+		expect((await findComboByName('Imported online combo')).salesChannel).toBe('online');
 	});
 
 	it('still accepts an older file that has no salesChannel and still carries isActive', async () => {
@@ -156,7 +155,7 @@ describe('database import/export: salesChannel', () => {
 		});
 
 		expect(res.status).toBe(200);
-		const stored = await Product.findOne({ name: 'Old backup item' });
+		const stored = await findProductByName('Old backup item');
 		expect(stored.salesChannel).toBe('all');
 	});
 
@@ -171,8 +170,8 @@ describe('database import/export: salesChannel', () => {
 		expect(res.status).toBe(400);
 		expect(res.body.code).toBe('INVALID_FORMAT');
 		expect(res.body.problems.join(' ')).toMatch(/salesChannel/);
-		expect(await Product.countDocuments({})).toBe(0);
-		expect(await Combo.countDocuments({})).toBe(0);
+		expect(await countRows('product')).toBe(0);
+		expect(await countRows('combo')).toBe(0);
 	});
 
 	it('exports salesChannel with each product and combo', async () => {

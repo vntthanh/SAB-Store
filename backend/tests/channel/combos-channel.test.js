@@ -5,7 +5,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
-const Combo = require('../../models/Combo');
+const { countRows, findCombo, insertRawCombo } = require('../helpers/db');
 
 describe('GET /api/combos/active', () => {
 	let app;
@@ -48,7 +48,7 @@ describe('GET /api/combos/active', () => {
 	});
 
 	it('treats a legacy combo without the field as "all"', async () => {
-		await Combo.collection.insertOne({
+		await insertRawCombo({
 			name: 'Legacy combo',
 			price: 1000,
 			categoryRequirements: [{ category: 'general', quantity: 1 }],
@@ -175,7 +175,7 @@ describe('admin combo create/update salesChannel', () => {
 		const res = await request(app).post('/api/combos').set('Cookie', cookies).send(body({ salesChannel: 'xyz' }));
 
 		expect(res.status).toBe(400);
-		expect(await Combo.countDocuments({})).toBe(0);
+		expect(await countRows('combo')).toBe(0);
 	});
 
 	it('updates salesChannel, and rejects an unknown one with 400 leaving the value alone', async () => {
@@ -187,7 +187,7 @@ describe('admin combo create/update salesChannel', () => {
 
 		const bad = await request(app).put(`/api/combos/${combo._id}`).set('Cookie', cookies).send({ salesChannel: 'xyz' });
 		expect(bad.status).toBe(400);
-		expect((await Combo.findById(combo._id)).salesChannel).toBe('online');
+		expect((await findCombo(String(combo._id))).salesChannel).toBe('online');
 	});
 
 	it('rejects an operator-shaped salesChannel instead of passing it through', async () => {

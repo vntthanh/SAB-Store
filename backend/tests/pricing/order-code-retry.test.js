@@ -13,9 +13,8 @@ const generateOrderCode = vi.spyOn(helpers, 'generateOrderCode');
 
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeProduct } = require('../helpers/factories');
-const Order = require('../../models/Order');
-const StockMovement = require('../../models/StockMovement');
+const { makeProduct, makeOrder } = require('../helpers/factories');
+const { ensureMovementStore, failNextOrderInsertAsDuplicateCode } = require('../helpers/db');
 
 describe('POST /api/orders — orderCode collision retry', () => {
 	let app;
@@ -25,7 +24,7 @@ describe('POST /api/orders — orderCode collision retry', () => {
 		// The first insert into a collection that does not exist yet aborts the
 		// surrounding transaction with a retryable WriteConflict, and that retry
 		// would draw an extra order code the mocked sequence below does not cover.
-		await StockMovement.createCollection();
+		await ensureMovementStore();
 	});
 
 	afterEach(() => {
@@ -35,7 +34,7 @@ describe('POST /api/orders — orderCode collision retry', () => {
 	it('retries when the generated code already belongs to an existing order', async () => {
 		const product = await makeProduct({ price: 10000 });
 
-		await Order.create({
+		await makeOrder({
 			orderCode: 'AAAAA',
 			studentId: 'X',
 			fullName: 'X',
@@ -43,8 +42,7 @@ describe('POST /api/orders — orderCode collision retry', () => {
 			phoneNumber: '0900000000',
 			items: [{ productId: product._id, productName: product.name, price: product.price, quantity: 1 }],
 			totalAmount: product.price,
-			status: 'confirmed',
-			statusHistory: [{ status: 'confirmed', updatedBy: 'system' }]
+			stockDeducted: false
 		});
 
 		generateOrderCode.mockReturnValueOnce('AAAAA').mockReturnValueOnce('BBBBB');
@@ -70,17 +68,7 @@ describe('POST /api/orders — orderCode collision retry', () => {
 
 		generateOrderCode.mockReturnValueOnce('CCCCC').mockReturnValueOnce('DDDDD');
 
-		const originalSave = Order.prototype.save;
-		let callCount = 0;
-		const saveSpy = vi.spyOn(Order.prototype, 'save').mockImplementation(async function mockedSave() {
-			callCount += 1;
-			if (callCount === 1) {
-				const duplicateKeyError = new Error('E11000 duplicate key error collection: orders index: orderCode_1');
-				duplicateKeyError.code = 11000;
-				throw duplicateKeyError;
-			}
-			return originalSave.call(this);
-		});
+		const duplicateCode = failNextOrderInsertAsDuplicateCode();
 
 		try {
 			const res = await request(app)
@@ -96,9 +84,10 @@ describe('POST /api/orders — orderCode collision retry', () => {
 
 			expect(res.status).toBe(201);
 			expect(res.body.data.orderCode).toBe('DDDDD');
-			expect(callCount).toBe(2);
+			expect(duplicateCode.fired()).toBe(true);
+			expect(duplicateCode.calls()).toBe(2);
 		} finally {
-			saveSpy.mockRestore();
+			duplicateCode.remove();
 		}
 	});
 });

@@ -2,11 +2,9 @@
  * computeOrderPricing(items, { channel }) — the channel is mandatory, and a
  * line that cannot be sold on that channel rejects the whole cart.
  */
-const mongoose = require('mongoose');
 const { computeOrderPricing, PricingError } = require('../../services/pricing');
 const { makeProduct, makeCombo } = require('../helpers/factories');
-const Product = require('../../models/Product');
-const Combo = require('../../models/Combo');
+const { newId, insertRawProduct, insertRawCombo } = require('../helpers/db');
 
 const line = (product, quantity = 1) => ({ productId: product._id.toString(), quantity });
 
@@ -80,7 +78,7 @@ describe('computeOrderPricing — product channel rules', () => {
 	});
 
 	it('does not leak a product that does not exist as a channel mismatch', async () => {
-		const missingId = new mongoose.Types.ObjectId().toString();
+		const missingId = newId();
 
 		await expect(
 			computeOrderPricing([{ productId: missingId, quantity: 1 }], { channel: 'online' })
@@ -99,7 +97,7 @@ describe('computeOrderPricing — product channel rules', () => {
 	});
 
 	it('treats a legacy product without salesChannel as sellable on both channels', async () => {
-		const { insertedId } = await Product.collection.insertOne({
+		const { _id: legacyId } = await insertRawProduct({
 			name: 'Legacy',
 			price: 7000,
 			category: 'general',
@@ -108,7 +106,7 @@ describe('computeOrderPricing — product channel rules', () => {
 		});
 
 		for (const channel of ['online', 'offline']) {
-			const result = await computeOrderPricing([{ productId: insertedId.toString(), quantity: 2 }], { channel });
+			const result = await computeOrderPricing([{ productId: legacyId, quantity: 2 }], { channel });
 			expect(result.totalAmount).toBe(14000);
 		}
 	});
@@ -153,7 +151,7 @@ describe('computeOrderPricing — combo channel rules', () => {
 	it('a legacy combo document without the field applies on both channels', async () => {
 		const a = await makeProduct({ category: 'lanyard', price: 100000 });
 		const b = await makeProduct({ category: 'sticker', price: 50000 });
-		await Combo.collection.insertOne({
+		await insertRawCombo({
 			name: 'Legacy combo',
 			price: 120000,
 			categoryRequirements: [

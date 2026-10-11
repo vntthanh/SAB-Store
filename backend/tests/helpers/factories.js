@@ -8,6 +8,8 @@
  */
 const { randomUUID } = require('crypto');
 const request = require('supertest');
+const mongoose = require('mongoose');
+const { insertRawProduct, insertRawCombo } = require('./db');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
 const Order = require('../../models/Order');
@@ -79,38 +81,34 @@ async function makeOrder(overrides = {}) {
 }
 
 /**
- * Inserts a document the way one written before public codes existed looks:
- * straight through the driver, so no hook runs and there is no `publicCode`.
- * Returns the stored raw document.
+ * A document the way one written before public codes existed looks: inserted
+ * through db.js's raw insert, so no hook runs and there is no `publicCode`.
+ * Returns the stored document with its native ObjectId `_id`, which the
+ * legacy tests pass to the raw driver.
  */
-async function insertLegacy(Model, doc) {
-	const now = new Date();
-	const raw = { createdAt: now, updatedAt: now, ...doc };
-	const { insertedId } = await Model.collection.insertOne(raw);
-	return Model.collection.findOne({ _id: insertedId });
-}
+const asStored = (row) => ({ ...row, _id: new mongoose.Types.ObjectId(row._id) });
 
 function makeLegacyProduct(overrides = {}) {
 	const n = nextSequence();
-	return insertLegacy(Product, {
+	return insertRawProduct({
 		name: `Legacy Product ${n}`,
 		price: 100000,
 		category: 'general',
 		available: true,
 		stockQuantity: 10,
 		...overrides,
-	});
+	}).then(asStored);
 }
 
 function makeLegacyCombo(overrides = {}) {
 	const n = nextSequence();
-	return insertLegacy(Combo, {
+	return insertRawCombo({
 		name: `Legacy Combo ${n}`,
 		price: 150000,
 		categoryRequirements: [{ category: 'general', quantity: 2 }],
 		isActive: true,
 		...overrides,
-	});
+	}).then(asStored);
 }
 
 const TEST_PASSWORD = 'factory-test-password-1';

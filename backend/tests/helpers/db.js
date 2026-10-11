@@ -15,12 +15,26 @@
  * Ordering: "oldest first" means createdAt with _id as a stable tie-break, not
  * insertion order.
  *
- * Portability: `failNextMovementInsert` and `failNextStockWrite` are the one
- * seam that is not portable. They spy on the model the production code calls,
- * so they must be reimplemented at the repository boundary when the store
- * changes. Their handle reports whether the fault fired; a test that uses one
- * must assert that, or a change in how production writes would make its
- * rollback check pass without exercising anything.
+ * Portability: most of this file is plain data access. These seams are tied to
+ * the store and each needs a deliberate SQL counterpart:
+ * - `failNextMovementInsert`, `failNextStockWrite` and
+ *   `failNextOrderInsertAsDuplicateCode` spy on the model the production code
+ *   calls, so they must be reimplemented at the repository boundary. The
+ *   duplicate-code fault throws the Mongo duplicate-key shape (`code` 11000 on
+ *   `orderCode`); the SQL version must throw whatever the repository's
+ *   duplicate-key translation expects. Their handle reports whether the fault
+ *   fired; a test that uses one must assert that, or a change in how
+ *   production writes would make its rollback check pass without exercising
+ *   anything.
+ * - `withTransaction` and `txOptions` hand a service the store's transaction
+ *   handle; the SQL version passes its own client in the option the repository
+ *   layer defines.
+ * - `isRowId` is not trivial on SQL: it states that the pricing service
+ *   returns an id normalised to the store's native representation. On SQL it
+ *   returns true for a lowercase 24-hex string and false for anything else (an
+ *   uppercase hex string or a number, for example).
+ * - `ensureMovementStore` exists only because Mongo creates a collection on
+ *   first insert; it disappears on SQL.
  */
 const mongoose = require('mongoose');
 const Product = require('../../models/Product');
@@ -56,11 +70,15 @@ const toQuery = (filter) =>
 
 const byAge = { createdAt: 1, _id: 1 };
 
-async function findOne(Model, query) {
-	return plain(await Model.findOne(query).lean());
+async function findOne(Model, query, sort = {}) {
+	return plain(await Model.findOne(query).sort(sort).lean());
 }
 
 const findProduct = (id) => findOne(Product, { _id: id });
+// Name lookups are for callers that use distinct names; the age sort only makes a duplicate deterministic.
+const findProductByName = (name) => findOne(Product, { name }, byAge);
+const findCombo = (id) => findOne(Combo, { _id: id });
+const findComboByName = (name) => findOne(Combo, { name }, byAge);
 const findOrder = (id) => findOne(Order, { _id: id });
 const findOrderByCode = (orderCode) => findOne(Order, { orderCode });
 const findMovement = (id) => findOne(StockMovement, { _id: id });
@@ -91,16 +109,20 @@ function countRows(kind, filter = {}) {
 }
 
 /**
- * Inserts an order exactly as given, bypassing validation, defaults and hooks,
- * to build shapes the application no longer writes (an order from before stock
- * was tracked per order). Values are stored as given, with no casting: pass Date
- * objects for dates and ObjectIds for references. Returns the stored row.
+ * Inserts a row exactly as given, bypassing validation, defaults and hooks, to
+ * build shapes the application no longer writes (an order from before stock was
+ * tracked per order, a product from before it had a sales channel). Values are
+ * stored as given, with no casting: pass Date objects for dates and ObjectIds
+ * for references. Returns the stored row.
  */
-async function insertRawOrder(fields) {
+const insertRaw = (Model) => async (fields) => {
 	const now = new Date();
-	const { insertedId } = await Order.collection.insertOne({ createdAt: now, updatedAt: now, ...fields });
-	return plain(await Order.collection.findOne({ _id: insertedId }));
-}
+	const { insertedId } = await Model.collection.insertOne({ createdAt: now, updatedAt: now, ...fields });
+	return plain(await Model.collection.findOne({ _id: insertedId }));
+};
+const insertRawOrder = insertRaw(Order);
+const insertRawProduct = insertRaw(Product);
+const insertRawCombo = insertRaw(Combo);
 
 /**
  * Overwrites fields of an existing row without validation, hooks or the
@@ -116,6 +138,7 @@ const update = (Model, id, change) =>
 const patch = (Model) => (id, fields) => update(Model, id, { $set: fields });
 const patchProduct = patch(Product);
 const patchOrder = patch(Order);
+const patchCombo = patch(Combo);
 const patchMovement = patch(StockMovement);
 
 /** Removes a field from an order, as for an order stored before the field existed. */
@@ -140,10 +163,29 @@ function withTransaction(fn) {
  */
 const txOptions = (tx) => ({ session: tx });
 
-/** Handle on an injected fault: `fired()` is true once the code under test hit it; `remove()` restores the real call. */
+/**
+ * True when `value` is the store's native id type, as opposed to the hex string
+ * that ids take everywhere else in this file. For checking that code under test
+ * hands the store an id it can write without casting.
+ */
+const isRowId = (value) => value instanceof mongoose.Types.ObjectId;
+
+/** Creates the empty movement store up front, so the first movement insert of a test does not race its own creation. */
+async function ensureMovementStore() {
+	await StockMovement.createCollection();
+}
+
+/**
+ * Handle on an injected fault: `fired()` is true once the code under test hit
+ * it; `calls()` counts every call of the faulted method, injected or not;
+ * `remove()` restores the real call.
+ */
+function handleOf(spy) {
+	return { fired: () => spy.mock.calls.length > 0, calls: () => spy.mock.calls.length, remove: () => spy.mockRestore() };
+}
+
 function faultOn(Model, method, message) {
-	const spy = vi.spyOn(Model, method).mockRejectedValueOnce(new Error(message));
-	return { fired: () => spy.mock.calls.length > 0, remove: () => spy.mockRestore() };
+	return handleOf(vi.spyOn(Model, method).mockRejectedValueOnce(new Error(message)));
 }
 
 /** Makes the next stock-movement insert fail with `message`, to prove that the writes around it roll back. */
@@ -152,9 +194,28 @@ const failNextMovementInsert = (message) => faultOn(StockMovement, 'create', mes
 /** Makes the next write of the product stock cache fail with `message`. */
 const failNextStockWrite = (message) => faultOn(Product, 'updateOne', message);
 
+/**
+ * Makes the next order insert fail as a duplicate order code (the race where
+ * two requests pick the same fresh code), then lets later inserts through to
+ * the real write.
+ */
+function failNextOrderInsertAsDuplicateCode() {
+	let thrown = false;
+	const spy = vi.spyOn(Order.prototype, 'save').mockImplementationOnce(async () => {
+		thrown = true;
+		const error = new Error('E11000 duplicate key error collection: orders index: orderCode_1');
+		error.code = 11000;
+		throw error;
+	});
+	return { ...handleOf(spy), fired: () => thrown };
+}
+
 module.exports = {
 	newId,
 	findProduct,
+	findProductByName,
+	findCombo,
+	findComboByName,
 	findOrder,
 	findOrderByCode,
 	findMovement,
@@ -164,13 +225,19 @@ module.exports = {
 	stockOf,
 	countRows,
 	insertRawOrder,
+	insertRawProduct,
+	insertRawCombo,
 	patchProduct,
 	patchOrder,
+	patchCombo,
 	patchMovement,
 	unsetOrderField,
 	deleteProduct,
 	withTransaction,
 	txOptions,
+	isRowId,
+	ensureMovementStore,
 	failNextMovementInsert,
 	failNextStockWrite,
+	failNextOrderInsertAsDuplicateCode,
 };

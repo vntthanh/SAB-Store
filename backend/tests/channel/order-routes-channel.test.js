@@ -6,8 +6,7 @@ const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
 const { applyPendingMovements } = require('../helpers/stock');
-const Product = require('../../models/Product');
-const Order = require('../../models/Order');
+const { countRows, stockOf } = require('../helpers/db');
 
 function onlineOrderBody(items, expectedTotal) {
 	return {
@@ -47,7 +46,7 @@ describe('POST /api/orders (online channel)', () => {
 		expect(res.status).toBe(400);
 		expect(res.body.success).toBe(false);
 		expect(res.body.message).toContain('Counter Only Keychain');
-		expect(await Order.countDocuments({})).toBe(0);
+		expect(await countRows('order')).toBe(0);
 	});
 
 	it('rejects an available:false product', async () => {
@@ -97,7 +96,7 @@ describe('POST /api/seller/orders/direct (offline channel)', () => {
 		expect(res.status).toBe(201);
 		// The sale only records a movement; the cache moves once it is applied.
 		await applyPendingMovements();
-		expect((await Product.findById(product._id)).stockQuantity).toBe(3);
+		expect(await stockOf(String(product._id))).toBe(3);
 	});
 
 	it('rejects an online-only product with 400 naming it, and leaves stock untouched', async () => {
@@ -110,8 +109,8 @@ describe('POST /api/seller/orders/direct (offline channel)', () => {
 
 		expect(res.status).toBe(400);
 		expect(res.body.message).toContain('Web Exclusive Hoodie');
-		expect((await Product.findById(product._id)).stockQuantity).toBe(5);
-		expect(await Order.countDocuments({})).toBe(0);
+		expect(await stockOf(String(product._id))).toBe(5);
+		expect(await countRows('order')).toBe(0);
 	});
 
 	it('rejects an available:false product (the POS no longer lists it either)', async () => {
@@ -123,7 +122,7 @@ describe('POST /api/seller/orders/direct (offline channel)', () => {
 			.send({ items: [item(product)], expectedTotal: 0 });
 
 		expect(res.status).toBe(400);
-		expect((await Product.findById(product._id)).stockQuantity).toBe(5);
+		expect(await stockOf(String(product._id))).toBe(5);
 	});
 
 	it('sells isActive:false when available:true (isActive is deprecated and unread)', async () => {
@@ -171,7 +170,7 @@ describe('POST /api/admin/orders/direct', () => {
 			.send({ items: [item(product)] });
 
 		expect(res.status).toBe(404);
-		expect((await Product.findById(product._id)).stockQuantity).toBe(5);
-		expect(await Order.countDocuments({})).toBe(0);
+		expect(await stockOf(String(product._id))).toBe(5);
+		expect(await countRows('order')).toBe(0);
 	});
 });
