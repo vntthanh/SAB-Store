@@ -18,5 +18,12 @@
 - `migrate diff` rewrites a `dbgenerated` default unless it is written exactly as Postgres prints it back, for example `substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 24)`.
 - A hand-added `ALTER COLUMN tags SET NOT NULL` at the end of the migration does not register as drift.
 
+## Repository refactor (phase 03, measured 2026-10-12)
+- **Legacy order JSON differs between hydrated and lean reads.** A hydrated read fills missing schema defaults and changes key order. A lean read returns only the stored keys. When moving a read into a repo, keep the old mode (the `complete` option in `data/mongo/orders.js`) or the API JSON changes. Parity was checked by calling 32 routes before and after, with ids, dates and codes masked.
+- **Zod 4: an object key with a bare `z.unknown()` is REQUIRED.** Use `z.unknown().optional()` when the key may be absent.
+- **Mutation-test every tie-break test.** Remove `_id` from the sort and the test must fail. Without that, ties fall back to insertion order and the test passes anyway.
+- **Signed commits and long hooks.** Commits are signed through the 1Password SSH agent. If the hook runs long (about 2 min for the full suite), 1Password fails with "failed to fill whole buffer" when it is locked or the prompt times out. The staged state survives: unlock 1Password and commit again. Do not disable signing.
+- **Scratchpad.** A reboot wipes the session scratchpad, including helper scripts and parked patches. Keep anything you need across a pause in the plan files, not only in the scratchpad.
+
 ## Production data (copy taken 2026-10-10)
 - No order has the legacy `pending` status. No product or combo lacks a publicCode. No phone fails `^0[0-9]{9}$`. No price or total is negative or fractional. So the CHECKs are safe.
