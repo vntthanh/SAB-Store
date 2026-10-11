@@ -24,6 +24,17 @@ describe('built ESM entry', () => {
 		expect(required.RESTORE_CONFIRMATION).toBe(RESTORE_CONFIRMATION);
 	});
 
+	it('exports the pagination helpers from the ESM and CJS builds', async () => {
+		const esm = await import('../dist/index.js');
+		const cjs = (await import('node:module')).createRequire(import.meta.url)('../dist/index.cjs');
+		for (const built of [esm, cjs]) {
+			expect(built.MAX_PAGE_LIMIT).toBe(100);
+			expect(built.paginationQuery.parse({ page: '-5', limit: '9999' })).toEqual({ page: 1, limit: 100 });
+			expect(built.toSkipTake(2, 10)).toEqual({ skip: 10, take: 10 });
+			expect(built.buildPaginationMeta(0, { page: 1, limit: 10 }).totalPages).toBe(0);
+		}
+	});
+
 	it('maps an ObjectId to the same UUIDv7 from the ESM and CJS builds', async () => {
 		const esm = await import('../dist/index.js');
 		const cjs = (await import('node:module')).createRequire(import.meta.url)('../dist/index.cjs');

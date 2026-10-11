@@ -41,6 +41,6 @@ describe('Regex injection via ?search', () => {
 			.set('Cookie', cookies);
 
 		expect(res.status).toBe(200);
-		expect(res.body.data.products).toEqual([]);
+		expect(res.body.data).toEqual([]);
 	});
 });

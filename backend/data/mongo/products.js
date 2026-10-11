@@ -9,6 +9,7 @@ const sellable = require('./sellable');
 const { withStringId, toRecord } = require('./records');
 const { translating } = require('./errors');
 const { safeSearch } = require('../../utils/query-guard');
+const { toSkipTake, buildPaginationMeta } = require('@sab/shared');
 
 const { assertSaleChannel, sellableQuery, productSellableFilter, SALES_CHANNELS } = sellable;
 
@@ -122,7 +123,7 @@ function listCategories() {
  * counts as 'all'. Rows carry the schema defaults.
  *
  * @param {{page: number, limit: number, search?: string, category?: string, available?: boolean, salesChannel?: string}} query
- * @returns {Promise<{rows: object[], total: number}>} `total` counts every match, not the page
+ * @returns {Promise<{data: object[], meta: {page: number, limit: number, total: number, totalPages: number}}>} `meta.total` counts every match, not the page
  */
 async function listPage({ page, limit, search, category, available, salesChannel }) {
 	const channelClause = salesChannel === 'all'
@@ -142,11 +143,14 @@ async function listPage({ page, limit, search, category, available, salesChannel
 		...(available !== undefined && { available })
 	};
 
+	// `total` and `data` are read in parallel, not from one snapshot, so a concurrent
+	// write can make them disagree by a row. Accepted: the list is advisory.
+	const { skip, take } = toSkipTake(page, limit);
 	const [rows, total] = await Promise.all([
-		Product.find(filter).sort({ createdAt: -1, _id: -1 }).skip((page - 1) * limit).limit(limit),
+		Product.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(take),
 		Product.countDocuments(filter)
 	]);
-	return { rows: rows.map(toRecord), total };
+	return { data: rows.map(toRecord), meta: buildPaginationMeta(total, { page, limit }) };
 }
 
 /** True when a product with this id exists. */

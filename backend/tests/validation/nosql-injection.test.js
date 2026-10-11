@@ -71,7 +71,7 @@ describe('NoSQL operator injection — admin product routes', () => {
 		expect(res.status).toBe(200);
 		// asEnum drops anything that isn't literally 'true'/'false', so the
 		// availability filter is not applied at all rather than inverted.
-		expect(Array.isArray(res.body.data.products)).toBe(true);
+		expect(Array.isArray(res.body.data)).toBe(true);
 	});
 
 	it('caps limit at 100 even when the caller asks for far more', async () => {
@@ -83,6 +83,6 @@ describe('NoSQL operator injection — admin product routes', () => {
 			.set('Cookie', cookies);
 
 		expect(res.status).toBe(200);
-		expect(res.body.data.pagination.limit).toBeLessThanOrEqual(100);
+		expect(res.body.meta.limit).toBe(100);
 	});
 });

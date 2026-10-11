@@ -16,7 +16,7 @@ const INVALID_SALES_CHANNEL_MESSAGE = 'Kênh bán không hợp lệ';
 
 /**
  * @route   GET /api/admin/products
- * @desc    Get all products for admin management
+ * @desc    One page of products for admin management: `{ success, data, meta }`
  * @access  Private (Admin authentication handled by parent router)
  */
 router.get('/', async (req, res) => {
@@ -29,7 +29,7 @@ router.get('/', async (req, res) => {
 		const availableFilter = asEnum(status, ['true', 'false']);
 		const { page: safePage, limit: safeLimit } = asPageLimit(page, limit);
 
-		const { rows, total } = await productRepo.listPage({
+		const { data: rows, meta } = await productRepo.listPage({
 			page: safePage,
 			limit: safeLimit,
 			search: asString(search, 100),
@@ -41,21 +41,9 @@ router.get('/', async (req, res) => {
 		// Stock changes apply asynchronously; the count lets the UI flag a stock
 		// figure that is about to change.
 		const pending = await countPendingByProduct(rows.map((p) => p._id));
-		const docs = rows.map((p) => ({ ...p, pendingMovements: pending.get(String(p._id)) || 0 }));
+		const data = rows.map((p) => ({ ...p, pendingMovements: pending.get(String(p._id)) || 0 }));
 
-		res.json({
-			success: true,
-			data: {
-				products: docs,
-				pagination: {
-					page: safePage,
-					// An empty result is still one (empty) page.
-					pages: Math.ceil(total / safeLimit) || 1,
-					total,
-					limit: safeLimit
-				}
-			}
-		});
+		res.json({ success: true, data, meta });
 	} catch (error) {
 		console.error('Get products error:', error);
 		res.status(500).json({

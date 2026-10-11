@@ -51,6 +51,10 @@ describe('query-guard', () => {
 			expect(asPageLimit('1', '-3')).toEqual({ page: 1, limit: 1 });
 		});
 
+		it('caps an absurd page so skip stays a safe integer', () => {
+			expect(asPageLimit('99999999999999999999', '100').page).toBe(1000000);
+		});
+
 		it('treats a zero page or limit as absent and uses the default', () => {
 			// parseInt('0') is falsy, so 0 takes the default rather than
 			// producing an empty page.

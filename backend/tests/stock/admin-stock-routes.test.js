@@ -142,7 +142,7 @@ describe('admin stock routes', () => {
 
 			const res = await request(app).get('/api/admin/products').set('Cookie', cookies);
 
-			const byId = new Map(res.body.data.products.map((p) => [p._id, p]));
+			const byId = new Map(res.body.data.map((p) => [p._id, p]));
 			expect(byId.get(String(busy._id)).pendingMovements).toBe(1);
 			expect(byId.get(String(quiet._id)).pendingMovements).toBe(0);
 			expect(byId.get(String(busy._id)).name).toBe(busy.name);

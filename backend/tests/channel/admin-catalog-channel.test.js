@@ -79,7 +79,7 @@ describe('admin products: salesChannel', () => {
 		const names = async (query) => {
 			const res = await request(app).get('/api/admin/products').query(query).set('Cookie', cookies);
 			expect(res.status).toBe(200);
-			return res.body.data.products.map((p) => p.name).sort();
+			return res.body.data.map((p) => p.name).sort();
 		};
 
 		expect(await names({ channel: 'online' })).toEqual(['P online']);
@@ -96,7 +96,7 @@ describe('admin products: salesChannel', () => {
 		const res = await request(app).get('/api/admin/products').query('channel[$ne]=x').set('Cookie', cookies);
 
 		expect(res.status).toBe(200);
-		expect(res.body.data.products.map((p) => p.name)).toContain('Visible');
+		expect(res.body.data.map((p) => p.name)).toContain('Visible');
 	});
 });
 

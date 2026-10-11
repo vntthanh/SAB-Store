@@ -8,6 +8,9 @@ import ProductModal from '../../components/admin/ProductModal';
 import StockAdjustPanel from '../../components/admin/StockAdjustPanel';
 import StockMovementsTable from '../../components/admin/StockMovementsTable';
 import StockReconcileModal from '../../components/admin/StockReconcileModal';
+import { describePage } from '../../utils/pagination';
+
+const PAGE_SIZE = 20;
 
 const StockModal = ({ product, onClose, onChanged }) => {
 	const [refreshKey, setRefreshKey] = useState(0);
@@ -44,6 +47,39 @@ const StockModal = ({ product, onClose, onChanged }) => {
 	);
 };
 
+const PageControls = ({ meta, disabled, onPage }) => {
+	const { from, to, hasPrev, hasNext } = describePage(meta);
+
+	return (
+		<div className="bg-gray-50 px-6 py-3 border-t border-gray-200 flex items-center justify-between">
+			<div className="text-sm text-gray-700">
+				Hiển thị {from} đến {to} trong {meta.total} sản phẩm
+			</div>
+			<div className="flex items-center space-x-2">
+				<button
+					type="button"
+					onClick={() => onPage(meta.page - 1)}
+					disabled={disabled || !hasPrev}
+					className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+				>
+					<i className="fas fa-chevron-left"></i>
+				</button>
+				<span className="px-3 py-2 text-sm text-gray-700">
+					Trang {meta.page} / {meta.totalPages}
+				</span>
+				<button
+					type="button"
+					onClick={() => onPage(meta.page + 1)}
+					disabled={disabled || !hasNext}
+					className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+				>
+					<i className="fas fa-chevron-right"></i>
+				</button>
+			</div>
+		</div>
+	);
+};
+
 const ProductsManagement = () => {
 	const [products, setProducts] = useState([]);
 	const [loading, setLoading] = useState(true);
@@ -51,24 +87,41 @@ const ProductsManagement = () => {
 	const [editingProduct, setEditingProduct] = useState(null);
 	const [stockProductId, setStockProductId] = useState(null);
 	const [showReconcile, setShowReconcile] = useState(false);
+	const [page, setPage] = useState(1);
+	const [meta, setMeta] = useState(null);
+	const [paging, setPaging] = useState(false);
 
 	// Fetch products
+	// Turning a page keeps the table and the (disabled) controls on screen; only the first load shows the full spinner.
 	useEffect(() => {
-		fetchProducts();
-	}, []);
+		fetchProducts({ silent: meta !== null });
+	}, [page]);
 
 	const fetchProducts = async ({ silent = false } = {}) => {
+		let steppedBack = false;
 		try {
 			if (!silent) setLoading(true);
-			const response = await adminService.getProducts();
+			setPaging(true);
+			const response = await adminService.getProducts({ page, limit: PAGE_SIZE });
 			if (response.success) {
-				setProducts(response.data.products);
+				// The last row of the last page was deleted or moved: step back to a page that exists.
+				if (response.data.length === 0 && page > 1 && response.meta.totalPages > 0) {
+					// Keep loading/paging on: the [page] effect refetches, so the deleted row never flashes.
+					steppedBack = true;
+					setPage(response.meta.totalPages);
+					return;
+				}
+				setProducts(response.data);
+				setMeta(response.meta);
 			}
 		} catch (error) {
 			console.error('Error fetching products:', error);
 			toast.error('Lỗi khi tải danh sách sản phẩm');
 		} finally {
-			setLoading(false);
+			if (!steppedBack) {
+				setLoading(false);
+				setPaging(false);
+			}
 		}
 	};
 
@@ -182,6 +235,7 @@ const ProductsManagement = () => {
 					onDelete={handleDelete}
 					onManageStock={(product) => setStockProductId(product._id)}
 				/>
+				{meta && meta.totalPages > 1 && <PageControls meta={meta} disabled={paging} onPage={setPage} />}
 			</div>
 
 			{/* Modal */}

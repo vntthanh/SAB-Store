@@ -25,8 +25,9 @@
  *   `RecordValidationError` (schema rule) or `InvalidIdError` (value of the wrong
  *   type, with `path` and `value`) from data/errors.js. Repositories not yet
  *   converted (orders, the merge import) still let the engine's own error through.
- * - A repository that pages returns `{ rows, total }`: the page's rows and the
- *   count of every match, for a page and limit the caller already clamped.
+ * - A repository that pages returns `{ data, meta: { page, limit, total, totalPages } }`:
+ *   the page's rows and the count of every match, for a page and limit the
+ *   caller already clamped. `totalPages` is 0 for an empty result.
  *   Rows sort by their key and then by id, so a page boundary never repeats or
  *   drops a row.
  * - Computed fields: `combos.listSellable`, `combos.findById`, `combos.create` and
