@@ -1,24 +1,7 @@
 const mongoose = require('mongoose');
 const mongoosePaginate = require('mongoose-paginate-v2');
 const { publicCodePlugin } = require('../utils/public-code');
-
-// Where a product (or combo) may be sold. 'all' is not a channel a sale happens
-// on; it is a product allowing every channel.
-const SALES_CHANNELS = ['all', 'online', 'offline'];
-const SALE_CHANNELS = ['online', 'offline'];
-
-function assertSaleChannel(channel) {
-	if (!SALE_CHANNELS.includes(channel)) {
-		throw new TypeError(`channel must be one of ${SALE_CHANNELS.join(', ')}; got ${String(channel)}`);
-	}
-}
-
-// Documents written before salesChannel existed have no such key, and Mongoose
-// defaults do not apply to queries, so a bare $in would silently drop them.
-function channelClause(channel) {
-	assertSaleChannel(channel);
-	return { $or: [{ salesChannel: { $in: ['all', channel] } }, { salesChannel: { $exists: false } }] };
-}
+const { SALES_CHANNELS, productSellableFilter } = require('../data/mongo/sellable');
 
 const productSchema = new mongoose.Schema({
 	name: {
@@ -152,20 +135,10 @@ productSchema.virtual('inStock').get(function () {
 	return this.stockQuantity > 0;
 });
 
-// The one rule for "can be sold on this channel". Every list or lookup that
-// feeds a sale or a storefront goes through here so the channels cannot drift.
-productSchema.statics.sellableQuery = function (channel) {
-	return { available: true, ...channelClause(channel) };
-};
-
-// $and keeps a caller filter's own $or (e.g. text search) from colliding with
-// the channel $or.
+// Query form of the sellable rule (data/mongo/sellable.js) for routes that
+// chain their own sort and paging onto it.
 productSchema.statics.findSellable = function (channel, filter = {}) {
-	return this.find({ $and: [filter, this.sellableQuery(channel)] });
-};
-
-productSchema.statics.findFeatured = function (channel, limit = 6) {
-	return this.findSellable(channel, { featured: true }).limit(limit);
+	return this.find(productSellableFilter(channel, filter));
 };
 
 // Add pagination plugin
@@ -174,6 +147,5 @@ productSchema.plugin(publicCodePlugin);
 
 const Product = mongoose.model('Product', productSchema);
 Product.SALES_CHANNELS = SALES_CHANNELS;
-Product.channelClause = channelClause;
 
 module.exports = Product;

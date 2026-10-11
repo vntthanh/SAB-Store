@@ -6,8 +6,7 @@
  * never see stock, so no stock field (nor the `inStock` virtual) is ever added.
  */
 const crypto = require('crypto');
-const Product = require('../models/Product');
-const Combo = require('../models/Combo');
+const { products, combos } = require('../data');
 const { mergeRequirements } = require('./combo-optimizer');
 const { normalizePublicCode } = require('../utils/public-code');
 
@@ -22,8 +21,10 @@ const pathSegment = (thing) => thing.slug || thing.publicCode.toLowerCase();
 const productPath = (product) => `/p/${product.publicCode}/${pathSegment(product)}`;
 const comboPath = (combo) => `/c/${combo.publicCode}/${pathSegment(combo)}`;
 
-// Exactly what toPublicProduct reads: stock and other internals never leave MongoDB.
-const PUBLIC_PRODUCT_FIELDS = 'publicCode slug name description price imageUrl category available minOrderQuantity maxOrderQuantity';
+// Exactly what toPublicProduct reads: stock and other internals are never loaded.
+const PUBLIC_PRODUCT_FIELDS = [
+	'publicCode', 'slug', 'name', 'description', 'price', 'imageUrl', 'category', 'available', 'minOrderQuantity', 'maxOrderQuantity'
+];
 
 function toPublicProduct(doc) {
 	return {
@@ -44,11 +45,11 @@ function toPublicProduct(doc) {
 
 /**
  * @param {object} doc a combo document
- * @param {object[]} products product documents eligible for the combo, in display order
+ * @param {object[]} eligible product records eligible for the combo, in display order
  */
-function toPublicCombo(doc, products) {
+function toPublicCombo(doc, eligible) {
 	const byCategory = new Map();
-	for (const product of products) {
+	for (const product of eligible) {
 		if (!byCategory.has(product.category)) byCategory.set(product.category, []);
 		byCategory.get(product.category).push(toPublicProduct(product));
 	}
@@ -73,7 +74,7 @@ function toPublicCombo(doc, products) {
 async function findPublicProductByCode(code) {
 	const publicCode = normalizePublicCode(code);
 	if (!publicCode) return null;
-	const [product] = await Product.findSellable(CHANNEL, { publicCode }).limit(1).lean();
+	const [product] = await products.findSellable(CHANNEL, { publicCode });
 	return product ? toPublicProduct(product) : null;
 }
 
@@ -82,15 +83,12 @@ async function findPublicProductByCode(code) {
 async function findPublicComboByCode(code) {
 	const publicCode = normalizePublicCode(code);
 	if (!publicCode) return null;
-	const [combo] = await Combo.findSellable(CHANNEL, { publicCode }).limit(1).lean();
+	const [combo] = await combos.findSellable(CHANNEL, { publicCode });
 	if (!combo) return null;
 
 	const categories = [...new Set(combo.categoryRequirements.map((r) => r.category))];
-	const products = await Product.find({ category: { $in: categories }, ...Product.sellableQuery(CHANNEL) })
-		.select(PUBLIC_PRODUCT_FIELDS)
-		.sort({ name: 1 })
-		.lean();
-	return toPublicCombo(combo, products);
+	const eligible = await products.listSellableInCategories(CHANNEL, categories, PUBLIC_PRODUCT_FIELDS);
+	return toPublicCombo(combo, eligible);
 }
 
 /** The images that represent a combo in a share preview: sorted so the pick is stable. */

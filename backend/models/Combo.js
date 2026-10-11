@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const mongoosePaginate = require('mongoose-paginate-v2');
-const Product = require('./Product');
+const { SALES_CHANNELS, COMBO_SELLABLE_SORT, comboSellableFilter } = require('../data/mongo/sellable');
 const { publicCodePlugin } = require('../utils/public-code');
 
 const categoryRequirementSchema = new mongoose.Schema({
@@ -51,7 +51,7 @@ const comboSchema = new mongoose.Schema({
 	},
 	salesChannel: {
 		type: String,
-		enum: Product.SALES_CHANNELS,
+		enum: SALES_CHANNELS,
 		default: 'all'
 	},
 	priority: {
@@ -74,11 +74,10 @@ comboSchema.virtual('totalRequiredQuantity').get(function () {
 	return this.categoryRequirements.reduce((total, req) => total + req.quantity, 0);
 });
 
-// Combos that may discount an order placed on `channel`. The products inside a
-// combo must still be sellable on that channel; pricing checks that separately.
+// Query form of the sellable rule (data/mongo/sellable.js) for routes that
+// chain their own paging onto it.
 comboSchema.statics.findSellable = function (channel, filter = {}) {
-	return this.find({ $and: [filter, { isActive: true }, Product.channelClause(channel)] })
-		.sort({ priority: -1, createdAt: -1 });
+	return this.find(comboSellableFilter(channel, filter)).sort(COMBO_SELLABLE_SORT);
 };
 
 // Add pagination plugin

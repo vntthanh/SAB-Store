@@ -6,9 +6,8 @@
  * hostile at worst, so they are read from the database instead of trusted.
  */
 
-const mongoose = require('mongoose');
-const Product = require('../models/Product');
-const Combo = require('../models/Combo');
+const { products, combos } = require('../data');
+const { isRecordId, normalizeRecordId } = require('../data/ids');
 const { solve, mergeRequirements, StateBudgetExceededError } = require('./combo-optimizer');
 const { ERROR_CODES } = require('../constants/errorCodes');
 
@@ -36,12 +35,12 @@ class PricingError extends Error {
 	}
 }
 
-// Only what the engine reads. Selecting fields and returning plain objects
-// (`lean`) skips hydrating full Mongoose documents. The combo search itself
-// stays in Node: a dynamic program as an aggregation pipeline would run on the
-// small mongod (512 MB, 0.25 GB cache) and be slower than this in-memory one.
-const PRODUCT_FIELDS = '_id name price category minOrderQuantity maxOrderQuantity available salesChannel';
-const COMBO_FIELDS = '_id name price categoryRequirements priority salesChannel isActive';
+// Only what the engine reads, so the stock cache and other internals are never
+// loaded. The combo search itself stays in Node: a dynamic program as an
+// aggregation pipeline would run on the small mongod (512 MB, 0.25 GB cache)
+// and be slower than this in-memory one.
+const PRODUCT_FIELDS = ['_id', 'name', 'price', 'category', 'minOrderQuantity', 'maxOrderQuantity', 'available', 'salesChannel'];
+const COMBO_FIELDS = ['_id', 'name', 'price', 'categoryRequirements', 'priority', 'salesChannel', 'isActive'];
 
 const CHANNEL_LABELS = { online: 'online', offline: 'tại quầy' };
 
@@ -93,30 +92,26 @@ function describePricingError(error) {
  * cart has both kinds, UNAVAILABLE wins because the cart is unfixable by
  * switching channel.
  *
- * @param {string[]} ids canonical (lowercase) ObjectId strings
+ * @param {string[]} ids canonical (lowercase) record id strings
  * @param {'online'|'offline'} channel
- * @param {import('mongoose').ClientSession|null} [session]
- * @returns {Promise<Map<string, object>>} lean product objects keyed by `_id.toString()`
+ * @param {object|null} [tx]
+ * @returns {Promise<Map<string, object>>} product records keyed by `String(_id)`
  * @throws {TypeError} channel missing or unknown (a programming error, not a bad cart)
  * @throws {PricingError}
  */
-async function loadSellableProducts(ids, channel, session = null) {
-	let query = Product.findSellable(channel, { _id: { $in: ids } }).select(PRODUCT_FIELDS).lean();
-	if (session) query = query.session(session);
-	const products = await query;
+async function loadSellableProducts(ids, channel, tx = null) {
+	const sellable = await products.findSellableForPricing(channel, ids, PRODUCT_FIELDS, tx);
 
-	const productMap = new Map(products.map((product) => [product._id.toString(), product]));
+	const productMap = new Map(sellable.map((product) => [product._id.toString(), product]));
 	const missingIds = ids.filter((id) => !productMap.has(id));
 	if (missingIds.length === 0) return productMap;
 
-	let otherChannelQuery = Product.find({ _id: { $in: missingIds }, available: true }).select('name').lean();
-	if (session) otherChannelQuery = otherChannelQuery.session(session);
-	const otherChannel = await otherChannelQuery;
+	const otherChannelNames = await products.findAvailableNames(missingIds, tx);
 
-	if (otherChannel.length === missingIds.length) {
+	if (otherChannelNames.length === missingIds.length) {
 		throw new PricingError(ERROR_CODES.PRODUCT_CHANNEL_MISMATCH, {
 			missingIds,
-			productNames: otherChannel.map((product) => product.name),
+			productNames: otherChannelNames,
 			channel,
 		});
 	}
@@ -167,7 +162,7 @@ function checkQuantityLimits(lines, { channel, allowOverMax }) {
  * cheapest total for the customer — several different combos may apply to one
  * cart, each any number of times.
  *
- * Availability is a single rule, `Product.findSellable(channel)`: a product
+ * Availability is a single rule, `products.findSellable(channel)`: a product
  * counts only when `available` is true and its `salesChannel` allows `channel`.
  * There is deliberately no flag to relax it — it would let a direct sale sell
  * `available: false` stock. `channel` has no default: a caller that forgets it
@@ -181,10 +176,10 @@ function checkQuantityLimits(lines, { channel, allowOverMax }) {
  *        Cart lines. Lines sharing a productId are summed.
  * @param {object} [opts]
  * @param {'online'|'offline'} opts.channel Required. Where the order is placed.
- * @param {import('mongoose').ClientSession|null} [opts.session=null]
- *        Pass when called inside a transaction; every query issued here must
- *        then run with `.session(session)`. Null runs outside a transaction
- *        (read-only previews).
+ * @param {object|null} [opts.tx=null]
+ *        The transaction from `withTransaction`; pass it when called inside one
+ *        so every query issued here runs in it. Null runs outside a transaction
+ *        (read-only previews). Callers may pass it as `tx` or `session`.
  * @param {boolean} [opts.enforceQuantityLimits=false] Enforce each product's
  *        min/max order quantity. Order routes set it; the read-only previews
  *        do not, so a counter cart over a maximum still shows its total and the
@@ -198,25 +193,27 @@ function checkQuantityLimits(lines, { channel, allowOverMax }) {
  *   totalAmount: number,
  *   savings: number,
  *   orderItems: Array<{
- *     productId: import('mongoose').Types.ObjectId,
+ *     productId: NativeId,
  *     productName: string,
  *     price: number,
  *     quantity: number,
  *     fromCombo: boolean,
- *     comboId: import('mongoose').Types.ObjectId|null,
+ *     comboId: NativeId|null,
  *     comboName: string|null
  *   }>,
  *   comboInfo: {
  *     savings: number,
  *     originalTotal: number,
  *     finalTotal: number,
- *     combos: Array<{comboId: import('mongoose').Types.ObjectId, comboName: string, applications: number, savings: number}>
+ *     combos: Array<{comboId: NativeId, comboName: string, applications: number, savings: number}>
  *   }|null,
  *   overMaxLines: Array<{productId: string, productName: string, quantity: number, max: number}>,
  *   products: Map<string, object>
  * }>}
- *        `orderItems[].productId` is an ObjectId, not a string, so the result
- *        can be written to an Order without re-casting. Combo lines keep the
+ *        `orderItems[].productId` and `comboId` (and `comboInfo.combos[].comboId`)
+ *        are the store's native id: an ObjectId on MongoDB, a lowercase 24-hex
+ *        string on another backend. Callers only `String()` them or compare the
+ *        normalised form; nothing here depends on it being an object. Combo lines keep the
  *        retail unit price; `totalAmount` is NOT their price x quantity.
  *        `comboInfo` covers the combo lines only: `originalTotal` is their retail
  *        value and `finalTotal` what the combos charge for them, so
@@ -231,31 +228,32 @@ function checkQuantityLimits(lines, { channel, allowOverMax }) {
  *        zero total, which would otherwise be indistinguishable from a free order.
  */
 async function computeOrderPricing(items, opts = {}) {
-	const session = opts.session || null;
+	const tx = opts.tx || opts.session || null;
 	const channel = opts.channel;
 	// Fail before any query: this is the check that makes a forgotten channel
 	// impossible to ship, and it must not depend on the cart being valid.
-	Product.sellableQuery(channel);
+	products.assertSaleChannel(channel);
 
 	if (!Array.isArray(items) || items.length === 0) {
 		throw new PricingError('EMPTY_CART');
 	}
 
-	// Merge duplicate productId lines and normalize ObjectId casing (an
-	// uppercase-hex id passes isMongoId()/$in but would fail a later strict
-	// string comparison against the lowercase form Mongo returns).
+	// Merge duplicate productId lines and reduce every id to its canonical form
+	// (lowercase 24-hex): a differently cased id would match the store but fail
+	// the strict string comparisons below against the form the store returns.
+	// Anything that is not a record id is rejected as an unknown product.
 	const qtyByProductId = new Map();
 	let totalUnits = 0;
 	for (const item of items) {
 		const rawId = item && item.productId;
-		if (!rawId || !mongoose.Types.ObjectId.isValid(rawId)) {
+		if (!isRecordId(rawId)) {
 			throw new PricingError('PRODUCT_UNAVAILABLE', { missingIds: [String(rawId)] });
 		}
 		const quantity = Number(item.quantity);
 		if (!Number.isInteger(quantity) || quantity <= 0) {
 			throw new PricingError('INVALID_QUANTITY', { productId: String(rawId) });
 		}
-		const key = new mongoose.Types.ObjectId(rawId).toString();
+		const key = normalizeRecordId(rawId);
 		qtyByProductId.set(key, (qtyByProductId.get(key) || 0) + quantity);
 		totalUnits += quantity;
 		// Checked inside the loop so a huge quantity cannot overflow the sum
@@ -270,16 +268,14 @@ async function computeOrderPricing(items, opts = {}) {
 	const ids = [...qtyByProductId.keys()].sort();
 
 	// Query 1/2 — products, filtered by the single sellable-on-channel rule.
-	const productMap = await loadSellableProducts(ids, channel, session);
+	const productMap = await loadSellableProducts(ids, channel, tx);
 	const lines = ids.map((id) => ({ id, product: productMap.get(id), quantity: qtyByProductId.get(id) }));
 	const overMaxLines = opts.enforceQuantityLimits
 		? checkQuantityLimits(lines, { channel, allowOverMax: opts.allowOverMax === true })
 		: [];
 
 	// Query 2/2 — combos that apply on this channel.
-	let comboQuery = Combo.findSellable(channel).select(COMBO_FIELDS).lean();
-	if (session) comboQuery = comboQuery.session(session);
-	const combos = await comboQuery;
+	const sellableCombos = await combos.findSellableForPricing(channel, COMBO_FIELDS, tx);
 
 	// Units of one category, dearest first; equal prices fall back to product id.
 	const unitsByCategory = new Map();
@@ -296,7 +292,7 @@ async function computeOrderPricing(items, opts = {}) {
 	try {
 		solved = solve(
 			Object.fromEntries([...unitsByCategory].map(([category, units]) => [category, units.map((unit) => unit.price)])),
-			combos.map((combo) => ({
+			sellableCombos.map((combo) => ({
 				id: combo._id.toString(),
 				price: combo.price,
 				priority: combo.priority,
@@ -314,7 +310,7 @@ async function computeOrderPricing(items, opts = {}) {
 
 	// Hand the dearest units of each category to the applications, in the
 	// optimizer's combo order, so the same cart always yields the same lines.
-	const comboById = new Map(combos.map((combo) => [combo._id.toString(), combo]));
+	const comboById = new Map(sellableCombos.map((combo) => [combo._id.toString(), combo]));
 	const nextUnit = new Map();
 	const inComboByProduct = new Map();
 	const orderItems = [];

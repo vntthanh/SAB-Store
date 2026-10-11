@@ -10,12 +10,22 @@
  * - Exceptions, still returning hydrated documents: `orders.applyStatusChange`
  *   and `orders.replaceItems`. Their callers serialise the result, and a
  *   document's JSON differs from a plain object's (virtuals, `__v`, subdocument
- *   ids); callers that serialise them are not on the repository yet.
+ *   ids); they are serialised by routes that still read the store directly.
+ * - Exceptions, keeping the store's native `_id`: `products.findSellableForPricing`
+ *   and `combos.findSellableForPricing`. This store returns its id object
+ *   (ObjectId); another backend returns the id as a lowercase 24-hex string.
+ *   Pricing copies those ids into order lines, and its callers only `String()`
+ *   them or compare the normalised form.
+ * - Lean records carry the store's `__v`; other backends will not. Callers must
+ *   not read it.
+ * - `combos.findSellable` keeps nested `categoryRequirements[]._id` as native ids.
  */
 const BACKENDS = {
 	mongo: () => ({
 		stockLedger: require('./mongo/stock-ledger'),
 		orders: require('./mongo/orders'),
+		products: require('./mongo/products'),
+		combos: require('./mongo/combos'),
 		withTransaction: require('./mongo/tx').withTransaction
 	})
 };

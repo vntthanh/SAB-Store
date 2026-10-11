@@ -1,27 +1,29 @@
 /**
- * Product.findSellable / Combo.findSellable — the single "sellable on channel K"
+ * products.findSellable / combos.findSellable — the single "sellable on channel K"
  * rule. `available` is the master switch; `salesChannel` narrows it to a channel.
  * `Product.isActive` is deprecated and must never influence the result.
  */
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
+const { products, combos } = require('../../data');
+const { SALES_CHANNELS, sellableQuery } = require('../../data/mongo/sellable');
 const { makeProduct, makeCombo } = require('../helpers/factories');
 
 const idsOf = (docs) => docs.map((d) => d._id.toString());
 
-describe('Product.findSellable', () => {
+describe('products.findSellable', () => {
 	it('exposes SALES_CHANNELS and defaults salesChannel to "all"', async () => {
-		expect(Product.SALES_CHANNELS).toEqual(['all', 'online', 'offline']);
+		expect(SALES_CHANNELS).toEqual(['all', 'online', 'offline']);
 		const product = await makeProduct();
 		expect(product.salesChannel).toBe('all');
 	});
 
 	it('throws when the channel is missing or unknown instead of defaulting to one', () => {
-		expect(() => Product.findSellable()).toThrow();
-		expect(() => Product.findSellable('pos')).toThrow();
+		expect(() => products.findSellable()).toThrow();
+		expect(() => products.findSellable('pos')).toThrow();
 		// "all" describes what a product allows, not a channel a sale happens on.
-		expect(() => Product.findSellable('all')).toThrow();
-		expect(() => Product.sellableQuery(undefined)).toThrow();
+		expect(() => products.findSellable('all')).toThrow();
+		expect(() => sellableQuery(undefined)).toThrow();
 	});
 
 	it('filters by channel: online-only and offline-only products stay on their own channel', async () => {
@@ -29,11 +31,11 @@ describe('Product.findSellable', () => {
 		const online = await makeProduct({ salesChannel: 'online' });
 		const offline = await makeProduct({ salesChannel: 'offline' });
 
-		const onlineIds = idsOf(await Product.findSellable('online'));
+		const onlineIds = idsOf(await products.findSellable('online'));
 		expect(onlineIds).toEqual(expect.arrayContaining([both._id.toString(), online._id.toString()]));
 		expect(onlineIds).not.toContain(offline._id.toString());
 
-		const offlineIds = idsOf(await Product.findSellable('offline'));
+		const offlineIds = idsOf(await products.findSellable('offline'));
 		expect(offlineIds).toEqual(expect.arrayContaining([both._id.toString(), offline._id.toString()]));
 		expect(offlineIds).not.toContain(online._id.toString());
 	});
@@ -49,23 +51,23 @@ describe('Product.findSellable', () => {
 			stockQuantity: 3
 		});
 
-		expect(idsOf(await Product.findSellable('online'))).toContain(insertedId.toString());
-		expect(idsOf(await Product.findSellable('offline'))).toContain(insertedId.toString());
+		expect(idsOf(await products.findSellable('online'))).toContain(insertedId.toString());
+		expect(idsOf(await products.findSellable('offline'))).toContain(insertedId.toString());
 	});
 
 	it('never lists available:false, whatever the channel', async () => {
 		const stopped = await makeProduct({ available: false, salesChannel: 'all' });
 
-		expect(idsOf(await Product.findSellable('online'))).not.toContain(stopped._id.toString());
-		expect(idsOf(await Product.findSellable('offline'))).not.toContain(stopped._id.toString());
+		expect(idsOf(await products.findSellable('online'))).not.toContain(stopped._id.toString());
+		expect(idsOf(await products.findSellable('offline'))).not.toContain(stopped._id.toString());
 	});
 
 	it('ignores the deprecated isActive flag', async () => {
 		// isActive had no UI and no owner; one master switch (`available`) replaced it.
 		const product = await makeProduct({ isActive: false, available: true });
 
-		expect(idsOf(await Product.findSellable('online'))).toContain(product._id.toString());
-		expect(idsOf(await Product.findSellable('offline'))).toContain(product._id.toString());
+		expect(idsOf(await products.findSellable('online'))).toContain(product._id.toString());
+		expect(idsOf(await products.findSellable('offline'))).toContain(product._id.toString());
 	});
 
 	it('combines with a caller filter that has its own $or without clobbering either', async () => {
@@ -79,23 +81,14 @@ describe('Product.findSellable', () => {
 
 		expect(idsOf(found)).toEqual([wanted._id.toString()]);
 	});
-
-	it('findFeatured requires a channel and only returns sellable featured products', async () => {
-		const featured = await makeProduct({ featured: true, salesChannel: 'online' });
-		await makeProduct({ featured: true, salesChannel: 'offline' });
-		await makeProduct({ featured: false, salesChannel: 'online' });
-
-		expect(() => Product.findFeatured()).toThrow();
-		expect(idsOf(await Product.findFeatured('online'))).toEqual([featured._id.toString()]);
-	});
 });
 
-describe('Combo.findSellable', () => {
+describe('combos.findSellable', () => {
 	it('defaults salesChannel to "all" and throws without a valid channel', async () => {
 		const combo = await makeCombo();
 		expect(combo.salesChannel).toBe('all');
-		expect(() => Combo.findSellable()).toThrow();
-		expect(() => Combo.findSellable('pos')).toThrow();
+		expect(() => combos.findSellable()).toThrow();
+		expect(() => combos.findSellable('pos')).toThrow();
 	});
 
 	it('filters by channel and by isActive', async () => {
@@ -104,12 +97,12 @@ describe('Combo.findSellable', () => {
 		const offline = await makeCombo({ salesChannel: 'offline' });
 		const off = await makeCombo({ salesChannel: 'all', isActive: false });
 
-		const onlineIds = idsOf(await Combo.findSellable('online'));
+		const onlineIds = idsOf(await combos.findSellable('online'));
 		expect(onlineIds).toEqual(expect.arrayContaining([both._id.toString(), online._id.toString()]));
 		expect(onlineIds).not.toContain(offline._id.toString());
 		expect(onlineIds).not.toContain(off._id.toString());
 
-		const offlineIds = idsOf(await Combo.findSellable('offline'));
+		const offlineIds = idsOf(await combos.findSellable('offline'));
 		expect(offlineIds).toEqual(expect.arrayContaining([both._id.toString(), offline._id.toString()]));
 		expect(offlineIds).not.toContain(online._id.toString());
 	});
@@ -123,14 +116,14 @@ describe('Combo.findSellable', () => {
 			priority: 0
 		});
 
-		expect(idsOf(await Combo.findSellable('online'))).toContain(insertedId.toString());
-		expect(idsOf(await Combo.findSellable('offline'))).toContain(insertedId.toString());
+		expect(idsOf(await combos.findSellable('online'))).toContain(insertedId.toString());
+		expect(idsOf(await combos.findSellable('offline'))).toContain(insertedId.toString());
 	});
 
 	it('orders by priority, then newest', async () => {
 		const low = await makeCombo({ priority: 1 });
 		const high = await makeCombo({ priority: 5 });
 
-		expect(idsOf(await Combo.findSellable('online'))).toEqual([high._id.toString(), low._id.toString()]);
+		expect(idsOf(await combos.findSellable('online'))).toEqual([high._id.toString(), low._id.toString()]);
 	});
 });
