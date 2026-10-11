@@ -23,4 +23,19 @@ function isDuplicateKeyError(err) {
 	return Boolean(err) && err.code === 11000;
 }
 
-module.exports = { InvalidIdError, isDuplicateKeyError };
+/**
+ * The field(s) a unique-constraint violation names, without the clashing value,
+ * for an error that `isDuplicateKeyError` recognises. Falls back to a generic
+ * phrase when the engine did not say.
+ *
+ * @param {unknown} err
+ * @returns {string}
+ */
+function duplicateKeyFields(err) {
+	if (err && err.keyPattern) return Object.keys(err.keyPattern).join(', ');
+	// A bulk write reports only the message: "... index: orderCode_1 dup key: { ... }".
+	const index = /index: (\S+)/.exec(String(err && err.message));
+	return index ? index[1].replace(/_-?\d+$/, '') : 'khoá duy nhất';
+}
+
+module.exports = { InvalidIdError, isDuplicateKeyError, duplicateKeyFields };

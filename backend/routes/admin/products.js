@@ -3,6 +3,7 @@ const Product = require('../../models/Product');
 const { asString, asEnum, asPageLimit, safeSearch } = require('../../utils/query-guard');
 const { recordAppliedOpening, countPendingByProduct } = require('../../services/stock-ledger');
 const { withTransaction } = require('../../utils/transaction');
+const { gated } = require('../../services/write-gate');
 const { withPublicCodeRetry } = require('../../utils/public-code');
 const router = express.Router();
 
@@ -86,7 +87,7 @@ router.get('/', async (req, res) => {
  * @desc    Create new product
  * @access  Private (Admin)
  */
-router.post('/', async (req, res) => {
+router.post('/', gated(async (req, res) => {
 	try {
 		// stockQuantity is only the opening balance of a product that did not exist
 		// until now; it is recorded as an `opening` movement below. Every later
@@ -180,14 +181,14 @@ router.post('/', async (req, res) => {
 			message: 'Lỗi server khi tạo sản phẩm'
 		});
 	}
-});
+}));
 
 /**
  * @route   PUT /api/admin/products/:id
  * @desc    Update product
  * @access  Private (Admin)
  */
-router.put('/:id', async (req, res) => {
+router.put('/:id', gated(async (req, res) => {
 	try {
 		const { id } = req.params;
 
@@ -270,14 +271,14 @@ router.put('/:id', async (req, res) => {
 			message: 'Lỗi server khi cập nhật sản phẩm'
 		});
 	}
-});
+}));
 
 /**
  * @route   DELETE /api/admin/products/:id
  * @desc    Delete product
  * @access  Private (Admin)
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', gated(async (req, res) => {
 	try {
 		const { id } = req.params;
 
@@ -323,6 +324,6 @@ router.delete('/:id', async (req, res) => {
 			message: 'Lỗi server khi xóa sản phẩm'
 		});
 	}
-});
+}));
 
 module.exports = router;

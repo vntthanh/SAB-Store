@@ -242,10 +242,14 @@ async function recordFailure(movement, err) {
  *
  * Fix a discrepancy by recording an `adjust` movement, never by writing the cache.
  *
+ * With a `tx` it reads inside that transaction, so a bulk write (a restore) can
+ * be checked before it commits.
+ *
+ * @param {{tx?: object|null}} [opts]
  * @returns {Promise<Array<{productId: string, name: string, cached: number, ledgerSum: number, diff: number, pending: number}>>}
  */
-async function reconcile() {
-	const { appliedSumByProduct, pendingByProduct, products } = await store.readLedgerState();
+async function reconcile(opts = {}) {
+	const { appliedSumByProduct, pendingByProduct, products } = await store.readLedgerState(opts.tx || null);
 
 	const discrepancies = [];
 	for (const product of products) {

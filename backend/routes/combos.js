@@ -1,4 +1,5 @@
 const express = require('express');
+const { gated } = require('../services/write-gate');
 const Combo = require('../models/Combo');
 const Product = require('../models/Product');
 const { authenticateAdmin, authenticateSeller, authenticateUser } = require('../middleware/better-auth');
@@ -103,7 +104,7 @@ router.get('/by-code/:code', async (req, res) => {
  * @desc    Create new combo
  * @access  Private/Admin
  */
-router.post('/', authenticateAdmin, async (req, res) => {
+router.post('/', authenticateAdmin, gated(async (req, res) => {
 	try {
 		const { name, description, price, categoryRequirements, priority, salesChannel } = req.body;
 
@@ -178,7 +179,7 @@ router.post('/', authenticateAdmin, async (req, res) => {
 			message: 'Lỗi server khi tạo combo'
 		});
 	}
-});
+}));
 
 /**
  * @route   POST /api/combos/pricing
@@ -241,7 +242,7 @@ router.get('/pricing', async (req, res) => {
  * @desc    Update combo
  * @access  Private/Admin
  */
-router.put('/:id', authenticateAdmin, async (req, res) => {
+router.put('/:id', authenticateAdmin, gated(async (req, res) => {
 	try {
 		const { id } = req.params;
 		const { name, description, price, categoryRequirements, priority, isActive, salesChannel } = req.body;
@@ -329,14 +330,14 @@ router.put('/:id', authenticateAdmin, async (req, res) => {
 			message: 'Lỗi server khi cập nhật combo'
 		});
 	}
-});
+}));
 
 /**
  * @route   DELETE /api/combos/:id
  * @desc    Delete combo
  * @access  Private/Admin
  */
-router.delete('/:id', authenticateAdmin, async (req, res) => {
+router.delete('/:id', authenticateAdmin, gated(async (req, res) => {
 	try {
 		const { id } = req.params;
 
@@ -369,7 +370,7 @@ router.delete('/:id', authenticateAdmin, async (req, res) => {
 			message: 'Lỗi server khi xóa combo'
 		});
 	}
-});
+}));
 
 /**
  * @route   GET /api/combos/:id

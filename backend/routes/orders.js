@@ -8,6 +8,7 @@ const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError
 const { recordOrderMovements } = require('../services/stock');
 const { enqueueMovements } = require('../services/stock-ledger');
 const { withTransaction } = require('../utils/transaction');
+const { gated } = require('../services/write-gate');
 const { logEvent, orderCreatedFields } = require('../utils/log-event');
 const router = express.Router();
 
@@ -18,7 +19,7 @@ const MAX_ORDER_CODE_ATTEMPTS = 10;
  * @desc    Create a new order
  * @access  Public
  */
-router.post('/', validateOrder, async (req, res) => {
+router.post('/', validateOrder, gated(async (req, res) => {
 	try {
 		const { items, expectedTotal } = req.body;
 		// Validation checks the trimmed text but does not rewrite the request, so
@@ -182,7 +183,7 @@ router.post('/', validateOrder, async (req, res) => {
 			...(process.env.NODE_ENV === 'development' && { debug: error.message })
 		});
 	}
-});
+}));
 
 /**
  * @route   GET /api/orders/:orderCode

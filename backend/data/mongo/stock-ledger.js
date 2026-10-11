@@ -193,21 +193,24 @@ async function summarizePending() {
  * What reconcile compares: the sum of applied deltas and the pending count per
  * product (keyed by id string), and every product's cached stock.
  *
+ * With a `tx` the three reads run inside it one after another (a transaction
+ * runs one operation at a time) and see what the transaction has written.
+ *
+ * @param {object|null} [tx]
  * @returns {Promise<{appliedSumByProduct: Map<string, number>, pendingByProduct: Map<string, number>,
  *                    products: Array<{productId: string, name: string, stockQuantity?: number}>}>}
  */
-async function readLedgerState() {
-	const [sums, pendingCounts, products] = await Promise.all([
-		StockMovement.aggregate([
-			{ $match: { status: 'applied' } },
-			{ $group: { _id: '$productId', ledgerSum: { $sum: '$delta' } } }
-		]),
-		StockMovement.aggregate([
-			{ $match: { status: 'pending' } },
-			{ $group: { _id: '$productId', pending: { $sum: 1 } } }
-		]),
-		Product.find({}).select('name stockQuantity').lean()
-	]);
+async function readLedgerState(tx) {
+	const inTx = (query) => (tx ? query.session(tx) : query);
+	const sums = await inTx(StockMovement.aggregate([
+		{ $match: { status: 'applied' } },
+		{ $group: { _id: '$productId', ledgerSum: { $sum: '$delta' } } }
+	]));
+	const pendingCounts = await inTx(StockMovement.aggregate([
+		{ $match: { status: 'pending' } },
+		{ $group: { _id: '$productId', pending: { $sum: 1 } } }
+	]));
+	const products = await inTx(Product.find({}).select('name stockQuantity').lean());
 	return {
 		appliedSumByProduct: new Map(sums.map((s) => [String(s._id), s.ledgerSum])),
 		pendingByProduct: new Map(pendingCounts.map((p) => [String(p._id), p.pending])),

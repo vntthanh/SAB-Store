@@ -9,6 +9,7 @@ const { getPaginationInfo } = require('../../utils/helpers');
 const { sendOrderToAppScript } = require('../../utils/appscript');
 const { transitionOrderWithStock } = require('../../services/stock');
 const { enqueueMovements } = require('../../services/stock-ledger');
+const { gated } = require('../../services/write-gate');
 const { asEnum, asSort, safeSearch, asPageLimit } = require('../../utils/query-guard');
 const router = express.Router();
 
@@ -122,7 +123,7 @@ router.get('/:id', async (req, res) => {
  * the stock side effect, so a cancel can never restore stock twice.
  * Cancelled and delivered orders are final and refuse any status change.
  */
-router.put('/:id', validateOrderUpdate, async (req, res) => {
+router.put('/:id', validateOrderUpdate, gated(async (req, res) => {
 	const { id } = req.params;
 	try {
 		const { status } = req.body;
@@ -239,7 +240,7 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
 			message: 'Lỗi server khi cập nhật đơn hàng'
 		});
 	}
-});
+}));
 
 /**
  * @route   PUT /api/admin/orders/:id/items
@@ -251,7 +252,7 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
  * keyed by order code and this repo cannot tell whether a resend would overwrite
  * the row or append another, so `itemsHistory` is the record of the change.
  */
-router.put('/:id/items', validateOrderItemsEdit, async (req, res) => {
+router.put('/:id/items', validateOrderItemsEdit, gated(async (req, res) => {
 	try {
 		const { items } = req.body;
 
@@ -311,7 +312,7 @@ router.put('/:id/items', validateOrderItemsEdit, async (req, res) => {
 			message: 'Lỗi server khi sửa sản phẩm trong đơn hàng'
 		});
 	}
-});
+}));
 
 /**
  * @route   PATCH /api/admin/orders/:id/notes
@@ -321,7 +322,7 @@ router.put('/:id/items', validateOrderItemsEdit, async (req, res) => {
  * Allowed in every status, final ones included: notes touch neither status nor
  * stock, so one conditional-free update is enough and nothing goes to App Script.
  */
-router.patch('/:id/notes', validateOrderNotes, async (req, res) => {
+router.patch('/:id/notes', validateOrderNotes, gated(async (req, res) => {
 	try {
 		const additionalNote = trimText(req.body.additionalNote);
 		const note = trimText(req.body.note);
@@ -367,14 +368,14 @@ router.patch('/:id/notes', validateOrderNotes, async (req, res) => {
 			message: 'Lỗi server khi cập nhật ghi chú đơn hàng'
 		});
 	}
-});
+}));
 
 /**
  * @route   DELETE /api/admin/orders
  * @desc    Delete all orders (DANGEROUS - Admin only)
  * @access  Private (Admin)
  */
-router.delete('/', async (req, res) => {
+router.delete('/', gated(async (req, res) => {
 	try {
 		console.log('🚨 DELETE ALL ORDERS Request:', {
 			admin: req.admin.username,
@@ -442,6 +443,6 @@ router.delete('/', async (req, res) => {
 			error: process.env.NODE_ENV === 'development' ? error.message : undefined
 		});
 	}
-});
+}));
 
 module.exports = router;

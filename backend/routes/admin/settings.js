@@ -1,4 +1,5 @@
 const express = require('express');
+const { gated } = require('../../services/write-gate');
 const { contactEmail, contactUrl } = require('@sab/shared');
 const Settings = require('../../models/Settings');
 const { authenticateAdmin } = require('../../middleware/better-auth');
@@ -54,7 +55,7 @@ router.get('/', async (req, res) => {
  * @desc    Update store and payment settings
  * @access  Private (Admin only)
  */
-router.put('/', async (req, res) => {
+router.put('/', gated(async (req, res) => {
 	try {
 		const { bankNameId, bankAccountId, prefixMessage, storeTitle } = req.body;
 
@@ -144,6 +145,6 @@ router.put('/', async (req, res) => {
 			message: 'Lỗi server khi cập nhật cấu hình'
 		});
 	}
-});
+}));
 
 module.exports = router;

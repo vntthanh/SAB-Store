@@ -24,7 +24,14 @@ const PRODUCT_CREATION_WRITERS = new Map([
 	['models/Product.js', { writes: 1, why: 'schema definition of the field' }],
 	['routes/admin/products.js', { writes: 1, why: 'create product: opening balance, recorded as an applied opening movement' }],
 	['routes/admin/database.js', { writes: 1, why: 'database import: field whitelist of imported products, each with its opening movement' }],
-	['init-database.js', { writes: 2, why: 'first-run seed products' }]
+	['init-database.js', { writes: 2, why: 'first-run seed products' }],
+	// A restore inserts whole product rows with the cache the file holds. The field is never
+	// named there (rows are cast as a unit), hence zero lines; the entry keeps a literal write
+	// from slipping in. It reproduces a ledger-consistent snapshot: the route compares every
+	// cache with the restored ledger (reconcile) inside the same transaction and rolls back on a mismatch.
+	// The backup file format lists the field to validate a product row of a restore file; it writes nothing.
+	['data/snapshot.js', { writes: 1, why: 'restore file format: field check of a product row, no write' }],
+	['data/mongo/data-snapshot.js', { writes: 0, why: 'restore: whole product rows, cache verified against the restored ledger before commit' }]
 ]);
 
 // Top-level backend directories that hold no application code. node_modules is

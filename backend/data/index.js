@@ -19,6 +19,8 @@
  * - Lean records carry the store's `__v`; other backends will not. Callers must
  *   not read it.
  * - `combos.findSellable` keeps nested `categoryRequirements[]._id` as native ids.
+ * - `dataSnapshot` moves whole rows in the wire form of data/snapshot.js (ids as
+ *   hex strings, dates as ISO strings, `__v` kept), unlike the other repositories.
  */
 const BACKENDS = {
 	mongo: () => ({
@@ -26,6 +28,7 @@ const BACKENDS = {
 		orders: require('./mongo/orders'),
 		products: require('./mongo/products'),
 		combos: require('./mongo/combos'),
+		dataSnapshot: require('./mongo/data-snapshot'),
 		withTransaction: require('./mongo/tx').withTransaction
 	})
 };

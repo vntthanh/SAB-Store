@@ -12,6 +12,7 @@ const StockMovement = require('../../models/StockMovement');
 const { asPageLimit } = require('../../utils/query-guard');
 const { ERROR_CODES } = require('../../constants/errorCodes');
 const { recordMovement, enqueueMovements, reconcile } = require('../../services/stock-ledger');
+const { gated } = require('../../services/write-gate');
 
 const router = express.Router();
 
@@ -43,7 +44,7 @@ function parseAdjustment(body) {
  * @body    { mode: 'delta' | 'target', value: integer, reason: string }
  * @desc    Add/remove N units, or set the stock to X. 202: recorded, applied shortly.
  */
-router.post('/products/:id/stock-adjustments', async (req, res) => {
+router.post('/products/:id/stock-adjustments', gated(async (req, res) => {
 	try {
 		const { id } = req.params;
 		if (!OBJECT_ID_PATTERN.test(id)) return invalid(res, 'ID sản phẩm không hợp lệ');
@@ -74,7 +75,7 @@ router.post('/products/:id/stock-adjustments', async (req, res) => {
 		console.error('Stock adjustment error:', error);
 		res.status(500).json({ success: false, code: ERROR_CODES.INTERNAL_SERVER_ERROR, message: 'Lỗi server khi điều chỉnh tồn kho' });
 	}
-});
+}));
 
 /**
  * @route   GET /api/admin/products/:id/stock-movements?page&limit

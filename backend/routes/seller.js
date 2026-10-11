@@ -14,6 +14,7 @@ const { recordOrderMovements, transitionOrderWithStock } = require('../services/
 const { enqueueMovements } = require('../services/stock-ledger');
 const { ERROR_CODES, ERROR_MESSAGES } = require('../constants/errorCodes');
 const { withTransaction } = require('../utils/transaction');
+const { gated } = require('../services/write-gate');
 const { logEvent, orderCreatedFields } = require('../utils/log-event');
 const { asEnum, asSort, asDate, safeSearch, asPageLimit } = require('../utils/query-guard');
 const router = express.Router();
@@ -283,7 +284,7 @@ router.get('/orders', async (req, res) => {
  * over-length note too, but this route's catch-all would turn that into a 500
  * instead of a 400. The validator also checks the status against the enum.
  */
-router.put('/orders/:id/status', validateOrderUpdate, async (req, res) => {
+router.put('/orders/:id/status', validateOrderUpdate, gated(async (req, res) => {
 	const { id } = req.params;
 	try {
 		const { status } = req.body;
@@ -395,7 +396,7 @@ router.put('/orders/:id/status', validateOrderUpdate, async (req, res) => {
 			message: 'Lỗi server khi cập nhật trạng thái đơn hàng'
 		});
 	}
-});
+}));
 
 /**
  * @route   GET /api/seller/orders/:id
@@ -454,7 +455,7 @@ router.get('/orders/:id', async (req, res) => {
  * the sale is refused with 409 QUANTITY_OVER_MAX until the client resends with
  * `allowOverMax: true`, and the order's history then records who confirmed it.
  */
-router.post('/orders/direct', validateDirectOrder, async (req, res) => {
+router.post('/orders/direct', validateDirectOrder, gated(async (req, res) => {
 	try {
 		const { items, expectedTotal } = req.body;
 
@@ -594,7 +595,7 @@ router.post('/orders/direct', validateDirectOrder, async (req, res) => {
 			message: 'Lỗi server khi tạo đơn hàng bán trực tiếp'
 		});
 	}
-});
+}));
 
 /**
  * Helper function to get status in Vietnamese

@@ -16,4 +16,11 @@ describe('built ESM entry', () => {
 		expect(newPassword.safeParse(5).error.issues[0].message).toBe('Mật khẩu là bắt buộc');
 		expect(newPassword.safeParse('abc').error.issues.map((i) => i.message)).toContain('Mật khẩu phải có từ 8-128 ký tự');
 	});
+
+	it('exports the phrase an admin types to confirm a restore', async () => {
+		const { RESTORE_CONFIRMATION } = await import('../dist/index.js');
+		const required = (await import('node:module')).createRequire(import.meta.url)('../dist/index.cjs');
+		expect(RESTORE_CONFIRMATION).toBe('KHOI PHUC');
+		expect(required.RESTORE_CONFIRMATION).toBe(RESTORE_CONFIRMATION);
+	});
 });

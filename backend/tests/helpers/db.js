@@ -54,10 +54,16 @@
  *   and contact values and the notice length limit, which production code
  *   defines on the settings model today. They move to wherever the settings
  *   repository keeps them; only this file changes.
- * - The `user` and `account` kinds of `countRows`, and `insertRawUser`, reach
- *   the login tables, which belong to the auth library and not to the store.
- *   They exist so a test can prove an import or a seed never creates or
- *   leaves a login row; the SQL version reads wherever auth keeps them.
+ * - The `user` and `account` kinds of `countRows`, `insertRawUser`,
+ *   `findAuthRows` and `countAuthRows`, reach the login tables, which belong
+ *   to the auth library and not to the store. They exist so a test can prove an
+ *   import, a restore or a seed never creates or leaves a login row, and an
+ *   export never carries one; the SQL version reads and writes wherever auth
+ *   keeps them.
+ * - `findOrderRaw` returns an order with the store's native ids kept, for
+ *   asserting which id type a nested field holds after a restore.
+ * - `failNextOrderBulkInsert` spies on the collection call the restore uses to
+ *   write orders, so it must be reimplemented at the repository boundary.
  * - `databaseName` is the name the database announces for the seed guard's
  *   opt-in (`INIT_EMPTY_DATABASE`); on SQL it is the connected database name.
  *
@@ -113,6 +119,8 @@ const findProductByName = (name) => findOne(Product, { name }, byAge);
 const findCombo = (id) => findOne(Combo, { _id: id });
 const findComboByName = (name) => findOne(Combo, { name }, byAge);
 const findOrder = (id) => findOne(Order, { _id: id });
+/** An order as stored, ObjectIds and `__v` included (everything else in this file returns hex strings). */
+const findOrderRaw = (id) => Order.findById(id).lean();
 const findOrderByCode = (orderCode) => findOne(Order, { orderCode });
 const findMovement = (id) => findOne(StockMovement, { _id: id });
 /** The single settings row, or null when none exists. */
@@ -121,6 +129,11 @@ const findSettings = () => findOne(Settings, {});
 /** Every product, oldest first. */
 async function listProducts() {
 	return plain(await Product.find().sort(byAge).lean());
+}
+
+/** Every combo, oldest first. */
+async function listCombos() {
+	return plain(await Combo.find().sort(byAge).lean());
 }
 
 /** Every order, oldest first. */
@@ -173,6 +186,13 @@ const insertRawCombo = insertRaw(Combo);
 // A login row with no credentials: enough to make the user table non-empty.
 const insertRawUser = insertRaw(User);
 
+// The auth library's own collections, by the names it gives them.
+const authRows = (name) => mongoose.connection.collection(name);
+/** Row count of one of the auth library's tables. */
+const countAuthRows = (name) => authRows(name).countDocuments({});
+/** Every row of one of the auth library's tables, as hex-id plain objects. */
+const findAuthRows = async (name) => plain(await authRows(name).find({}).toArray());
+
 /**
  * The settings row as an older version stored it: the given fields only, no
  * defaults for fields added since (notices, contact, store title). Same raw,
@@ -214,9 +234,9 @@ async function deleteProduct(id) {
 
 // Never the ledger: emptying movements would leave cached stock that no row explains.
 // Orders are allowed: the stock cache follows movements, not orders, so removing orders leaves nothing unexplained.
-const DELETABLE_KINDS = new Set(['product', 'combo', 'order']);
+const DELETABLE_KINDS = new Set(['product', 'combo', 'order', 'settings']);
 
-/** Empties every table of the given kinds (`'product'`, `'combo'`, `'order'`), to start a test from an empty store mid-way (a restore into a wiped database). */
+/** Empties every table of the given kinds (`'product'`, `'combo'`, `'order'`, `'settings'`), to start a test from an empty store mid-way (a restore into a wiped database). */
 async function deleteAllRows(...kinds) {
 	for (const kind of kinds) {
 		if (!DELETABLE_KINDS.has(kind)) throw new Error(`deleteAllRows: ${kind} cannot be emptied`);
@@ -266,6 +286,12 @@ function handleOf(spy) {
 function faultOn(Model, method, message) {
 	return handleOf(vi.spyOn(Model, method).mockRejectedValueOnce(new Error(message)));
 }
+
+/**
+ * Makes the next bulk write of orders fail with `message`, as a restore does
+ * after it has already deleted the old rows and written products and combos.
+ */
+const failNextOrderBulkInsert = (message) => faultOn(Order.collection, 'insertMany', message);
 
 /** Makes the next stock-movement insert fail with `message`, to prove that the writes around it roll back. */
 const failNextMovementInsert = (message) => faultOn(StockMovement, 'create', message);
@@ -327,10 +353,12 @@ module.exports = {
 	findCombo,
 	findComboByName,
 	findOrder,
+	findOrderRaw,
 	findOrderByCode,
 	findMovement,
 	findSettings,
 	listProducts,
+	listCombos,
 	listOrders,
 	movements,
 	movementsFor,
@@ -341,6 +369,8 @@ module.exports = {
 	insertRawCombo,
 	insertRawSettings,
 	insertRawUser,
+	findAuthRows,
+	countAuthRows,
 	settingsDefaults,
 	patchProduct,
 	patchOrder,
@@ -355,6 +385,7 @@ module.exports = {
 	databaseName,
 	ensureMovementStore,
 	failNextMovementInsert,
+	failNextOrderBulkInsert,
 	failNextTransactionStart,
 	failNextPendingMovementScan,
 	failNextStockWrite,
