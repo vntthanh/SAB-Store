@@ -387,10 +387,10 @@ probes (`/.env`, `*.php`, …) get an unlogged 404 straight from nginx.
 
 - **Admin's DB export no longer contains `users`/`accounts`**
   (`GET /api/admin/database/export`, `backend/routes/admin/database.js`) — no password
-  hashes, session tokens, or account records leave the system through that endpoint. It
-  covers `products`/`combos`/`orders` only. For a full-system backup including
-  credentials/sessions, use `mongodump` against the `mongodb` container directly; there is no
-  HTTP path for that anymore, by design.
+  hashes, session tokens, or account records leave the system through that endpoint. The
+  file covers products, combos, orders, stock movements and settings, and can be loaded back
+  from the admin page "Quản lý Database" (Khôi phục replaces the store's data; Nhập gộp
+  without overwriting). Accounts are never part of it.
 - **Storage is SeaweedFS, not MinIO.** The upstream `minio/minio` repository was archived
   2026-04-25 and stopped shipping free images, so it no longer receives fixes. The compose
   files pin `chrislusf/seaweedfs` by digest; updating it means choosing a new tag and digest
