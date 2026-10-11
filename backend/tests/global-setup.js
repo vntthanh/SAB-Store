@@ -17,6 +17,7 @@
  * the same here as there.
  */
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
+const { startTestPostgres } = require('./helpers/postgres');
 
 module.exports = async function globalSetup() {
 	const replSet = await MongoMemoryReplSet.create({
@@ -27,8 +28,25 @@ module.exports = async function globalSetup() {
 	// forks are spawned after this runs and inherit the main process environment.
 	process.env.MONGO_TEST_URI = replSet.getUri();
 
+	// PostgreSQL next to Mongo: one real server per run (or the TEST_DATABASE_URL
+	// one), with the per-file template already built. Every file gets its own
+	// database even before any code uses it, so a broken Postgres start fails the
+	// whole run instead of surfacing later as a partial suite. If it fails, the
+	// replica set must not be left running.
+	let postgres;
+	try {
+		postgres = await startTestPostgres();
+	} catch (err) {
+		await replSet.stop();
+		throw err;
+	}
+	process.env.PG_TEST_URI = postgres.uri;
+	process.env.PG_TEST_TEMPLATE = postgres.template;
+
 	// Vitest calls the returned function once after the whole run.
 	return async function globalTeardown() {
-		await replSet.stop();
+		const results = await Promise.allSettled([replSet.stop(), postgres.stop()]);
+		const failed = results.find((r) => r.status === 'rejected');
+		if (failed) throw failed.reason;
 	};
 };

@@ -14,14 +14,15 @@
 	"ignoreIssues": {
 		// knip does not follow CommonJS consumers that reach an export through a
 		// namespace or static member (`stockQueue.sweepOnce()`, `Settings.NOTICE_FIELDS`,
-		// `vi.spyOn(minio, 'getFile')`, `ledger.CRITICAL_AFTER_ATTEMPTS`), so
+		// `vi.spyOn(minio, 'getFile')`, `ledger.CRITICAL_AFTER_ATTEMPTS`, `postgres.truncateAll()`), so
 		// these files report exports that are in fact used.
 		"backend/queues/stock-queue.js": ["exports"],
 		"backend/models/Settings.js": ["exports"],
 		"backend/models/StockMovement.js": ["exports"],
 		"backend/lib/minio.js": ["exports"],
 		"backend/services/stock-ledger.js": ["exports"],
-		"backend/utils/public-code.js": ["exports"]
+		"backend/utils/public-code.js": ["exports"],
+		"backend/tests/helpers/postgres.js": ["exports"]
 	},
 	"workspaces": {
 		".": {},

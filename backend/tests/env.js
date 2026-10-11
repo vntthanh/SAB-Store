@@ -30,6 +30,13 @@ if (process.env.MONGO_TEST_URI) {
 	process.env.MONGODB_URI = `mongodb://127.0.0.1:27017/${workerDb}`;
 }
 
+// PostgreSQL: the same per-file naming; setup.js creates the database from the
+// template before any test runs.
+if (process.env.PG_TEST_URI) {
+	process.env.PG_TEST_DB = workerDb;
+	process.env.DATABASE_URL = require('./helpers/postgres').databaseUrl(process.env.PG_TEST_URI, workerDb);
+}
+
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-only-secret-value-at-least-32-chars-long';
 process.env.CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:3000';
