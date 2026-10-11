@@ -14,6 +14,8 @@ const Combo = require('../../models/Combo');
 const Order = require('../../models/Order');
 const StockMovement = require('../../models/StockMovement');
 const Settings = require('../../models/Settings');
+const User = require('../../models/User');
+const Account = require('../../models/Account');
 const { withTransaction } = require('./tx');
 
 const { ObjectId } = mongoose.Types;
@@ -103,6 +105,24 @@ function reviveOrder(order) {
 }
 
 /**
+ * How many rows each table holds, the login tables included: a count carries no
+ * personal data or credential, unlike a row, which a snapshot never contains for
+ * those two.
+ *
+ * @returns {Promise<{users: number, products: number, orders: number, accounts: number, combos: number}>}
+ */
+async function countRows() {
+	const [users, products, orders, accounts, combos] = await Promise.all([
+		User.countDocuments({}),
+		Product.countDocuments({}),
+		Order.countDocuments({}),
+		Account.countDocuments({}),
+		Combo.countDocuments({})
+	]);
+	return { users, products, orders, accounts, combos };
+}
+
+/**
  * Replace every business row with the snapshot's, inside `tx`: all current
  * products, combos, orders, stock movements and settings are deleted first.
  *
@@ -133,4 +153,4 @@ async function replaceAll(snapshot, tx) {
 	return written;
 }
 
-module.exports = { exportAll, replaceAll };
+module.exports = { exportAll, countRows, replaceAll };

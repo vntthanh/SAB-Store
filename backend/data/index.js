@@ -20,9 +20,7 @@
  * - Errors: a repository write raises `DuplicateKeyError` (unique constraint),
  *   `RecordValidationError` (schema rule) or `InvalidIdError` (value of the wrong
  *   type, with `path` and `value`) from data/errors.js. A retry loop on a unique
- *   column asks `isDuplicateKeyOn(err, 'column')`, never `err.code`. The merge
- *   import is the one writer not yet converted and still lets the engine's own
- *   error through.
+ *   column asks `isDuplicateKeyOn(err, 'column')`, never `err.code`.
  * - A repository that pages returns `{ data, meta: { page, limit, total, totalPages } }`:
  *   the page's rows and the count of every match, for a page and limit the
  *   caller already clamped. `totalPages` is 0 for an empty result.
@@ -50,6 +48,19 @@
  *   for missing/NULL fields and never for `''`. Another backend substitutes defaults
  *   with a null check, never `||`. Partial `upsertConfig` and the layer that enforces
  *   length/trim rules: see data/mongo/settings.js.
+ * - `dashboard.stats` returns the dashboard's figures; `topSelling[].productId` is a
+ *   string. `topSelling` ranks every order line whatever the order's status, grouped
+ *   by (productId, productName): one product sold under two names gives two rows,
+ *   and another backend must group the same way. Today `byCategory`, `byChannel`
+ *   and availability are tallied in code over all products; a database backend must
+ *   compute them in the database (`groupBy`), since aggregates belong there.
+ * - `orders.listAll` is the one unpaged list (the Excel export) and returns stored
+ *   fields only. It sorts by `createdAt` alone and `topSelling` by quantity alone, so
+ *   ties come back in no defined order; both gain an id tie-break when the store flips.
+ * - Also exported for the admin routes: `orders.STATUS_VALUES` (the status enum),
+ *   `orders.existsByCode`, `products.SALES_CHANNELS`, `products.existsByName`,
+ *   `combos.exists`, `combos.listNames`, and `dataSnapshot.countRows` (row counts
+ *   including the login tables, never their rows).
  * - `dataSnapshot` moves whole rows in the wire form of data/snapshot.js (ids as
  *   hex strings, dates as ISO strings, `__v` kept), unlike the other repositories.
  */
@@ -61,6 +72,7 @@ const BACKENDS = {
 		combos: require('./mongo/combos'),
 		settings: require('./mongo/settings'),
 		dataSnapshot: require('./mongo/data-snapshot'),
+		dashboard: require('./mongo/dashboard'),
 		withTransaction: require('./mongo/tx').withTransaction,
 		translateWriteError: require('./mongo/errors').translateWriteError
 	})

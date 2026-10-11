@@ -18,6 +18,7 @@ const { safeSearch } = require('../../utils/query-guard');
 const { toSkipTake, buildPaginationMeta } = require('@sab/shared');
 
 const { FINAL_ORDER_STATUSES } = Order;
+const STATUS_VALUES = Order.schema.path('status').enumValues;
 
 const SEARCH_FIELDS = ['orderNumber', 'orderCode', 'fullName', 'studentId', 'email'];
 const SORT_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode', 'orderNumber'];
@@ -111,6 +112,22 @@ async function findByCode(orderCode) {
 	return order ? toRecord(order) : null;
 }
 
+/** The filter shared by the paged list and the full export; validates what it is given. */
+function listFilter({ status, search, searchFields = [], createdFrom, createdTo }) {
+	if (status !== undefined && typeof status !== 'string') throw new TypeError('status must be a string');
+	const badField = searchFields.find((field) => !SEARCH_FIELDS.includes(field));
+	if (badField !== undefined) throw new TypeError(`Cannot search order field: ${badField}`);
+
+	const match = safeSearch(search);
+	return {
+		...(status && { status }),
+		...(match && searchFields.length > 0 && { $or: searchFields.map((field) => ({ [field]: match })) }),
+		...((createdFrom || createdTo) && {
+			createdAt: { ...(createdFrom && { $gte: createdFrom }), ...(createdTo && { $lte: createdTo }) }
+		})
+	};
+}
+
 /**
  * One page of orders and the count of every match. Rows sort by `sort` and then
  * by id. A `search` matches the text anywhere in any of `searchFields`.
@@ -124,18 +141,7 @@ async function findByCode(orderCode) {
 async function listPage({
 	page, limit, sort, status, search, searchFields = [], createdFrom, createdTo, omit = [], withProducts, complete = false
 }) {
-	if (status !== undefined && typeof status !== 'string') throw new TypeError('status must be a string');
-	const badField = searchFields.find((field) => !SEARCH_FIELDS.includes(field));
-	if (badField !== undefined) throw new TypeError(`Cannot search order field: ${badField}`);
-
-	const match = safeSearch(search);
-	const filter = {
-		...(status && { status }),
-		...(match && searchFields.length > 0 && { $or: searchFields.map((field) => ({ [field]: match })) }),
-		...((createdFrom || createdTo) && {
-			createdAt: { ...(createdFrom && { $gte: createdFrom }), ...(createdTo && { $lte: createdTo }) }
-		})
-	};
+	const filter = listFilter({ status, search, searchFields, createdFrom, createdTo });
 
 	// `total` and `data` are read in parallel, not from one snapshot, so a concurrent
 	// write can make them disagree by a row. Accepted: the list is advisory.
@@ -145,6 +151,18 @@ async function listPage({
 		Order.countDocuments(filter)
 	]);
 	return { data: await toRecords(rows, { complete, withProducts }), meta: buildPaginationMeta(total, { page, limit }) };
+}
+
+/**
+ * Every order that matches, newest first, as stored (no defaults applied). Not
+ * paged: the export wants them all. Filters work as in `listPage`.
+ *
+ * @param {{status?: string, search?: string, searchFields?: string[], createdFrom?: Date, createdTo?: Date}} [query]
+ * @returns {Promise<object[]>}
+ */
+async function listAll(query = {}) {
+	const rows = await Order.find(listFilter(query)).sort({ createdAt: -1 }).lean();
+	return rows.map(withStringId);
 }
 
 /** The newest `limit` orders. */
@@ -185,6 +203,11 @@ async function summarize({ todayFrom, weekFrom, monthFrom }) {
 	};
 }
 
+/** True when an order has this code (compared as stored, so already uppercase). */
+async function existsByCode(orderCode) {
+	return Boolean(await Order.exists({ orderCode }));
+}
+
 /**
  * The highest `SAB######` order number, or null when no order has one.
  *
@@ -203,7 +226,7 @@ async function latestOrderNumber(tx) {
  * Stores a new order and returns it, with the schema defaults applied.
  *
  * @param {object} fields
- * @param {object} tx
+ * @param {object} [tx] outside a transaction when omitted
  * @throws {DuplicateKeyError} `fields` names `orderCode` or `orderNumber`
  * @throws {RecordValidationError}
  */
@@ -297,10 +320,13 @@ function replaceItems({ orderId, fromStatus, fromRevision, items, comboInfo, his
 
 module.exports = {
 	FINAL_ORDER_STATUSES,
+	STATUS_VALUES,
 	findById,
 	findDetail,
 	findByCode,
+	existsByCode,
 	listPage,
+	listAll,
 	listRecent,
 	summarize,
 	latestOrderNumber,

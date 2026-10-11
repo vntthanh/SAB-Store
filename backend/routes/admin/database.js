@@ -2,17 +2,9 @@ const express = require('express');
 const multer = require('multer');
 const { randomUUID } = require('crypto');
 
-// Import models
-const User = require('../../models/User');
-const Product = require('../../models/Product');
-const Order = require('../../models/Order');
-const Account = require('../../models/Account');
-const Combo = require('../../models/Combo');
-
 const { asString } = require('../../utils/query-guard');
-const { withTransaction } = require('../../utils/transaction');
-const { dataSnapshot } = require('../../data');
-const { isDuplicateKeyError, duplicateKeyFields } = require('../../data/errors');
+const { dataSnapshot, products, combos, orders, withTransaction } = require('../../data');
+const { isDuplicateKeyError, duplicateKeyFields, RecordValidationError } = require('../../data/errors');
 const {
 	SNAPSHOT_FORMAT_VERSION,
 	CREDENTIAL_SECTIONS,
@@ -25,8 +17,7 @@ const { RESTORE_CONFIRMATION } = require('@sab/shared');
 const {
 	PUBLIC_CODE_PATTERN,
 	isPublicCodeDuplicate,
-	withPublicCodeRetry,
-	createWithPublicCodeRetry
+	withPublicCodeRetry
 } = require('../../utils/public-code');
 const { recordAppliedOpening, reconcile, enqueueMovements } = require('../../services/stock-ledger');
 const { gated, close: closeWriteGate, open: openWriteGate, WriteGateError } = require('../../services/write-gate');
@@ -201,7 +192,7 @@ function validateImportStructure(data) {
 			// Rejected up front, with the rest of the structure, so a bad value
 			// never lets the import half-apply.
 			if (CHANNEL_SECTIONS.includes(section) && record.salesChannel !== undefined
-				&& !Product.SALES_CHANNELS.includes(record.salesChannel)) {
+				&& !products.SALES_CHANNELS.includes(record.salesChannel)) {
 				problems.push(`Phần "${section}" tại vị trí ${index} có salesChannel không hợp lệ`);
 			}
 			if (CODE_SECTIONS.includes(section) && record.publicCode !== undefined) {
@@ -218,10 +209,19 @@ function validateImportStructure(data) {
 	return problems;
 }
 
-function importErrorMessage(error, entity) {
-	if (!isPublicCodeDuplicate(error)) return error.message;
-	const code = error.keyValue && error.keyValue.publicCode;
-	return `Mã công khai${code ? ` ${code}` : ''} đã thuộc ${entity} khác`;
+/**
+ * What the report says about a record that failed: the clashing public code, the
+ * fields the record's rules refused (one `field: message` each), or the error's
+ * own message. `publicCode` is the code the file carried, if any.
+ */
+function importErrorMessage(error, { model, entity, publicCode }) {
+	if (isPublicCodeDuplicate(error)) {
+		return `Mã công khai${publicCode ? ` ${publicCode}` : ''} đã thuộc ${entity} khác`;
+	}
+	if (error instanceof RecordValidationError) {
+		return `${model} validation failed: ${error.fieldErrors.map((entry) => `${entry.field}: ${entry.message}`).join(', ')}`;
+	}
+	return error.message;
 }
 
 /**
@@ -365,23 +365,23 @@ router.post('/import', upload.single('dataFile'), gated(async (req, res) => {
 					const dropped = [];
 					const picked = pick(raw, IMPORT_WHITELIST.products, dropped);
 					const name = asString(raw.name, 200);
-					if (picked._id && await Product.exists({ _id: picked._id })) {
+					if (picked._id && await products.exists(picked._id)) {
 						countSkipped(importResults.products, 'id_exists');
 						continue;
 					}
-					if (name && await Product.exists({ name })) {
+					if (name && await products.existsByName(name)) {
 						countSkipped(importResults.products, 'name_exists');
 						continue;
 					}
 					// The imported stock enters the ledger as its opening movement, in the
 					// same transaction, so the cache stays equal to the sum of movements.
 					// A publicCode collision aborts that transaction, so the retry wraps it.
-					await withPublicCodeRetry(() => withTransaction(async (session) => {
-						const [product] = await Product.create([picked], { session });
+					await withPublicCodeRetry(() => withTransaction(async (tx) => {
+						const product = await products.create(picked, picked.stockQuantity, tx);
 						if (product.stockQuantity !== 0) {
 							await recordAppliedOpening(
 								{ productId: product._id, quantity: product.stockQuantity, createdBy: req.user && req.user.email, reason: 'import' },
-								{ session }
+								{ session: tx }
 							);
 						}
 					}), { maxAttempts: picked.publicCode ? 1 : undefined });
@@ -389,7 +389,10 @@ router.post('/import', upload.single('dataFile'), gated(async (req, res) => {
 					countDropped(droppedFields, 'products', dropped);
 				} catch (error) {
 					importResults.products.errors++;
-					errorDetails.products.push({ index: i, error: importErrorMessage(error, 'sản phẩm') });
+					errorDetails.products.push({
+						index: i,
+						error: importErrorMessage(error, { model: 'Product', entity: 'sản phẩm', publicCode: raw.publicCode })
+					});
 				}
 			}
 		}
@@ -397,7 +400,7 @@ router.post('/import', upload.single('dataFile'), gated(async (req, res) => {
 		if (Array.isArray(data.combos)) {
 			// Names are compared with the combos that existed before this import,
 			// not with ones it adds: two same-name combos in one file both import.
-			const namesBefore = new Set((await Combo.find({}, { name: 1 }).lean()).map((c) => c.name));
+			const namesBefore = new Set(await combos.listNames());
 			for (let i = 0; i < data.combos.length; i++) {
 				const raw = data.combos[i];
 				try {
@@ -406,7 +409,7 @@ router.post('/import', upload.single('dataFile'), gated(async (req, res) => {
 					// The id decides first. Name is the fallback for files that carry no
 					// usable id (v1) or an id from another environment, so those do not
 					// duplicate a combo the store already has.
-					if (picked._id && await Combo.exists({ _id: picked._id })) {
+					if (picked._id && await combos.exists(picked._id)) {
 						countSkipped(importResults.combos, 'id_exists');
 						continue;
 					}
@@ -415,12 +418,15 @@ router.post('/import', upload.single('dataFile'), gated(async (req, res) => {
 						countSkipped(importResults.combos, 'name_exists');
 						continue;
 					}
-					await createWithPublicCodeRetry(Combo, picked);
+					await combos.create(picked);
 					importResults.combos.imported++;
 					countDropped(droppedFields, 'combos', dropped);
 				} catch (error) {
 					importResults.combos.errors++;
-					errorDetails.combos.push({ index: i, error: importErrorMessage(error, 'combo') });
+					errorDetails.combos.push({
+						index: i,
+						error: importErrorMessage(error, { model: 'Combo', entity: 'combo', publicCode: raw.publicCode })
+					});
 				}
 			}
 		}
@@ -430,7 +436,7 @@ router.post('/import', upload.single('dataFile'), gated(async (req, res) => {
 				const raw = data.orders[i];
 				try {
 					const orderCode = asString(raw.orderCode, 10);
-					if (orderCode && await Order.exists({ orderCode })) {
+					if (orderCode && await orders.existsByCode(orderCode)) {
 						countSkipped(importResults.orders, 'order_code_exists');
 						continue;
 					}
@@ -446,17 +452,14 @@ router.post('/import', upload.single('dataFile'), gated(async (req, res) => {
 					}
 					picked.totalAmount = total;
 
-					// Order.js's pre('save') hook only bumps statusUpdatedAt for
-					// an existing document (`!this.isNew`), so on a fresh
-					// `create()` the value passed in here already wins — no
-					// follow-up write needed to preserve the original timestamp
-					// through an export/import round-trip.
-					await Order.create(picked);
+					// A new order keeps the statusUpdatedAt it was given, so an
+					// export/import round trip preserves the original timestamp.
+					await orders.create(picked);
 					importResults.orders.imported++;
 					countDropped(droppedFields, 'orders', dropped);
 				} catch (error) {
 					importResults.orders.errors++;
-					errorDetails.orders.push({ index: i, error: error.message });
+					errorDetails.orders.push({ index: i, error: importErrorMessage(error, { model: 'Order' }) });
 				}
 			}
 		}
@@ -624,22 +627,16 @@ router.post('/restore', upload.single('dataFile'), async (req, res) => {
  */
 router.get('/stats', async (req, res) => {
 	try {
-		const [userCount, productCount, orderCount, accountCount, comboCount] = await Promise.all([
-			User.countDocuments({}),
-			Product.countDocuments({}),
-			Order.countDocuments({}),
-			Account.countDocuments({}),
-			Combo.countDocuments({})
-		]);
+		const counts = await dataSnapshot.countRows();
 
 		const stats = {
 			collections: {
-				users: userCount,
-				products: productCount,
-				orders: orderCount,
-				accounts: accountCount,
-				combos: comboCount,
-				total: userCount + productCount + orderCount + accountCount + comboCount
+				users: counts.users,
+				products: counts.products,
+				orders: counts.orders,
+				accounts: counts.accounts,
+				combos: counts.combos,
+				total: counts.users + counts.products + counts.orders + counts.accounts + counts.combos
 			},
 			lastUpdated: new Date().toISOString()
 		};

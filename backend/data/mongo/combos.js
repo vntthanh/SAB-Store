@@ -69,6 +69,17 @@ async function listSellable(channel) {
 	return (await sellableFind(channel)).map(toRecord);
 }
 
+/** The name of every combo. */
+async function listNames() {
+	const found = await Combo.find({}, { name: 1 }).lean();
+	return found.map((combo) => combo.name);
+}
+
+/** True when a combo with this id exists. */
+async function exists(id) {
+	return Boolean(await Combo.exists({ _id: id }));
+}
+
 /** The combo with this id, or null. @throws {InvalidIdError} */
 function findById(id) {
 	return translating(async () => {
@@ -116,4 +127,4 @@ function remove(id) {
 	return translating(async () => Boolean(await Combo.findByIdAndDelete(id)));
 }
 
-module.exports = { findSellable, findSellableForPricing, list, listSellable, findById, create, update, remove };
+module.exports = { findSellable, findSellableForPricing, list, listNames, listSellable, exists, findById, create, update, remove };

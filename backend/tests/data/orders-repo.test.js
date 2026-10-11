@@ -172,3 +172,41 @@ describe('isDuplicateKeyOn', () => {
 		expect(isDuplicateKeyOn(rawDuplicate({ message: 'E11000 duplicate key error collection: x index: orderCode_1 dup key: {}' }), 'orderCode')).toBe(true);
 	});
 });
+
+describe('orders repository: listAll and existsByCode', () => {
+	const sale = (fields) => makeOrder({ items: [], totalAmount: 0, ...fields });
+
+	it('returns every match newest first, past any page size, filtered like a page', async () => {
+		const base = Date.now() - 60 * 86400000;
+		for (let i = 0; i < 25; i += 1) {
+			await sale({ orderCode: `LA${String(i).padStart(2, '0')}`, createdAt: new Date(base + i * 3600000), status: i % 5 === 0 ? 'paid' : 'confirmed' });
+		}
+
+		const all = await orders.listAll();
+		const paid = await orders.listAll({ status: 'paid' });
+		const ranged = await orders.listAll({ createdFrom: new Date(base + 10 * 3600000), createdTo: new Date(base + 12 * 3600000) });
+		const searched = await orders.listAll({ search: 'la1', searchFields: ['orderCode'] });
+
+		expect(all).toHaveLength(25);
+		expect(all.map((order) => order.orderCode)).toEqual([...all.map((order) => order.orderCode)].sort().reverse());
+		expect(typeof all[0]._id).toBe('string');
+		expect(paid.map((order) => order.orderCode).sort()).toEqual(['LA00', 'LA05', 'LA10', 'LA15', 'LA20']);
+		expect(ranged.map((order) => order.orderCode)).toEqual(['LA12', 'LA11', 'LA10']);
+		expect(searched).toHaveLength(10);
+	});
+
+	it('takes the search text literally and refuses a field it does not know', async () => {
+		await sale({ orderCode: 'LB.1' });
+		await sale({ orderCode: 'LBX1' });
+
+		expect(await orders.listAll({ search: 'LB.1', searchFields: ['orderCode'] })).toHaveLength(1);
+		await expect(orders.listAll({ search: 'x', searchFields: ['internalNotes'] })).rejects.toThrow(TypeError);
+	});
+
+	it('says whether an order code is taken', async () => {
+		await sale({ orderCode: 'EX001' });
+
+		expect(await orders.existsByCode('EX001')).toBe(true);
+		expect(await orders.existsByCode('EX002')).toBe(false);
+	});
+});

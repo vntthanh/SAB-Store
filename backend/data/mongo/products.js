@@ -180,6 +180,11 @@ async function exists(id) {
 	return Boolean(await Product.exists({ _id: id }));
 }
 
+/** True when a product with this name exists (exact match). */
+async function existsByName(name) {
+	return Boolean(await Product.exists({ name }));
+}
+
 /** The product with this id, or null. @throws {InvalidIdError} */
 function findById(id) {
 	return translating(async () => {
@@ -238,6 +243,7 @@ module.exports = {
 	listPage,
 	summarizeCatalog,
 	exists,
+	existsByName,
 	findById,
 	create,
 	update,

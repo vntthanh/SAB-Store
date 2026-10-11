@@ -191,6 +191,22 @@ describe('POST /api/admin/database/import (merge) with a backup file', () => {
 			.toEqual(before);
 	});
 
+	it('names the field a record\'s rules refused, per collection', async () => {
+		const res = await importFile(app, cookies, {
+			data: {
+				products: [{ name: 'No price', category: 'general' }],
+				combos: [{ name: 'Negative', price: -1, categoryRequirements: [{ category: 'general', quantity: 1 }] }],
+				orders: [{ orderCode: 'BADST1', fullName: 'X', studentId: 'S1', email: 'x@example.com', phoneNumber: '0912345678', items: [], status: 'weird' }]
+			}
+		});
+
+		expect(res.status).toBe(200);
+		expect(res.body.hasErrors).toBe(true);
+		expect(res.body.errorDetails.products[0].error).toMatch(/^Product validation failed: price: /);
+		expect(res.body.errorDetails.combos[0].error).toMatch(/^Combo validation failed: price: /);
+		expect(res.body.errorDetails.orders[0].error).toMatch(/^Order validation failed: status: /);
+	});
+
 	it('still accepts a v1 export (no stock movements, no settings, no format version)', async () => {
 		const product = await makeProduct({ name: 'Old file product' });
 		const v1 = {
