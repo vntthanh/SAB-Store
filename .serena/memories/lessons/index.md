@@ -7,6 +7,8 @@
 ## database
 - `mem:lessons/database/no_mongo_transactions` — prod lên replica set `rs0` 04/10 (đã đo, keyfile /etc/mongo chmod 755, key không xuống dòng); backend fail-fast; rollback phải revert cả kiểm replica set.
 
+- `mem:lessons/database/postgres_migration_harness` — read before touching Prisma/Postgres or the test harness. Covers: embedded PG with one database per file (cost in seconds), sweeping leftovers after SIGKILL, UTC on every session, a deps-only commit failing knip, the simple query parser hiding the guard in route tests, Prisma gen/release stages, and production-data facts.
+
 ## frontend
 - `mem:lessons/frontend/monaco_self_hosted` — Monaco tự host (copy `min/vs`, loader.config trong lazy factory); exports map chặn package.json; `/monaco/` no-cache; CSP `worker-src blob:`; Playwright phải gõ bàn phím.
 
