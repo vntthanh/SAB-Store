@@ -23,4 +23,15 @@ describe('built ESM entry', () => {
 		expect(RESTORE_CONFIRMATION).toBe('KHOI PHUC');
 		expect(required.RESTORE_CONFIRMATION).toBe(RESTORE_CONFIRMATION);
 	});
+
+	it('maps an ObjectId to the same UUIDv7 from the ESM and CJS builds', async () => {
+		const esm = await import('../dist/index.js');
+		const cjs = (await import('node:module')).createRequire(import.meta.url)('../dist/index.cjs');
+		const oid = '507f1f77bcf86cd799439011';
+		expect(esm.objectIdToUuidV7(oid)).toBe('013a7092-e8d8-7bcf-a1b3-5e650e404400');
+		expect(cjs.objectIdToUuidV7(oid)).toBe(esm.objectIdToUuidV7(oid));
+		expect(cjs.uuidV7ToObjectId(cjs.objectIdToUuidV7(oid))).toBe(oid);
+		expect(cjs.isRecordId(oid)).toBe(true);
+		expect(cjs.isUuid(oid)).toBe(false);
+	});
 });

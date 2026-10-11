@@ -5,12 +5,20 @@
  * writer, not only for code that goes through the Prisma client.
  */
 const { Client } = require('pg');
+const { v7: uuidv7 } = require('uuid');
+const { objectIdToUuidV7 } = require('@sab/shared');
 const postgres = require('../helpers/postgres');
 
-const HEX_ID = /^[0-9a-f]{24}$/;
+const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const UNIQUE_VIOLATION = '23505';
 const CHECK_VIOLATION = '23514';
 const INVALID_ENUM = '22P02';
+const INVALID_UUID = '22P02';
+const NOT_NULL_VIOLATION = '23502';
+const FOREIGN_KEY_VIOLATION = '23503';
+
+// The millisecond timestamp in the first 48 bits of a UUIDv7.
+const embeddedMs = (id) => parseInt(id.replace(/-/g, '').slice(0, 12), 16);
 
 let db;
 
@@ -23,7 +31,11 @@ afterAll(async () => {
 	await db.end();
 });
 
-async function insert(table, row) {
+// Prisma Client generates ids client-side and the columns have no database
+// default, so a raw insert has to supply one; this does it unless the row sets
+// its own `id`.
+async function insert(table, given) {
+	const row = 'id' in given ? given : { id: uuidv7(), ...given };
 	const columns = Object.keys(row);
 	const sql = `INSERT INTO ${db.escapeIdentifier(table)} (${columns.map((c) => db.escapeIdentifier(c)).join(', ')})
 		VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING *`;
@@ -52,7 +64,7 @@ const order = (overrides = {}) =>
 
 const movement = (overrides = {}) =>
 	insert('stock_movements', {
-		product_id: 'p'.repeat(24),
+		product_id: uuidv7(),
 		type: 'order',
 		delta: -1,
 		idempotency_key: `key-${next()}`,
@@ -79,15 +91,68 @@ describe('migration ledger', () => {
 });
 
 describe('ids', () => {
-	it('gives rows created without an id a 24-character lowercase hex id', async () => {
-		const rows = [await product(), await combo(), await order(), await movement()];
-		for (const row of rows) expect(row.id).toMatch(HEX_ID);
-		expect(new Set(rows.map((r) => r.id)).size).toBe(rows.length);
+	it('gives no database default: a raw insert without an id is refused', async () => {
+		await expect(
+			db.query(`INSERT INTO products (name, price, category, public_code, slug) VALUES ('x', 1, 'food', 'NOID01', 'x')`)
+		).rejects.toMatchObject({ code: NOT_NULL_VIOLATION });
+		await expect(
+			db.query(`INSERT INTO "user" (name, email, username) VALUES ('x', 'noid@example.invalid', 'noid')`)
+		).rejects.toMatchObject({ code: NOT_NULL_VIOLATION });
 	});
 
-	it('keeps an explicit migrated id as is', async () => {
-		const row = await product({ id: '5f1d7f3e9b1c2a0012345678' });
-		expect(row.id).toBe('5f1d7f3e9b1c2a0012345678');
+	it('keeps an explicit id as is, including an ObjectId mapped to a UUIDv7', async () => {
+		const mapped = objectIdToUuidV7('5f1d7f3e9b1c2a0012345678');
+		const row = await product({ id: mapped });
+		expect(row.id).toBe(mapped);
+		expect(mapped).toMatch(UUID_V7);
+	});
+
+	it('refuses an id that is not a UUID, such as a 24-hex ObjectId', async () => {
+		await expect(product({ id: '5f1d7f3e9b1c2a0012345678' })).rejects.toMatchObject({ code: INVALID_UUID });
+		await expect(order({ id: 'not-an-id' })).rejects.toMatchObject({ code: INVALID_UUID });
+	});
+
+	it('stores every id and every column that references one as a native uuid', async () => {
+		const expected = [
+			'account.id', 'account.userId',
+			'combo_category_requirements.combo_id', 'combo_category_requirements.id',
+			'combos.id',
+			'jwks.id',
+			'order_internal_notes.id', 'order_internal_notes.order_id',
+			'order_items.combo_id', 'order_items.id', 'order_items.order_id', 'order_items.product_id',
+			'order_items_edits.id', 'order_items_edits.order_id',
+			'order_status_history.id', 'order_status_history.order_id',
+			'orders.created_by', 'orders.id',
+			'products.id',
+			'session.id', 'session.impersonatedBy', 'session.userId',
+			'settings.id',
+			'stock_movements.id', 'stock_movements.order_id', 'stock_movements.product_id',
+			'user.id',
+			'verification.id',
+		];
+		const { rows } = await db.query(
+			`SELECT table_name, column_name, data_type FROM information_schema.columns
+			 WHERE table_schema = 'public' AND table_name <> '_prisma_migrations'`
+		);
+		const uuidColumns = rows.filter((r) => r.data_type === 'uuid').map((r) => `${r.table_name}.${r.column_name}`);
+		expect(uuidColumns.sort()).toEqual(expected);
+
+		// Columns that look like references but hold other text stay text: an actor
+		// is "system" or an admin email, and a credential account's provider id is
+		// whatever the provider uses.
+		const textColumns = ['orders.last_updated_by', 'order_status_history.updated_by', 'stock_movements.created_by', 'settings.updated_by', 'account.accountId'];
+		for (const name of textColumns) {
+			const [table, column] = name.split('.');
+			expect(rows.find((r) => r.table_name === table && r.column_name === column).data_type).toBe('text');
+		}
+	});
+
+	it('has no column default on an id', async () => {
+		const { rows } = await db.query(
+			`SELECT table_name FROM information_schema.columns
+			 WHERE table_schema = 'public' AND column_name = 'id' AND column_default IS NOT NULL AND table_name <> '_prisma_migrations'`
+		);
+		expect(rows).toEqual([]);
 	});
 });
 
@@ -122,9 +187,9 @@ describe('unique constraints', () => {
 
 	it('keeps one position per order child and per combo requirement', async () => {
 		const o = await order();
-		await insert('order_items', { order_id: o.id, position: 0, product_id: 'x', product_name: 'x', price: 1, quantity: 1 });
+		await insert('order_items', { order_id: o.id, position: 0, product_id: uuidv7(), product_name: 'x', price: 1, quantity: 1 });
 		await expect(
-			insert('order_items', { order_id: o.id, position: 0, product_id: 'y', product_name: 'y', price: 1, quantity: 1 })
+			insert('order_items', { order_id: o.id, position: 0, product_id: uuidv7(), product_name: 'y', price: 1, quantity: 1 })
 		).rejects.toMatchObject({ code: UNIQUE_VIOLATION });
 
 		const c = await combo();
@@ -160,13 +225,13 @@ describe('enums', () => {
 describe('foreign keys', () => {
 	it('deletes every child row with its order', async () => {
 		const o = await order();
-		await insert('order_items', { order_id: o.id, position: 0, product_id: 'x', product_name: 'x', price: 1, quantity: 1 });
+		await insert('order_items', { order_id: o.id, position: 0, product_id: uuidv7(), product_name: 'x', price: 1, quantity: 1 });
 		await insert('order_status_history', { order_id: o.id, position: 0, status: 'confirmed', updated_by: 'system' });
 		await insert('order_internal_notes', { order_id: o.id, position: 0, note: 'n', by: 'admin' });
 		await insert('order_items_edits', {
 			order_id: o.id,
 			position: 0,
-			previous_items: JSON.stringify([{ productId: 'x' }]),
+			previous_items: JSON.stringify([{ productId: uuidv7() }]),
 			edited_by: 'admin',
 			reason: 'fix',
 		});
@@ -199,8 +264,8 @@ describe('foreign keys', () => {
 
 	it('rejects an order child whose order does not exist', async () => {
 		await expect(
-			insert('order_items', { order_id: 'f'.repeat(24), position: 0, product_id: 'x', product_name: 'x', price: 1, quantity: 1 })
-		).rejects.toMatchObject({ code: '23503' });
+			insert('order_items', { order_id: uuidv7(), position: 0, product_id: uuidv7(), product_name: 'x', price: 1, quantity: 1 })
+		).rejects.toMatchObject({ code: FOREIGN_KEY_VIOLATION });
 	});
 });
 
@@ -233,7 +298,7 @@ describe('check constraints', () => {
 	it('requires positive quantities and a minimum order of at least one', async () => {
 		const o = await order();
 		await expect(
-			insert('order_items', { order_id: o.id, position: 0, product_id: 'x', product_name: 'x', price: 1, quantity: 0 })
+			insert('order_items', { order_id: o.id, position: 0, product_id: uuidv7(), product_name: 'x', price: 1, quantity: 0 })
 		).rejects.toMatchObject({ code: CHECK_VIOLATION });
 		const c = await combo();
 		await expect(
@@ -249,7 +314,7 @@ describe('check constraints', () => {
 		await expect(order({ total_amount: -1 })).rejects.toMatchObject({ code: CHECK_VIOLATION });
 		const o = await order();
 		await expect(
-			insert('order_items', { order_id: o.id, position: 0, product_id: 'x', product_name: 'x', price: -1, quantity: 1 })
+			insert('order_items', { order_id: o.id, position: 0, product_id: uuidv7(), product_name: 'x', price: -1, quantity: 1 })
 		).rejects.toMatchObject({ code: CHECK_VIOLATION });
 
 		await product({ price: 0, sale_price: 0 });
@@ -315,14 +380,14 @@ describe('stock', () => {
 describe('products.tags', () => {
 	it('is never NULL: omitted means an empty list, an explicit NULL is refused', async () => {
 		expect((await product()).tags).toEqual([]);
-		await expect(product({ tags: null })).rejects.toMatchObject({ code: '23502' });
+		await expect(product({ tags: null })).rejects.toMatchObject({ code: NOT_NULL_VIOLATION });
 	});
 });
 
 describe('auth tables', () => {
 	const user = (overrides = {}) =>
 		insert('user', {
-			id: `u${String(next()).padStart(8, '0')}`,
+			id: uuidv7(),
 			name: 'Fake Person',
 			email: `fake${next()}@example.invalid`,
 			username: `fake_user_${next()}`,
@@ -330,7 +395,7 @@ describe('auth tables', () => {
 		});
 	const session = (userId, overrides = {}) =>
 		insert('session', {
-			id: `s${next()}`,
+			id: uuidv7(),
 			expiresAt: new Date('2030-01-01T00:00:00Z'),
 			token: `fake-token-${next()}`,
 			updatedAt: new Date('2026-01-01T00:00:00Z'),
@@ -339,7 +404,7 @@ describe('auth tables', () => {
 		});
 	const account = (userId, overrides = {}) =>
 		insert('account', {
-			id: `a${next()}`,
+			id: uuidv7(),
 			accountId: userId,
 			providerId: 'credential',
 			userId,
@@ -375,11 +440,17 @@ describe('auth tables', () => {
 		expect(await count('account')).toBe(1);
 	});
 
-	it('accepts both a migrated 24-hex id and a 32-character id', async () => {
-		const migrated = await user({ id: 'a1b2c3d4e5f60718293a4b5c' });
-		const fresh = await user({ id: 'Zx9Qw3Er5Ty7Ui1Op2As4Df6Gh8Jk0Lq' });
-		expect(migrated.id).toHaveLength(24);
-		expect(fresh.id).toHaveLength(32);
+	it('accepts a migrated id, an ObjectId mapped to a UUIDv7, and refuses a raw ObjectId or a better-auth style 32-character id', async () => {
+		const migrated = await user({ id: objectIdToUuidV7('a1b2c3d4e5f60718293a4b5c') });
+		expect(migrated.id).toMatch(UUID_V7);
+		await expect(user({ id: 'a1b2c3d4e5f60718293a4b5c' })).rejects.toMatchObject({ code: INVALID_UUID });
+		await expect(user({ id: 'Zx9Qw3Er5Ty7Ui1Op2As4Df6Gh8Jk0Lq' })).rejects.toMatchObject({ code: INVALID_UUID });
+	});
+
+	it('refuses a session or account for a user id that is not a uuid or does not exist', async () => {
+		await expect(session('a1b2c3d4e5f60718293a4b5c')).rejects.toMatchObject({ code: INVALID_UUID });
+		await expect(session(uuidv7())).rejects.toMatchObject({ code: FOREIGN_KEY_VIOLATION });
+		await expect(account(uuidv7())).rejects.toMatchObject({ code: FOREIGN_KEY_VIOLATION });
 	});
 });
 
@@ -412,7 +483,7 @@ describe('lib/prisma', () => {
 		const created = await lib.prisma.product.create({
 			data: { name: 'x', price: 1000, category: 'food', publicCode: 'PRISMA01', slug: 'x', saleStartDate: at },
 		});
-		expect(created.id).toMatch(HEX_ID);
+		expect(created.id).toMatch(UUID_V7);
 
 		const { rows } = await db.query(
 			`SELECT to_char(sale_start_date AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS iso FROM products WHERE id = $1`,
@@ -421,12 +492,28 @@ describe('lib/prisma', () => {
 		expect(rows[0].iso).toBe(at.toISOString());
 	});
 
+	it('generates a UUIDv7 id for every model, stamped with the current time', async () => {
+		const before = Date.now();
+		const user = await lib.prisma.user.create({ data: { name: 'x', email: 'prisma-id@example.invalid', username: 'prisma_id' } });
+		const combo = await lib.prisma.combo.create({ data: { name: 'x', price: 1, publicCode: 'PRISMAID', slug: 'x' } });
+		const movement = await lib.prisma.stockMovement.create({
+			data: { productId: uuidv7(), type: 'order', delta: -1, idempotencyKey: 'prisma-id' },
+		});
+		const ids = [user.id, combo.id, movement.id];
+		for (const id of ids) {
+			expect(id).toMatch(UUID_V7);
+			expect(embeddedMs(id)).toBeGreaterThanOrEqual(before - 1000);
+			expect(embeddedMs(id)).toBeLessThanOrEqual(Date.now() + 1000);
+		}
+		expect(new Set(ids).size).toBe(ids.length);
+	});
+
 	it('takes the next stock sequence value from the database', async () => {
 		const a = await lib.prisma.stockMovement.create({
-			data: { productId: 'a'.repeat(24), type: 'order', delta: -1, idempotencyKey: 'prisma-1' },
+			data: { productId: uuidv7(), type: 'order', delta: -1, idempotencyKey: 'prisma-1' },
 		});
 		const b = await lib.prisma.stockMovement.create({
-			data: { productId: 'a'.repeat(24), type: 'order', delta: -1, idempotencyKey: 'prisma-2' },
+			data: { productId: uuidv7(), type: 'order', delta: -1, idempotencyKey: 'prisma-2' },
 		});
 		expect(b.seq).toBe(a.seq + 1);
 	});

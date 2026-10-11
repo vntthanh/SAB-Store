@@ -12,7 +12,7 @@ CREATE TYPE "movement_status" AS ENUM ('pending', 'applied');
 
 -- CreateTable
 CREATE TABLE "user" (
-    "id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "email" TEXT NOT NULL,
     "emailVerified" BOOLEAN NOT NULL DEFAULT false,
@@ -31,25 +31,25 @@ CREATE TABLE "user" (
 
 -- CreateTable
 CREATE TABLE "session" (
-    "id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
     "expiresAt" TIMESTAMPTZ(3) NOT NULL,
     "token" TEXT NOT NULL,
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMPTZ(3) NOT NULL,
     "ipAddress" TEXT,
     "userAgent" TEXT,
-    "userId" TEXT NOT NULL,
-    "impersonatedBy" TEXT,
+    "userId" UUID NOT NULL,
+    "impersonatedBy" UUID,
 
     CONSTRAINT "session_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "account" (
-    "id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
     "accountId" TEXT NOT NULL,
     "providerId" TEXT NOT NULL,
-    "userId" TEXT NOT NULL,
+    "userId" UUID NOT NULL,
     "accessToken" TEXT,
     "refreshToken" TEXT,
     "idToken" TEXT,
@@ -65,7 +65,7 @@ CREATE TABLE "account" (
 
 -- CreateTable
 CREATE TABLE "verification" (
-    "id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
     "identifier" TEXT NOT NULL,
     "value" TEXT NOT NULL,
     "expiresAt" TIMESTAMPTZ(3) NOT NULL,
@@ -77,7 +77,7 @@ CREATE TABLE "verification" (
 
 -- CreateTable
 CREATE TABLE "jwks" (
-    "id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
     "publicKey" TEXT NOT NULL,
     "privateKey" TEXT NOT NULL,
     "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -90,7 +90,7 @@ CREATE TABLE "jwks" (
 
 -- CreateTable
 CREATE TABLE "products" (
-    "id" TEXT NOT NULL DEFAULT substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 24),
+    "id" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
     "price" INTEGER NOT NULL,
@@ -122,7 +122,7 @@ CREATE TABLE "products" (
 
 -- CreateTable
 CREATE TABLE "combos" (
-    "id" TEXT NOT NULL DEFAULT substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 24),
+    "id" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
     "price" INTEGER NOT NULL,
@@ -139,8 +139,8 @@ CREATE TABLE "combos" (
 
 -- CreateTable
 CREATE TABLE "combo_category_requirements" (
-    "id" TEXT NOT NULL DEFAULT substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 24),
-    "combo_id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "combo_id" UUID NOT NULL,
     "position" INTEGER NOT NULL,
     "category" TEXT NOT NULL,
     "quantity" INTEGER NOT NULL,
@@ -150,7 +150,7 @@ CREATE TABLE "combo_category_requirements" (
 
 -- CreateTable
 CREATE TABLE "orders" (
-    "id" TEXT NOT NULL DEFAULT substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 24),
+    "id" UUID NOT NULL,
     "order_code" VARCHAR(10) NOT NULL,
     "order_number" TEXT,
     "phone_number" TEXT,
@@ -167,7 +167,7 @@ CREATE TABLE "orders" (
     "last_updated_by" TEXT NOT NULL DEFAULT 'system',
     "status_updated_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "is_direct_sale" BOOLEAN NOT NULL DEFAULT false,
-    "created_by" TEXT,
+    "created_by" UUID,
     "combo_info" JSONB,
     "created_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -177,15 +177,15 @@ CREATE TABLE "orders" (
 
 -- CreateTable
 CREATE TABLE "order_items" (
-    "id" TEXT NOT NULL DEFAULT substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 24),
-    "order_id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "order_id" UUID NOT NULL,
     "position" INTEGER NOT NULL,
-    "product_id" TEXT NOT NULL,
+    "product_id" UUID NOT NULL,
     "product_name" TEXT NOT NULL,
     "price" INTEGER NOT NULL,
     "quantity" INTEGER NOT NULL,
     "from_combo" BOOLEAN NOT NULL DEFAULT false,
-    "combo_id" TEXT,
+    "combo_id" UUID,
     "combo_name" TEXT,
 
     CONSTRAINT "order_items_pkey" PRIMARY KEY ("id")
@@ -193,8 +193,8 @@ CREATE TABLE "order_items" (
 
 -- CreateTable
 CREATE TABLE "order_status_history" (
-    "id" TEXT NOT NULL DEFAULT substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 24),
-    "order_id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "order_id" UUID NOT NULL,
     "position" INTEGER NOT NULL,
     "status" "order_status" NOT NULL,
     "updated_by" TEXT NOT NULL,
@@ -208,8 +208,8 @@ CREATE TABLE "order_status_history" (
 
 -- CreateTable
 CREATE TABLE "order_internal_notes" (
-    "id" TEXT NOT NULL DEFAULT substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 24),
-    "order_id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "order_id" UUID NOT NULL,
     "position" INTEGER NOT NULL,
     "note" TEXT NOT NULL,
     "by" TEXT NOT NULL,
@@ -220,8 +220,8 @@ CREATE TABLE "order_internal_notes" (
 
 -- CreateTable
 CREATE TABLE "order_items_edits" (
-    "id" TEXT NOT NULL DEFAULT substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 24),
-    "order_id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "order_id" UUID NOT NULL,
     "position" INTEGER NOT NULL,
     "previous_items" JSONB NOT NULL,
     "previous_combo_info" JSONB,
@@ -234,12 +234,12 @@ CREATE TABLE "order_items_edits" (
 
 -- CreateTable
 CREATE TABLE "stock_movements" (
-    "id" TEXT NOT NULL DEFAULT substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 24),
-    "product_id" TEXT NOT NULL,
+    "id" UUID NOT NULL,
+    "product_id" UUID NOT NULL,
     "type" "movement_type" NOT NULL,
     "delta" INTEGER,
     "target" INTEGER,
-    "order_id" TEXT,
+    "order_id" UUID,
     "reason" TEXT NOT NULL DEFAULT '',
     "created_by" TEXT NOT NULL DEFAULT '',
     "idempotency_key" TEXT NOT NULL,
@@ -257,7 +257,7 @@ CREATE TABLE "stock_movements" (
 
 -- CreateTable
 CREATE TABLE "settings" (
-    "id" TEXT NOT NULL DEFAULT substr(replace((gen_random_uuid())::text, '-'::text, ''::text), 1, 24),
+    "id" UUID NOT NULL,
     "key" TEXT NOT NULL DEFAULT 'payment_config',
     "bank_name_id" TEXT NOT NULL,
     "bank_account_id" TEXT NOT NULL,

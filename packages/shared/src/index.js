@@ -34,6 +34,7 @@ export {
 	orderItemsEdit,
 	orderNotes,
 } from './schemas/order.js';
+export { objectIdToUuidV7, uuidV7ToObjectId, isUuid, isRecordId } from './ids.js';
 export { RESTORE_CONFIRMATION } from './schemas/restore.js';
 export { makeComboItems } from './schemas/combo.js';
 export { CONTACT_EMAIL_MAX_LENGTH, CONTACT_URL_MAX_LENGTH, contactEmail, contactUrl } from './schemas/contact.js';

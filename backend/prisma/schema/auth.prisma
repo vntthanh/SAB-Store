@@ -4,10 +4,13 @@
 // names stay camelCase because the adapter maps by field name. Deliberate deltas
 // from the generator: unique username, unique (providerId, accountId) and
 // timestamptz.
-// Ids are plain text: migrated rows keep their 24-hex ids, new ones are 32 chars.
+// Every id is a UUIDv7, like the store tables. better-auth would otherwise mint
+// its own 32-character ids, so its config must set advanced.database.generateId
+// to a UUIDv7 generator; the Prisma default only covers rows created through the
+// client directly. Migrated rows carry their ObjectId mapped with objectIdToUuidV7.
 
 model User {
-  id              String    @id
+  id              String    @id @default(uuid(7)) @db.Uuid
   name            String
   email           String
   emailVerified   Boolean   @default(false)
@@ -29,15 +32,15 @@ model User {
 }
 
 model Session {
-  id             String   @id
+  id             String   @id @default(uuid(7)) @db.Uuid
   expiresAt      DateTime @db.Timestamptz(3)
   token          String
   createdAt      DateTime @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime @updatedAt @db.Timestamptz(3)
   ipAddress      String?
   userAgent      String?
-  userId         String
-  impersonatedBy String?
+  userId         String   @db.Uuid
+  impersonatedBy String?  @db.Uuid
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([token])
@@ -46,10 +49,10 @@ model Session {
 }
 
 model Account {
-  id                    String    @id
+  id                    String    @id @default(uuid(7)) @db.Uuid
   accountId             String
   providerId            String
-  userId                String
+  userId                String    @db.Uuid
   user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   accessToken           String?
   refreshToken          String?
@@ -67,7 +70,7 @@ model Account {
 }
 
 model Verification {
-  id         String   @id
+  id         String   @id @default(uuid(7)) @db.Uuid
   identifier String
   value      String
   expiresAt  DateTime @db.Timestamptz(3)
@@ -79,7 +82,7 @@ model Verification {
 }
 
 model Jwks {
-  id         String    @id
+  id         String    @id @default(uuid(7)) @db.Uuid
   publicKey  String
   privateKey String
   createdAt  DateTime  @default(now()) @db.Timestamptz(3)
