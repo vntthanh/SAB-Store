@@ -9,7 +9,7 @@ FROM ${NODE_IMAGE} AS deps
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
 # The build context is the repository root (the workspace lockfile lives there).
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc .pnpmfile.cjs ./
 COPY packages/shared/package.json ./packages/shared/
 COPY frontend/package.json ./frontend/
 # `--prod=false` is load-bearing. The deploy platform injects every environment

@@ -9,7 +9,7 @@ RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
 # The build context is the repository root (the workspace lockfile lives there);
 # only manifests are copied first, so a source edit does not invalidate the install.
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc .pnpmfile.cjs ./
 COPY packages/shared/package.json ./packages/shared/
 # The package is built here, with its dev dependencies (esbuild), because the
 # stage below installs production dependencies only and could not build it.
@@ -30,8 +30,9 @@ COPY backend/package.json ./backend/
 # `--legacy` is not used. Because the backend depends on a workspace package,
 # `inject-workspace-packages` makes deploy re-resolve (not frozen), and pnpm then
 # auto-installs better-auth's optional peers react/react-dom into the image: unused
-# at runtime, same versions the lockfile already holds for the frontend. The
-# setting is passed to this one command rather than set for every install.
+# at runtime, same versions the lockfile already holds for the frontend. Its
+# vitest/prisma peers are dropped by the root .pnpmfile.cjs. The setting is
+# passed to this one command rather than set for every install.
 # `--prod` is explicit on purpose: the deploy platform injects every environment
 # variable (NODE_ENV included) as an ARG into every stage, so the install must not
 # depend on what NODE_ENV happens to be at build time. The cache mount keeps the
