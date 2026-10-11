@@ -59,11 +59,20 @@ async function makeCombo(overrides = {}) {
  * Creates a confirmed web order for two units of a fresh product, with the
  * stock already taken (`stockDeducted`) the way a placed order has it. The
  * fixture is stock-neutral: it records no movement and leaves the product's
- * cached stock untouched. Like the other factories it returns a Mongoose
- * document, unlike the plain objects of helpers/db.js.
+ * cached stock untouched. When the caller passes `items`, no product is
+ * created and `totalAmount` defaults to 0, so a test that counts products is
+ * not disturbed. Like the other factories it returns a Mongoose document,
+ * unlike the plain objects of helpers/db.js.
  */
 async function makeOrder(overrides = {}) {
-	const product = await makeProduct({ stockQuantity: 10 });
+	let lines = { totalAmount: 0 };
+	if (!overrides.items) {
+		const product = await makeProduct({ stockQuantity: 10 });
+		lines = {
+			items: [{ productId: product._id, productName: product.name, price: product.price, quantity: 2 }],
+			totalAmount: product.price * 2,
+		};
+	}
 	const n = Math.floor(Math.random() * 1e8); // 8 digits max: "W" + 8 digits = 9 chars, under the 10-char orderCode limit
 	return Order.create({
 		orderCode: `W${n}`,
@@ -71,8 +80,7 @@ async function makeOrder(overrides = {}) {
 		fullName: 'Web Buyer',
 		email: `buyer${n}@test.vn`, // TLD must be 2-3 chars per the schema's email regex
 		phoneNumber: '0912345678',
-		items: [{ productId: product._id, productName: product.name, price: product.price, quantity: 2 }],
-		totalAmount: product.price * 2,
+		...lines,
 		status: 'confirmed',
 		isDirectSale: false,
 		stockDeducted: true,

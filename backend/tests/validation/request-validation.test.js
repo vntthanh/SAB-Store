@@ -7,13 +7,12 @@
 const express = require('express');
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeProduct, makeAdminSession } = require('../helpers/factories');
+const { makeProduct, makeAdminSession, makeSettings } = require('../helpers/factories');
+const { findOrder, findOrderByCode, countRows } = require('../helpers/db');
 const { expectedTotalFor } = require('../helpers/pricing');
 const { applyPendingMovements } = require('../helpers/stock');
 const { validateOrderUpdate, validatePasswordChange, trimText } = require('../../middleware/validation');
 const { formatOrderPaymentDescription } = require('../../utils/paymentHelper');
-const Order = require('../../models/Order');
-const Settings = require('../../models/Settings');
 
 const customer = {
 	studentId: '24120001',
@@ -88,7 +87,7 @@ describe('handlers apply what validation no longer rewrites', () => {
 	});
 
 	it('POST /api/orders accepts padded customer text and forwards it trimmed', async () => {
-		await Settings.create({ bankNameId: 'MB', bankAccountId: '0123456789', prefixMessage: 'SAB' });
+		await makeSettings({ bankNameId: 'MB', bankAccountId: '0123456789', prefixMessage: 'SAB' });
 		const product = await makeProduct({ price: 10000, stockQuantity: 5 });
 		const items = [{ productId: String(product._id), quantity: 1 }];
 		const expectedTotal = await expectedTotalFor(items);
@@ -104,7 +103,7 @@ describe('handlers apply what validation no longer rewrites', () => {
 		});
 
 		expect(res.status).toBe(201);
-		const order = await Order.findOne({ orderCode: res.body.data.orderCode }).lean();
+		const order = await findOrderByCode(res.body.data.orderCode);
 		expect(order).toMatchObject({
 			studentId: '24120001',
 			fullName: 'Nguyễn Văn A',
@@ -134,7 +133,7 @@ describe('handlers apply what validation no longer rewrites', () => {
 		expect(res.body.errors.length).toBeGreaterThan(0);
 		for (const error of res.body.errors) expect(error.field).toBe('fullName');
 		expect(res.body.errors.map((e) => e.message)).toContain('Họ tên là bắt buộc');
-		expect(await Order.countDocuments()).toBe(0);
+		expect(await countRows('order')).toBe(0);
 	});
 
 	async function placeOrder(price = 10000) {
@@ -145,7 +144,7 @@ describe('handlers apply what validation no longer rewrites', () => {
 			.send({ ...customer, items, expectedTotal: await expectedTotalFor(items) });
 		expect(res.status).toBe(201);
 		await applyPendingMovements();
-		return { product, order: await Order.findOne({ orderCode: res.body.data.orderCode }) };
+		return { product, order: await findOrderByCode(res.body.data.orderCode) };
 	}
 
 	it('PUT /api/admin/orders/:id/items takes digit strings and stores the trimmed reason', async () => {
@@ -162,7 +161,7 @@ describe('handlers apply what validation no longer rewrites', () => {
 			});
 
 		expect(res.status).toBe(200);
-		const stored = await Order.findById(order._id).lean();
+		const stored = await findOrder(order._id);
 		expect(stored.itemsRevision).toBe(1);
 		expect(stored.items[0].quantity).toBe(1);
 		expect(stored.itemsHistory[0].reason).toBe('Khách đổi màu');
@@ -177,7 +176,7 @@ describe('handlers apply what validation no longer rewrites', () => {
 			.send({ additionalNote: '  khách hẹn 9h  ', note: '  gọi lại  ' });
 
 		expect(res.status).toBe(200);
-		const stored = await Order.findById(order._id).lean();
+		const stored = await findOrder(order._id);
 		expect(stored.additionalNote).toBe('khách hẹn 9h');
 		expect(stored.internalNotes[0].note).toBe('gọi lại');
 	});
@@ -191,7 +190,7 @@ describe('handlers apply what validation no longer rewrites', () => {
 			.send({ status: 'paid', transactionCode: '  TX-42  ', note: '  đã nhận  ' });
 
 		expect(res.status).toBe(200);
-		const stored = await Order.findById(order._id).lean();
+		const stored = await findOrder(order._id);
 		expect(stored.transactionCode).toBe('TX-42');
 		expect(stored.statusHistory.at(-1)).toMatchObject({ transactionCode: 'TX-42', note: 'đã nhận' });
 	});

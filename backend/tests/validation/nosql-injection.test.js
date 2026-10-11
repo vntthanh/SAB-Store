@@ -24,23 +24,18 @@ describe('NoSQL operator injection — public product routes', () => {
 	});
 
 	it('drops an operator-shaped category filter instead of running it as Mongo', async () => {
-		// A working `{ $ne: 'x' }` operator would behave identically to no
-		// filter at all here (nothing in the fixture data has category "x"),
-		// so the real proof is in the query the server actually built:
-		// asString() must have coerced the object to undefined, not forwarded
-		// it into Product.find() as a live operator. The caller's filter is the
-		// first $and clause; the second is the channel rule.
-		const querySpy = vi.spyOn(require('../../models/Product'), 'find');
+		// A working `{ $ne: 'x' }` operator would exclude exactly the products
+		// whose category is "x", so one of those is in the fixture data: it is
+		// listed only if the object was dropped instead of run as an operator.
 		const product = await makeProduct({ category: 'lanyard' });
+		const excluded = await makeProduct({ category: 'x' });
 
 		const res = await request(app).get('/api/products').query('category[$ne]=x');
 
 		expect(res.status).toBe(200);
-		const calledWith = querySpy.mock.calls[querySpy.mock.calls.length - 1][0];
-		expect(calledWith.$and[0]).not.toHaveProperty('category');
 		const names = res.body.data.products.map((p) => p.name);
 		expect(names).toContain(product.name);
-		querySpy.mockRestore();
+		expect(names).toContain(excluded.name);
 	});
 
 	it('treats a search operator object as absent rather than as a $regex', async () => {

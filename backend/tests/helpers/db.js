@@ -16,16 +16,31 @@
  * insertion order.
  *
  * Portability: most of this file is plain data access. These seams are tied to
- * the store and each needs a deliberate SQL counterpart:
+ * the store and each needs a deliberate SQL counterpart.
+ *
+ * Fault seams (`failNext*`, `failProductCatalogReads`) return a handle. A test
+ * that arms one must assert `fired()`, or a change in how production writes
+ * would make its rollback check pass without exercising anything. Armed faults
+ * are undone by `remove()` or `vi.restoreAllMocks()` (afterEach).
  * - `failNextMovementInsert`, `failNextStockWrite` and
  *   `failNextOrderInsertAsDuplicateCode` spy on the model the production code
  *   calls, so they must be reimplemented at the repository boundary. The
  *   duplicate-code fault throws the Mongo duplicate-key shape (`code` 11000 on
  *   `orderCode`); the SQL version must throw whatever the repository's
- *   duplicate-key translation expects. Their handle reports whether the fault
- *   fired; a test that uses one must assert that, or a change in how
- *   production writes would make its rollback check pass without exercising
- *   anything.
+ *   duplicate-key translation expects.
+ * - `failNextProductInsertAsRetryable` writes the product and then fails the
+ *   attempt with the store's retryable-transaction error, so the SQL version
+ *   must raise what the repository treats as a retryable transaction (a
+ *   serialization failure) after the insert. `failProductCatalogReads` makes
+ *   the catalogue read of sellable products throw.
+ * - `failNextTransactionStart` makes the next attempt to open a transaction
+ *   reject; on SQL, the next transaction begin fails.
+ * - `failNextPendingMovementScan` makes the next read of pending stock
+ *   movements (the sweeper's re-enqueue scan) throw synchronously. On Mongo it
+ *   fails the next `StockMovement.find` from any caller, including the
+ *   `movements()` oracle, so a test must not read movements between arming it
+ *   and the sweep.
+ * Other seams:
  * - `withTransaction` and `txOptions` hand a service the store's transaction
  *   handle; the SQL version passes its own client in the option the repository
  *   layer defines.
@@ -35,19 +50,19 @@
  *   uppercase hex string or a number, for example).
  * - `ensureMovementStore` exists only because Mongo creates a collection on
  *   first insert; it disappears on SQL.
- * - `failNextProductInsertAsRetryable` and `failProductCatalogReads` are fault
- *   seams of the same kind as the ones above (handle, `fired()` must be
- *   asserted). The first writes the product and then fails the attempt with
- *   the store's retryable-transaction error, so the SQL version must raise
- *   what the repository treats as a retryable transaction (a serialization
- *   failure) after the insert. The second makes the catalogue read of
- *   sellable products throw.
  * - `settingsDefaults` is not data access: it hands tests the default notice
  *   and contact values and the notice length limit, which production code
  *   defines on the settings model today. They move to wherever the settings
  *   repository keeps them; only this file changes.
- * - `insertRawSettings` writes the single settings row (there is one per
- *   store); on SQL it inserts that row with the payment columns only.
+ * - The `user` and `account` kinds of `countRows`, and `insertRawUser`, reach
+ *   the login tables, which belong to the auth library and not to the store.
+ *   They exist so a test can prove an import or a seed never creates or
+ *   leaves a login row; the SQL version reads wherever auth keeps them.
+ * - `databaseName` is the name the database announces for the seed guard's
+ *   opt-in (`INIT_EMPTY_DATABASE`); on SQL it is the connected database name.
+ *
+ * Data shape: `insertRawSettings` writes the single settings row (there is one
+ * per store); on SQL it inserts that row with the payment columns only.
  */
 const mongoose = require('mongoose');
 const Product = require('../../models/Product');
@@ -55,8 +70,12 @@ const Combo = require('../../models/Combo');
 const Order = require('../../models/Order');
 const StockMovement = require('../../models/StockMovement');
 const Settings = require('../../models/Settings');
+const User = require('../../models/User');
+const Account = require('../../models/Account');
 
-const KINDS = { product: Product, combo: Combo, order: Order, movement: StockMovement, settings: Settings };
+const KINDS = {
+	product: Product, combo: Combo, order: Order, movement: StockMovement, settings: Settings, user: User, account: Account,
+};
 
 const toObjectId = (id) => new mongoose.Types.ObjectId(String(id));
 
@@ -96,6 +115,8 @@ const findComboByName = (name) => findOne(Combo, { name }, byAge);
 const findOrder = (id) => findOne(Order, { _id: id });
 const findOrderByCode = (orderCode) => findOne(Order, { orderCode });
 const findMovement = (id) => findOne(StockMovement, { _id: id });
+/** The single settings row, or null when none exists. */
+const findSettings = () => findOne(Settings, {});
 
 /** Every product, oldest first. */
 async function listProducts() {
@@ -126,7 +147,10 @@ function rowsOf(kind) {
 	return Model;
 }
 
-/** Row count of `kind` ('product' | 'combo' | 'order' | 'movement' | 'settings'), optionally narrowed by `filter`. */
+/**
+ * Row count of `kind` ('product' | 'combo' | 'order' | 'movement' | 'settings' |
+ * 'user' | 'account'), optionally narrowed by `filter`.
+ */
 function countRows(kind, filter = {}) {
 	return rowsOf(kind).countDocuments(toQuery(filter));
 }
@@ -146,6 +170,8 @@ const insertRaw = (Model) => async (fields) => {
 const insertRawOrder = insertRaw(Order);
 const insertRawProduct = insertRaw(Product);
 const insertRawCombo = insertRaw(Combo);
+// A login row with no credentials: enough to make the user table non-empty.
+const insertRawUser = insertRaw(User);
 
 /**
  * The settings row as an older version stored it: the given fields only, no
@@ -186,14 +212,14 @@ async function deleteProduct(id) {
 	await Product.deleteOne({ _id: id });
 }
 
-// Catalogue kinds only: emptying movements or orders would leave cached stock
-// that no ledger row explains.
-const DELETABLE_KINDS = new Set(['product', 'combo']);
+// Never the ledger: emptying movements would leave cached stock that no row explains.
+// Orders are allowed: the stock cache follows movements, not orders, so removing orders leaves nothing unexplained.
+const DELETABLE_KINDS = new Set(['product', 'combo', 'order']);
 
-/** Empties every catalogue table of the given kinds (`'product'`, `'combo'`), to start a test from an empty catalogue mid-way. */
+/** Empties every table of the given kinds (`'product'`, `'combo'`, `'order'`), to start a test from an empty store mid-way (a restore into a wiped database). */
 async function deleteAllRows(...kinds) {
 	for (const kind of kinds) {
-		if (!DELETABLE_KINDS.has(kind)) throw new Error(`deleteAllRows: ${kind} is not a catalogue kind`);
+		if (!DELETABLE_KINDS.has(kind)) throw new Error(`deleteAllRows: ${kind} cannot be emptied`);
 	}
 	await Promise.all(kinds.map((kind) => rowsOf(kind).deleteMany({})));
 }
@@ -220,6 +246,9 @@ const txOptions = (tx) => ({ session: tx });
  */
 const isRowId = (value) => value instanceof mongoose.Types.ObjectId;
 
+/** The name of the database the application is connected to. */
+const databaseName = () => mongoose.connection.name;
+
 /** Creates the empty movement store up front, so the first movement insert of a test does not race its own creation. */
 async function ensureMovementStore() {
 	await StockMovement.createCollection();
@@ -243,6 +272,14 @@ const failNextMovementInsert = (message) => faultOn(StockMovement, 'create', mes
 
 /** Makes the next write of the product stock cache fail with `message`. */
 const failNextStockWrite = (message) => faultOn(Product, 'updateOne', message);
+
+/** Makes the next attempt to open a database transaction reject with `message`. */
+const failNextTransactionStart = (message) => handleOf(vi.spyOn(mongoose, 'startSession').mockRejectedValueOnce(new Error(message)));
+
+/** Makes the next read of pending stock movements throw `message`, as the sweeper's re-enqueue scan does. */
+const failNextPendingMovementScan = (message) => handleOf(vi.spyOn(StockMovement, 'find').mockImplementationOnce(() => {
+	throw new Error(message);
+}));
 
 /**
  * Makes the next order insert fail as a duplicate order code (the race where
@@ -292,6 +329,7 @@ module.exports = {
 	findOrder,
 	findOrderByCode,
 	findMovement,
+	findSettings,
 	listProducts,
 	listOrders,
 	movements,
@@ -302,6 +340,7 @@ module.exports = {
 	insertRawProduct,
 	insertRawCombo,
 	insertRawSettings,
+	insertRawUser,
 	settingsDefaults,
 	patchProduct,
 	patchOrder,
@@ -313,8 +352,11 @@ module.exports = {
 	withTransaction,
 	txOptions,
 	isRowId,
+	databaseName,
 	ensureMovementStore,
 	failNextMovementInsert,
+	failNextTransactionStart,
+	failNextPendingMovementScan,
 	failNextStockWrite,
 	failNextOrderInsertAsDuplicateCode,
 	failNextProductInsertAsRetryable,
