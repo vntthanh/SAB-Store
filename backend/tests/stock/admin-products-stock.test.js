@@ -6,7 +6,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeAdminSession } = require('../helpers/factories');
-const Product = require('../../models/Product');
+const { findProduct } = require('../helpers/db');
 
 describe('POST /api/admin/products — initial stockQuantity', () => {
 	let app;
@@ -66,7 +66,7 @@ describe('PUT /api/admin/products/:id — stockQuantity is not editable', () => 
 
 		expect(res.status).toBe(200);
 		expect(res.body.data.product.stockQuantity).toBe(50);
-		const stored = await Product.findById(product._id);
+		const stored = await findProduct(product._id);
 		expect(stored.stockQuantity).toBe(50);
 		expect(stored.name).toBe('Renamed');
 	});

@@ -10,6 +10,7 @@ const { randomUUID } = require('crypto');
 const request = require('supertest');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
+const Order = require('../../models/Order');
 
 let sequence = 0;
 function nextSequence() {
@@ -47,6 +48,32 @@ async function makeCombo(overrides = {}) {
 		price: 150000,
 		categoryRequirements: [{ category: 'general', quantity: 2 }],
 		isActive: true,
+		...overrides,
+	});
+}
+
+/**
+ * Creates a confirmed web order for two units of a fresh product, with the
+ * stock already taken (`stockDeducted`) the way a placed order has it. The
+ * fixture is stock-neutral: it records no movement and leaves the product's
+ * cached stock untouched. Like the other factories it returns a Mongoose
+ * document, unlike the plain objects of helpers/db.js.
+ */
+async function makeOrder(overrides = {}) {
+	const product = await makeProduct({ stockQuantity: 10 });
+	const n = Math.floor(Math.random() * 1e8); // 8 digits max: "W" + 8 digits = 9 chars, under the 10-char orderCode limit
+	return Order.create({
+		orderCode: `W${n}`,
+		studentId: `SV${n}`,
+		fullName: 'Web Buyer',
+		email: `buyer${n}@test.vn`, // TLD must be 2-3 chars per the schema's email regex
+		phoneNumber: '0912345678',
+		items: [{ productId: product._id, productName: product.name, price: product.price, quantity: 2 }],
+		totalAmount: product.price * 2,
+		status: 'confirmed',
+		isDirectSale: false,
+		stockDeducted: true,
+		statusHistory: [{ status: 'confirmed', updatedBy: 'system', updatedAt: new Date() }],
 		...overrides,
 	});
 }
@@ -131,6 +158,6 @@ async function makeSellerSession(app) {
 }
 
 module.exports = {
-	makeProduct, makeCombo, makeLegacyProduct, makeLegacyCombo,
+	makeProduct, makeCombo, makeOrder, makeLegacyProduct, makeLegacyCombo,
 	createAccount, makeAdminSession, makeSellerSession,
 };

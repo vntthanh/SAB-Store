@@ -7,8 +7,7 @@ const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
 const { applyPendingMovements } = require('../helpers/stock');
-const Product = require('../../models/Product');
-const Order = require('../../models/Order');
+const { findProduct, findOrderByCode } = require('../helpers/db');
 
 describe('POST /api/seller/orders/direct — cart input handling', () => {
 	let app;
@@ -47,10 +46,10 @@ describe('POST /api/seller/orders/direct — cart input handling', () => {
 		expect(totalQuantity).toBe(2); // exactly the 2 units the cart asked for, not 3
 
 		await applyPendingMovements();
-		const afterProduct = await Product.findById(product._id);
+		const afterProduct = await findProduct(product._id);
 		expect(afterProduct.stockQuantity).toBe(8); // 10 - 2, never 10 - 3
 
-		const saved = await Order.findOne({ orderCode: res.body.data.orderCode });
+		const saved = await findOrderByCode(res.body.data.orderCode);
 		const savedQuantity = saved.items.reduce((sum, item) => sum + item.quantity, 0);
 		expect(savedQuantity).toBe(2);
 		expect(saved.totalAmount).toBe(15000); // the combo price, not combo(15000) + individual(10000)
@@ -69,7 +68,7 @@ describe('POST /api/seller/orders/direct — cart input handling', () => {
 		expect(res.status).toBe(201);
 
 		await applyPendingMovements();
-		const afterProduct = await Product.findById(product._id);
+		const afterProduct = await findProduct(product._id);
 		expect(afterProduct.stockQuantity).toBe(4);
 	});
 
