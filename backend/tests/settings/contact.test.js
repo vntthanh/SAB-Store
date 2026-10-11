@@ -6,6 +6,15 @@ const { insertRawSettings, countRows, settingsDefaults } = require('../helpers/d
 const DEFAULT_CONTACT = settingsDefaults.contact;
 const PAYMENT_FIELDS = { bankNameId: 'MB', bankAccountId: '0123456789', prefixMessage: 'SAB' };
 
+describe('contact defaults, pinned', () => {
+	it('keeps the default footer contact details', () => {
+		expect(DEFAULT_CONTACT).toEqual({
+			contactEmail: 'sab@fit.hcmus.edu.vn',
+			contactFacebookUrl: 'https://t.sab.edu.vn/'
+		});
+	});
+});
+
 describe('contact settings', () => {
 	let app;
 

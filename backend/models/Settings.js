@@ -1,40 +1,13 @@
 const mongoose = require('mongoose');
 
-const SETTINGS_KEY = 'payment_config';
-// frontend/src/services/api.js repeats both store-title constants and
-// NOTICE_MAX_LENGTH for the header fallback and the admin form's limits; keep
-// them in sync.
-const DEFAULT_STORE_TITLE = 'SAB Store';
-const STORE_TITLE_MAX_LENGTH = 60;
-
-// Customer-facing reminders, authored as Markdown by an admin. An empty string
-// is a deliberate choice that hides the reminder box; only a missing field
-// (a document saved before these existed) falls back to the default.
-const NOTICE_MAX_LENGTH = 5000;
-const DEFAULT_NOTICES = {
-	checkoutNotice: [
-		'- Vui lòng kiểm tra kỹ thông tin trước khi xác nhận',
-		'- Sau khi xác nhận, bạn vui lòng quét mã chuyển khoản trong vòng 1 giờ',
-		'- SAB sẽ gửi thông tin xác nhận thanh toán **trong vòng 7 ngày**',
-		'- Thời gian nhận hàng dự kiến từ ngày T4 08/10/2025 đến ngày 19/10/2025 tại **Cơ sở 1 - 227 Nguyễn Văn Cừ, Phường Chợ Quán**'
-	].join('\n'),
-	eventNotice: [
-		'- Vui lòng kiểm tra kỹ thông tin trước khi xác nhận.',
-		'- Sau khi xác nhận, bạn vui lòng quét mã chuyển khoản trong vòng 1 giờ.'
-	].join('\n'),
-	paymentNotice: 'Để được xử lý nhanh nhất, bạn vui lòng thanh toán trong vòng 1 giờ'
-};
-const NOTICE_FIELDS = Object.keys(DEFAULT_NOTICES);
-
-// Footer contact details; same empty-versus-missing rule as the notices.
-// Format and length are checked by the admin route against @sab/shared. The
-// model does not import it: the payment QR (money path) loads this model and
-// must not depend on the shared build artifact.
-const DEFAULT_CONTACT = {
-	contactEmail: 'sab@fit.hcmus.edu.vn',
-	contactFacebookUrl: 'https://t.sab.edu.vn/'
-};
-const CONTACT_FIELDS = Object.keys(DEFAULT_CONTACT);
+const {
+	SETTINGS_KEY,
+	DEFAULT_STORE_TITLE,
+	STORE_TITLE_MAX_LENGTH,
+	NOTICE_MAX_LENGTH,
+	DEFAULT_NOTICES,
+	DEFAULT_CONTACT
+} = require('../constants/settings');
 
 const noticeField = (field, description) => ({
 	type: String,
@@ -112,11 +85,5 @@ settingsSchema.pre('save', function (next) {
 const Settings = mongoose.model('Settings', settingsSchema);
 
 module.exports = Settings;
+// init-database.js still reads the key from the model.
 module.exports.SETTINGS_KEY = SETTINGS_KEY;
-module.exports.DEFAULT_STORE_TITLE = DEFAULT_STORE_TITLE;
-module.exports.STORE_TITLE_MAX_LENGTH = STORE_TITLE_MAX_LENGTH;
-module.exports.NOTICE_MAX_LENGTH = NOTICE_MAX_LENGTH;
-module.exports.DEFAULT_NOTICES = DEFAULT_NOTICES;
-module.exports.NOTICE_FIELDS = NOTICE_FIELDS;
-module.exports.DEFAULT_CONTACT = DEFAULT_CONTACT;
-module.exports.CONTACT_FIELDS = CONTACT_FIELDS;

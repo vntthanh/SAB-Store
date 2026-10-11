@@ -1,10 +1,11 @@
 const express = require('express');
 const { gated } = require('../../services/write-gate');
 const { contactEmail, contactUrl } = require('@sab/shared');
-const Settings = require('../../models/Settings');
+const { settings: settingsRepo } = require('../../data');
+const { RecordValidationError } = require('../../data/errors');
 const { authenticateAdmin } = require('../../middleware/better-auth');
 
-const { SETTINGS_KEY, STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH, NOTICE_FIELDS, CONTACT_FIELDS } = Settings;
+const { STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH, NOTICE_FIELDS, CONTACT_FIELDS } = require('../../constants/settings');
 const CONTACT_SCHEMAS = { contactEmail, contactFacebookUrl: contactUrl };
 const router = express.Router();
 
@@ -27,7 +28,7 @@ router.use(authenticateAdmin);
  */
 router.get('/', async (req, res) => {
 	try {
-		const settings = await Settings.findOne({ key: SETTINGS_KEY });
+		const settings = await settingsRepo.findConfig();
 
 		if (!settings) {
 			return res.status(404).json({
@@ -113,15 +114,7 @@ router.put('/', gated(async (req, res) => {
 			updateData[field] = parsed.data;
 		}
 
-		const settings = await Settings.findOneAndUpdate(
-			{ key: SETTINGS_KEY },
-			updateData,
-			{
-				new: true,
-				upsert: true,
-				runValidators: true
-			}
-		);
+		const settings = await settingsRepo.upsertConfig(updateData);
 
 		res.json({
 			success: true,
@@ -132,11 +125,11 @@ router.put('/', gated(async (req, res) => {
 	} catch (error) {
 		console.error('Error updating settings:', error);
 
-		if (error.name === 'ValidationError') {
+		if (error instanceof RecordValidationError) {
 			return res.status(400).json({
 				success: false,
 				message: 'Dữ liệu không hợp lệ',
-				errors: Object.values(error.errors).map(err => err.message)
+				errors: error.fieldErrors.map(entry => entry.message)
 			});
 		}
 

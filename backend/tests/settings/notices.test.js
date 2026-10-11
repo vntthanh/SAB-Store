@@ -6,6 +6,25 @@ const { insertRawSettings, countRows, settingsDefaults } = require('../helpers/d
 const { notices: DEFAULT_NOTICES, noticeMaxLength: NOTICE_MAX_LENGTH } = settingsDefaults;
 const PAYMENT_FIELDS = { bankNameId: 'MB', bankAccountId: '0123456789', prefixMessage: 'SAB' };
 
+// The defaults above come from the code under test, so a changed default would
+// pass silently; these literals make it fail here instead.
+describe('notice defaults, pinned', () => {
+	it('keeps the notice length limit and the text of each default', () => {
+		expect(NOTICE_MAX_LENGTH).toBe(5000);
+		expect(DEFAULT_NOTICES.checkoutNotice).toBe([
+			'- Vui lòng kiểm tra kỹ thông tin trước khi xác nhận',
+			'- Sau khi xác nhận, bạn vui lòng quét mã chuyển khoản trong vòng 1 giờ',
+			'- SAB sẽ gửi thông tin xác nhận thanh toán **trong vòng 7 ngày**',
+			'- Thời gian nhận hàng dự kiến từ ngày T4 08/10/2025 đến ngày 19/10/2025 tại **Cơ sở 1 - 227 Nguyễn Văn Cừ, Phường Chợ Quán**'
+		].join('\n'));
+		expect(DEFAULT_NOTICES.eventNotice).toBe([
+			'- Vui lòng kiểm tra kỹ thông tin trước khi xác nhận.',
+			'- Sau khi xác nhận, bạn vui lòng quét mã chuyển khoản trong vòng 1 giờ.'
+		].join('\n'));
+		expect(DEFAULT_NOTICES.paymentNotice).toBe('Để được xử lý nhanh nhất, bạn vui lòng thanh toán trong vòng 1 giờ');
+	});
+});
+
 describe('customer notice settings', () => {
 	let app;
 

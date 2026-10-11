@@ -37,6 +37,12 @@
  * - Single-record reads that feed a response (`findById`, `create`, `update`)
  *   return complete records with the schema defaults applied; list reads return
  *   the stored fields only.
+ * - `settings.findStorefront` returns stored values only: missing or NULL means "not
+ *   set" and the caller applies the code default; `''` means deliberately hidden.
+ *   `findConfig` and `upsertConfig` return the row with the code defaults applied, only
+ *   for missing/NULL fields and never for `''`. Another backend substitutes defaults
+ *   with a null check, never `||`. Partial `upsertConfig` and the layer that enforces
+ *   length/trim rules: see data/mongo/settings.js.
  * - `dataSnapshot` moves whole rows in the wire form of data/snapshot.js (ids as
  *   hex strings, dates as ISO strings, `__v` kept), unlike the other repositories.
  */
@@ -46,6 +52,7 @@ const BACKENDS = {
 		orders: require('./mongo/orders'),
 		products: require('./mongo/products'),
 		combos: require('./mongo/combos'),
+		settings: require('./mongo/settings'),
 		dataSnapshot: require('./mongo/data-snapshot'),
 		withTransaction: require('./mongo/tx').withTransaction,
 		translateWriteError: require('./mongo/errors').translateWriteError

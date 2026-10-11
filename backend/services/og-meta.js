@@ -2,7 +2,8 @@
  * Share-preview data: the <head> fragment nginx splices into index.html, and the
  * lookup both the fragment and the image route use to decide what is public.
  */
-const Settings = require('../models/Settings');
+const { settings: settingsRepo } = require('../data');
+const { DEFAULT_STORE_TITLE } = require('../constants/settings');
 const { findPublicProductByCode, findPublicComboByCode, ogVersion } = require('./public-catalog');
 
 const DESCRIPTION_MAX_LENGTH = 140;
@@ -34,8 +35,8 @@ function baseUrl() {
 }
 
 async function readStoreTitle() {
-	const settings = await Settings.findOne({ key: Settings.SETTINGS_KEY }).select('storeTitle').lean();
-	return (settings && settings.storeTitle) || Settings.DEFAULT_STORE_TITLE;
+	const settings = await settingsRepo.findStorefront();
+	return (settings && settings.storeTitle) || DEFAULT_STORE_TITLE;
 }
 
 /** The public product or combo for a share URL, or null. `type` is 'p' or 'c'. */

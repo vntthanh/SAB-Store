@@ -52,8 +52,7 @@
  *   first insert; it disappears on SQL.
  * - `settingsDefaults` is not data access: it hands tests the default notice
  *   and contact values and the notice length limit, which production code
- *   defines on the settings model today. They move to wherever the settings
- *   repository keeps them; only this file changes.
+ *   keeps in constants/settings.js, free of any storage engine.
  * - The `user` and `account` kinds of `countRows`, `insertRawUser`,
  *   `findAuthRows` and `countAuthRows`, reach the login tables, which belong
  *   to the auth library and not to the store. They exist so a test can prove an
@@ -77,6 +76,7 @@ const Combo = require('../../models/Combo');
 const Order = require('../../models/Order');
 const StockMovement = require('../../models/StockMovement');
 const Settings = require('../../models/Settings');
+const { SETTINGS_KEY, DEFAULT_NOTICES, DEFAULT_CONTACT, NOTICE_MAX_LENGTH } = require('../../constants/settings');
 const User = require('../../models/User');
 const Account = require('../../models/Account');
 
@@ -200,13 +200,13 @@ const findAuthRows = async (name) => plain(await authRows(name).find({}).toArray
  * uncast contract as the other `insertRaw*`. The row key defaults to the one
  * the application reads; a caller may pass `key` to pin the stored value.
  */
-const insertRawSettings = (fields) => insertRaw(Settings)({ key: Settings.SETTINGS_KEY, ...fields });
+const insertRawSettings = (fields) => insertRaw(Settings)({ key: SETTINGS_KEY, ...fields });
 
 /** Default notice texts, default contact details and the notice length limit that the settings API applies. */
 const settingsDefaults = {
-	notices: Settings.DEFAULT_NOTICES,
-	contact: Settings.DEFAULT_CONTACT,
-	noticeMaxLength: Settings.NOTICE_MAX_LENGTH,
+	notices: DEFAULT_NOTICES,
+	contact: DEFAULT_CONTACT,
+	noticeMaxLength: NOTICE_MAX_LENGTH,
 };
 
 /**
