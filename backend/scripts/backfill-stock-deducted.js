@@ -44,49 +44,41 @@
  * Apply for real only after reviewing the dry-run output:
  *   docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
  *     node scripts/backfill-stock-deducted.js --apply
+ 
+ *
+ * Connects through lib/database, which refuses a standalone mongod (replica set
+ * required, as in production), read-only audit included.
  */
 require('dotenv').config({ quiet: true });
-const mongoose = require('mongoose');
-const Order = require('../models/Order');
+const { connectDB, closeDB } = require('../lib/database');
+const { orders } = require('../data');
 
 async function main() {
 	const apply = process.argv.includes('--apply');
 
-	const uri = process.env.MONGODB_URI;
-	if (!uri) throw new Error('MONGODB_URI is required');
+	await connectDB();
 
-	await mongoose.connect(uri);
+	try {
+		const { missing, direct, web } = await orders.countMissingStockDeducted();
 
-	const missingFilter = { stockDeducted: { $exists: false } };
-	const missing = await Order.countDocuments(missingFilter);
-	const directCount = await Order.countDocuments({ ...missingFilter, isDirectSale: true });
-	const webCount = await Order.countDocuments({ ...missingFilter, isDirectSale: { $ne: true } });
+		console.log('--- stockDeducted backfill (rule: stockDeducted = isDirectSale) ---');
+		console.log('orders missing stockDeducted:                  ', missing);
+		console.log('  -> would set stockDeducted=true  (isDirectSale=true):  ', direct);
+		console.log('  -> would set stockDeducted=false (isDirectSale!=true): ', web);
 
-	console.log('--- stockDeducted backfill (rule: stockDeducted = isDirectSale) ---');
-	console.log('orders missing stockDeducted:                  ', missing);
-	console.log('  -> would set stockDeducted=true  (isDirectSale=true):  ', directCount);
-	console.log('  -> would set stockDeducted=false (isDirectSale!=true): ', webCount);
+		if (!apply) {
+			console.log('\nDry run only — no documents modified. Re-run with --apply to write.');
+			return;
+		}
 
-	if (!apply) {
-		console.log('\nDry run only — no documents modified. Re-run with --apply to write.');
-		await mongoose.disconnect();
-		return;
+		const { markedDeducted, markedNotDeducted } = await orders.backfillStockDeducted();
+
+		console.log('\nApplied.');
+		console.log('  stockDeducted=true set on  ', markedDeducted, 'orders');
+		console.log('  stockDeducted=false set on ', markedNotDeducted, 'orders');
+	} finally {
+		await closeDB();
 	}
-
-	const trueResult = await Order.updateMany(
-		{ ...missingFilter, isDirectSale: true },
-		{ $set: { stockDeducted: true } }
-	);
-	const falseResult = await Order.updateMany(
-		{ ...missingFilter, isDirectSale: { $ne: true } },
-		{ $set: { stockDeducted: false } }
-	);
-
-	console.log('\nApplied.');
-	console.log('  stockDeducted=true set on  ', trueResult.modifiedCount, 'orders');
-	console.log('  stockDeducted=false set on ', falseResult.modifiedCount, 'orders');
-
-	await mongoose.disconnect();
 }
 
 main().catch((error) => {

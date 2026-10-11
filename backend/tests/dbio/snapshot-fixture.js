@@ -107,7 +107,12 @@ async function seedStore(tag = 'a') {
 		bankNameId: 'MB',
 		bankAccountId: `0123456${tag === 'a' ? '789' : '000'}`,
 		storeTitle: `SAB Store ${tag}`,
+		prefixMessage: 'SAB',
 		checkoutNotice: 'Kiểm tra kỹ thông tin',
+		eventNotice: '',
+		paymentNotice: `Thanh toán trong 1 giờ (${tag})`,
+		contactEmail: `contact-${tag}@example.com`,
+		contactFacebookUrl: `https://example.com/${tag}`,
 		updatedBy: 'admin'
 	});
 

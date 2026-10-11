@@ -1,19 +1,20 @@
 /**
  * Test data factories.
  *
- * Every factory writes through the real Mongoose model instead of inserting a
- * plain object, so factory output stays honest with schema defaults,
- * validation and indexes — a factory that drifts from the schema would let a
- * test pass against a document production code could never actually produce.
+ * `makeProduct`, `makeCombo` and `makeOrder` write through the real Mongoose
+ * model instead of inserting a plain object, so their output stays honest with
+ * schema defaults, validation and indexes — a factory that drifts from the
+ * schema would let a test pass against a document production code could never
+ * actually produce. `makeSettings` and the legacy factories are the exception:
+ * they exist to store shapes the model would never write.
  */
 const { randomUUID } = require('crypto');
 const request = require('supertest');
 const mongoose = require('mongoose');
-const { insertRawProduct, insertRawCombo } = require('./db');
+const { insertRawProduct, insertRawCombo, insertRawSettings } = require('./db');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
 const Order = require('../../models/Order');
-const Settings = require('../../models/Settings');
 
 let sequence = 0;
 function nextSequence() {
@@ -90,11 +91,12 @@ async function makeOrder(overrides = {}) {
 }
 
 /**
- * Creates the settings row. The caller supplies the required payment fields
- * (`bankNameId`, `bankAccountId`); the key and every other field take their
- * schema defaults.
+ * Creates the settings row with exactly the given fields: a field left out is
+ * stored as missing (NULL on SQL) and the application applies its default, and
+ * `''` is stored as the deliberate "hidden" choice. Goes through the raw insert
+ * so no schema default fills in either case.
  */
-const makeSettings = (fields) => Settings.create(fields);
+const makeSettings = (fields) => insertRawSettings(fields);
 
 /**
  * A document the way one written before public codes existed looks: inserted

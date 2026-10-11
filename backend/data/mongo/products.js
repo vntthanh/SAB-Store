@@ -10,6 +10,7 @@ const { withStringId, toRecord } = require('./records');
 const { translating } = require('./errors');
 const { safeSearch } = require('../../utils/query-guard');
 const { toSkipTake, buildPaginationMeta } = require('@sab/shared');
+const { publicCodeBackfill } = require('./public-code-backfill');
 
 const { assertSaleChannel, sellableQuery, productSellableFilter, SALES_CHANNELS } = sellable;
 
@@ -175,6 +176,18 @@ async function summarizeCatalog() {
 	return { total: stats?.totalProducts || 0, active: stats?.activeProducts || 0, totalStock: stats?.totalStock || 0 };
 }
 
+/** The id of every product, unordered. */
+async function listIds() {
+	const rows = await Product.find({}).select('_id').lean();
+	return rows.map((row) => String(row._id));
+}
+
+/** Id and category of every product; a product without a category has `category` undefined. */
+async function listCategoryById() {
+	const rows = await Product.find({}).select('category').lean();
+	return rows.map(withStringId);
+}
+
 /** True when a product with this id exists. */
 async function exists(id) {
 	return Boolean(await Product.exists({ _id: id }));
@@ -240,6 +253,9 @@ module.exports = {
 	findSellable,
 	listSellable,
 	listCategories,
+	listIds,
+	listCategoryById,
+	...publicCodeBackfill(Product),
 	listPage,
 	summarizeCatalog,
 	exists,

@@ -1,12 +1,11 @@
-const mongoose = require('mongoose');
 const { connectDB } = require('./lib/database');
 const { auth } = require('./lib/auth');
-const Product = require('./models/Product');
-const User = require('./models/User');
-const Settings = require('./models/Settings');
+const { bootstrap, settings, products, withTransaction } = require('./data');
+const { recordAppliedOpening } = require('./services/stock-ledger');
+const { withPublicCodeRetry } = require('./utils/public-code');
 require('dotenv').config({ quiet: true });
 
-const { SETTINGS_KEY } = Settings;
+const SEED_CREATED_BY = 'init-database';
 
 // Throws on failure instead of exiting so tests can drive it; the CLI wrapper
 // below owns the process exit code.
@@ -31,9 +30,9 @@ async function initDatabase() {
 	// across two databases, so a first deploy must opt in by naming the database
 	// it expects. A plain `true` would keep the guard off forever if the flag
 	// were left behind; a name only matches the database it was meant for.
-	const dbName = mongoose.connection.name;
+	const dbName = bootstrap.databaseName();
 	const optIn = process.env.INIT_EMPTY_DATABASE;
-	const hasUsers = await User.exists({});
+	const hasUsers = await bootstrap.hasLoginUsers();
 	if (isProduction && !hasUsers && optIn !== dbName) {
 		throw new Error(
 			`database "${dbName}" looks empty - refusing to initialise in production; ` +
@@ -44,11 +43,7 @@ async function initDatabase() {
 		console.warn('⚠️  INIT_EMPTY_DATABASE is set but the database already has users - remove it');
 	}
 
-	const existingUser = await User.findOne({
-		$or: [{ email: adminEmail }, { username: adminUsername }]
-	});
-
-	if (existingUser) {
+	if (await bootstrap.loginUserExists({ email: adminEmail, username: adminUsername })) {
 		console.log('⚠️ Existing admin user found');
 	}
 	else {
@@ -73,10 +68,9 @@ async function initDatabase() {
 	// logged), which beats paying customers into a placeholder account. Configure
 	// Settings before opening the store. Local setups get a placeholder so
 	// checkout can be exercised.
-	const existingSettings = await Settings.exists({ key: SETTINGS_KEY });
+	const existingSettings = await settings.findConfig();
 	if (!existingSettings && !isProduction) {
-		await Settings.create({
-			key: SETTINGS_KEY,
+		await settings.upsertConfig({
 			bankNameId: 'MB',
 			bankAccountId: '0123456789',
 			prefixMessage: 'SAB',
@@ -88,14 +82,13 @@ async function initDatabase() {
 	}
 
 	// Sample products would show up in a real storefront.
-	if (!isProduction && (await Product.countDocuments()) === 0) {
+	if (!isProduction && (await products.summarizeCatalog()).total === 0) {
 		const sampleProducts = [
 			{
 				name: "Áo thun SAB",
 				price: 150000,
-				image: "/fallback-product.png",
+				imageUrl: "/fallback-product.png",
 				description: "Áo thun chất lượng cao với logo SAB",
-				status: "active",
 				category: "Đồ mặc",
 				stockQuantity: 50,
 				available: true,
@@ -104,9 +97,8 @@ async function initDatabase() {
 			{
 				name: "Mũ SAB",
 				price: 100000,
-				image: "/fallback-product.png",
+				imageUrl: "/fallback-product.png",
 				description: "Mũ snapback phong cách với logo SAB",
-				status: "active",
 				category: "Phụ kiện",
 				stockQuantity: 30,
 				available: true,
@@ -114,7 +106,17 @@ async function initDatabase() {
 			}
 		];
 
-		await Product.insertMany(sampleProducts);
+		// Each product and its opening movement commit together, like a product
+		// created in the admin: the stock cache is only ever explained by the ledger.
+		for (const sample of sampleProducts) {
+			await withPublicCodeRetry(() => withTransaction(async (tx) => {
+				const created = await products.create(sample, sample.stockQuantity, tx);
+				await recordAppliedOpening(
+					{ productId: created._id, quantity: sample.stockQuantity, createdBy: SEED_CREATED_BY },
+					{ tx }
+				);
+			}));
+		}
 		console.log('✅ Created sample products');
 	}
 

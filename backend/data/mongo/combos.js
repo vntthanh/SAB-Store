@@ -7,6 +7,7 @@ const { comboSellableFilter, COMBO_SELLABLE_SORT } = require('./sellable');
 const { withStringId, toRecord } = require('./records');
 const { translating } = require('./errors');
 const { createWithPublicCodeRetry } = require('../../utils/public-code');
+const { publicCodeBackfill } = require('./public-code-backfill');
 
 // The only fields an edit may change.
 const EDITABLE_FIELDS = ['name', 'description', 'price', 'categoryRequirements', 'priority', 'isActive', 'salesChannel'];
@@ -127,4 +128,4 @@ function remove(id) {
 	return translating(async () => Boolean(await Combo.findByIdAndDelete(id)));
 }
 
-module.exports = { findSellable, findSellableForPricing, list, listNames, listSellable, exists, findById, create, update, remove };
+module.exports = { ...publicCodeBackfill(Combo), findSellable, findSellableForPricing, list, listNames, listSellable, exists, findById, create, update, remove };

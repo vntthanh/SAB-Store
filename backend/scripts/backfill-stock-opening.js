@@ -20,21 +20,16 @@
  *     node scripts/backfill-stock-opening.js            # dry run
  *   docker exec -e MONGODB_URI="$MONGODB_URI" <backend-container> \
  *     node scripts/backfill-stock-opening.js --apply
+ 
+ *
+ * Connects through lib/database, which refuses a standalone mongod (replica set
+ * required, as in production), read-only audit included.
  */
-const mongoose = require('mongoose');
-const Product = require('../models/Product');
-const StockMovement = require('../models/StockMovement');
+const { connectDB, closeDB } = require('../lib/database');
+const { products, stockLedger, withTransaction } = require('../data');
 const { recordAppliedOpening } = require('../services/stock-ledger');
 
 const CREATED_BY = 'backfill-stock-opening';
-
-async function appliedSum(productId, session) {
-	const [row] = await StockMovement.aggregate([
-		{ $match: { productId, status: 'applied' } },
-		{ $group: { _id: null, sum: { $sum: '$delta' } } }
-	]).session(session);
-	return row ? row.sum : 0;
-}
 
 /**
  * @param {{apply?: boolean}} [options]
@@ -43,37 +38,29 @@ async function appliedSum(productId, session) {
 async function backfillOpening({ apply = false } = {}) {
 	const counts = { products: 0, alreadyBaselined: 0, toCreate: 0, created: 0 };
 
-	for await (const product of Product.find({}).select('_id').lean().cursor()) {
+	for (const productId of await products.listIds()) {
 		counts.products += 1;
 
-		if (await StockMovement.exists({ idempotencyKey: `opening:${product._id}` })) {
+		if (await stockLedger.findMovementByKey(`opening:${productId}`)) {
 			counts.alreadyBaselined += 1;
 			continue;
 		}
 		counts.toCreate += 1;
 		if (!apply) continue;
 
-		const session = await mongoose.startSession();
-		let created = false;
-		try {
-			await session.withTransaction(async () => {
-				created = false;
-				// Read inside the transaction: the stock and the sum must be one snapshot.
-				const fresh = await Product.findById(product._id).select('stockQuantity').session(session).lean();
-				if (!fresh) return;
-				const cached = fresh.stockQuantity || 0;
-				await recordAppliedOpening({
-					productId: product._id,
-					quantity: cached - await appliedSum(product._id, session),
-					stockAfter: cached,
-					createdBy: CREATED_BY,
-					reason: 'Baseline of existing stock'
-				}, { session });
-				created = true;
-			});
-		} finally {
-			await session.endSession();
-		}
+		const created = await withTransaction(async (tx) => {
+			// Read inside the transaction: the stock and the sum must be one snapshot.
+			const basis = await stockLedger.readOpeningBasis(productId, tx);
+			if (!basis) return false;
+			await recordAppliedOpening({
+				productId,
+				quantity: basis.stockQuantity - basis.appliedSum,
+				stockAfter: basis.stockQuantity,
+				createdBy: CREATED_BY,
+				reason: 'Baseline of existing stock'
+			}, { tx });
+			return true;
+		});
 		if (created) counts.created += 1;
 	}
 	return counts;
@@ -83,9 +70,7 @@ async function main() {
 	require('dotenv').config({ quiet: true });
 	const apply = process.argv.includes('--apply');
 
-	const uri = process.env.MONGODB_URI;
-	if (!uri) throw new Error('MONGODB_URI is required');
-	await mongoose.connect(uri);
+	await connectDB();
 
 	try {
 		const counts = await backfillOpening({ apply });
@@ -99,7 +84,7 @@ async function main() {
 			console.log('\nDry run only — nothing written. Re-run with --apply to record the openings.');
 		}
 	} finally {
-		await mongoose.disconnect();
+		await closeDB();
 	}
 }
 

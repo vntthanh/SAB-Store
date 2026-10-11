@@ -220,6 +220,25 @@ async function readLedgerState(tx) {
 }
 
 /**
+ * What an opening baseline needs for one product: its cached stock and the sum of
+ * its applied movements, read inside `tx` so they are one snapshot. Null when
+ * the product does not exist.
+ *
+ * @param {string} productId
+ * @param {object} tx
+ * @returns {Promise<{stockQuantity: number, appliedSum: number}|null>}
+ */
+async function readOpeningBasis(productId, tx) {
+	const product = await Product.findById(productId).select('stockQuantity').session(tx).lean();
+	if (!product) return null;
+	const [row] = await StockMovement.aggregate([
+		{ $match: { productId: product._id, status: 'applied' } },
+		{ $group: { _id: null, sum: { $sum: '$delta' } } }
+	]).session(tx);
+	return { stockQuantity: product.stockQuantity || 0, appliedSum: row ? row.sum : 0 };
+}
+
+/**
  * Number of pending movements per product.
  *
  * @param {Array<string|object>} productIds
@@ -271,6 +290,7 @@ module.exports = {
 	listPendingIdsCreatedBefore,
 	summarizePending,
 	readLedgerState,
+	readOpeningBasis,
 	countPendingByProduct,
 	listMovementsOfProduct
 };

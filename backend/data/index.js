@@ -61,6 +61,14 @@
  *   `orders.existsByCode`, `products.SALES_CHANNELS`, `products.existsByName`,
  *   `combos.exists`, `combos.listNames`, and `dataSnapshot.countRows` (row counts
  *   including the login tables, never their rows).
+ * - One-off tooling: `orders.listWithCombo`, `orders.countMissingStockDeducted`,
+ *   `orders.backfillStockDeducted`, `products.listIds`, `products.listCategoryById`,
+ *   `stockLedger.readOpeningBasis` and the public-code backfill set on `products`
+ *   and `combos` (`count`, `listWithoutPublicCode`, `assignMissingPublicCode`,
+ *   `ensureIndexes`). The stock-deducted pair exists only for a store where the
+ *   field can be absent; a NOT NULL column makes it a no-op. `bootstrap` serves
+ *   the first-run seed (`databaseName`, `hasLoginUsers`, `loginUserExists`) and reads
+ *   the auth library's login table directly; it moves with auth.
  * - `dataSnapshot` moves whole rows in the wire form of data/snapshot.js (ids as
  *   hex strings, dates as ISO strings, `__v` kept), unlike the other repositories.
  */
@@ -73,6 +81,7 @@ const BACKENDS = {
 		settings: require('./mongo/settings'),
 		dataSnapshot: require('./mongo/data-snapshot'),
 		dashboard: require('./mongo/dashboard'),
+		bootstrap: require('./mongo/bootstrap'),
 		withTransaction: require('./mongo/tx').withTransaction,
 		translateWriteError: require('./mongo/errors').translateWriteError
 	})

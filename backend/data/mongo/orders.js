@@ -252,6 +252,53 @@ function updateNotes({ orderId, additionalNote, internalNote }) {
 	});
 }
 
+/**
+ * Orders that carry a discounted combo, in either stored shape of `comboInfo`,
+ * with the fields the pricing audit reads; stored values only, nested ids native.
+ *
+ * @returns {Promise<object[]>}
+ */
+async function listWithCombo() {
+	const rows = await Order.find({
+		$or: [{ 'comboInfo.comboId': { $ne: null } }, { 'comboInfo.combos.0': { $exists: true } }]
+	})
+		.select('orderCode status totalAmount items comboInfo createdAt')
+		.lean();
+	return rows.map(withStringId);
+}
+
+// Orders from before the flag existed have no such field at all. A database
+// whose column is NOT NULL has none, so this pair is only for the store the
+// flag was introduced on.
+const STOCK_DEDUCTED_MISSING = { stockDeducted: { $exists: false } };
+
+/**
+ * How many orders predate `stockDeducted`, and how the backfill rule
+ * (`stockDeducted = isDirectSale`) would split them.
+ *
+ * @returns {Promise<{missing: number, direct: number, web: number}>}
+ */
+async function countMissingStockDeducted() {
+	const [missing, direct, web] = await Promise.all([
+		Order.countDocuments(STOCK_DEDUCTED_MISSING),
+		Order.countDocuments({ ...STOCK_DEDUCTED_MISSING, isDirectSale: true }),
+		Order.countDocuments({ ...STOCK_DEDUCTED_MISSING, isDirectSale: { $ne: true } })
+	]);
+	return { missing, direct, web };
+}
+
+/**
+ * Set `stockDeducted = isDirectSale` on the orders that predate it. Touches only
+ * orders where the field is absent, so a re-run changes nothing already set.
+ *
+ * @returns {Promise<{markedDeducted: number, markedNotDeducted: number}>}
+ */
+async function backfillStockDeducted() {
+	const direct = await Order.updateMany({ ...STOCK_DEDUCTED_MISSING, isDirectSale: true }, { $set: { stockDeducted: true } });
+	const web = await Order.updateMany({ ...STOCK_DEDUCTED_MISSING, isDirectSale: { $ne: true } }, { $set: { stockDeducted: false } });
+	return { markedDeducted: direct.modifiedCount, markedNotDeducted: web.modifiedCount };
+}
+
 /** The number of orders. */
 function count() {
 	return Order.countDocuments();
@@ -332,6 +379,9 @@ module.exports = {
 	latestOrderNumber,
 	create,
 	updateNotes,
+	listWithCombo,
+	countMissingStockDeducted,
+	backfillStockDeducted,
 	count,
 	deleteAll,
 	applyStatusChange,

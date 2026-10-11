@@ -86,4 +86,3 @@ const Settings = mongoose.model('Settings', settingsSchema);
 
 module.exports = Settings;
 // init-database.js still reads the key from the model.
-module.exports.SETTINGS_KEY = SETTINGS_KEY;
