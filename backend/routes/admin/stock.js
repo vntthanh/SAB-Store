@@ -7,8 +7,7 @@
  */
 const express = require('express');
 const { randomUUID } = require('crypto');
-const Product = require('../../models/Product');
-const StockMovement = require('../../models/StockMovement');
+const { products, stockLedger } = require('../../data');
 const { asPageLimit } = require('../../utils/query-guard');
 const { ERROR_CODES } = require('../../constants/errorCodes');
 const { recordMovement, enqueueMovements, reconcile } = require('../../services/stock-ledger');
@@ -52,7 +51,7 @@ router.post('/products/:id/stock-adjustments', gated(async (req, res) => {
 		const parsed = parseAdjustment(req.body);
 		if (parsed.error) return invalid(res, parsed.error);
 
-		const exists = await Product.exists({ _id: id });
+		const exists = await products.exists(id);
 		if (!exists) {
 			return res.status(404).json({ success: false, code: ERROR_CODES.NOT_FOUND, message: 'Không tìm thấy sản phẩm' });
 		}
@@ -89,16 +88,7 @@ router.get('/products/:id/stock-movements', async (req, res) => {
 		}
 
 		const { page, limit } = asPageLimit(req.query.page, req.query.limit);
-		const filter = { productId: id };
-		const [items, total] = await Promise.all([
-			StockMovement.find(filter)
-				.sort({ createdAt: -1, _id: -1 })
-				.skip((page - 1) * limit)
-				.limit(limit)
-				.select('type delta target stockAfter status reason createdBy orderId createdAt appliedAt')
-				.lean(),
-			StockMovement.countDocuments(filter)
-		]);
+		const { rows: items, total } = await stockLedger.listMovementsOfProduct(id, { page, limit });
 
 		res.json({
 			success: true,

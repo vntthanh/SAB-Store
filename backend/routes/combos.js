@@ -1,12 +1,11 @@
 const express = require('express');
 const { gated } = require('../services/write-gate');
-const Combo = require('../models/Combo');
-const Product = require('../models/Product');
+const { combos: comboRepo, products: productRepo } = require('../data');
+const { RecordValidationError } = require('../data/errors');
 const { authenticateAdmin, authenticateSeller, authenticateUser } = require('../middleware/better-auth');
 const { validateComboItems } = require('../middleware/validation');
 const { computeOrderPricing, pricingErrorBody, PricingError } = require('../services/pricing');
 const { asEnum } = require('../utils/query-guard');
-const { createWithPublicCodeRetry } = require('../utils/public-code');
 const ErrorLogger = require('../utils/errorLogger');
 const { ErrorResponse } = require('../utils/errorResponse');
 const { findPublicComboByCode } = require('../services/public-catalog');
@@ -28,16 +27,14 @@ router.get('/', authenticateAdmin, async (req, res) => {
 	try {
 		const { active } = req.query;
 
-		let query = {};
+		let isActive;
 		if (active === 'true') {
-			query.isActive = true;
+			isActive = true;
 		} else if (active === 'false') {
-			query.isActive = false;
+			isActive = false;
 		}
 
-		const combos = await Combo.find(query)
-			.sort({ priority: -1, createdAt: -1 })
-			.lean();
+		const combos = await comboRepo.list({ active: isActive });
 
 		res.json({
 			success: true,
@@ -59,7 +56,7 @@ router.get('/', authenticateAdmin, async (req, res) => {
  */
 router.get('/active', async (req, res) => {
 	try {
-		const combos = await Combo.findSellable(channelOf(req.query.channel));
+		const combos = await comboRepo.listSellable(channelOf(req.query.channel));
 
 		res.json({
 			success: true,
@@ -108,7 +105,7 @@ router.post('/', authenticateAdmin, gated(async (req, res) => {
 	try {
 		const { name, description, price, categoryRequirements, priority, salesChannel } = req.body;
 
-		if (salesChannel !== undefined && !asEnum(salesChannel, Product.SALES_CHANNELS)) {
+		if (salesChannel !== undefined && !asEnum(salesChannel, productRepo.SALES_CHANNELS)) {
 			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
 		}
 
@@ -130,7 +127,7 @@ router.post('/', authenticateAdmin, gated(async (req, res) => {
 
 		// Check if all categories exist in products
 		const categories = categoryRequirements.map(req => req.category);
-		const existingCategories = await Product.distinct('category');
+		const existingCategories = await productRepo.listCategories();
 		const invalidCategories = categories.filter(cat => !existingCategories.includes(cat));
 
 		if (invalidCategories.length > 0) {
@@ -140,7 +137,7 @@ router.post('/', authenticateAdmin, gated(async (req, res) => {
 			});
 		}
 
-		const combo = await createWithPublicCodeRetry(Combo, {
+		const combo = await comboRepo.create({
 			name,
 			description,
 			price,
@@ -157,20 +154,10 @@ router.post('/', authenticateAdmin, gated(async (req, res) => {
 	} catch (error) {
 		ErrorLogger.logRoute('POST /combos', error, req);
 
-		if (error.name === 'ValidationError') {
-			const errors = Object.values(error.errors).map(err => err.message);
+		if (error instanceof RecordValidationError) {
 			return res.status(400).json({
 				success: false,
-				message: errors.join(', ')
-			});
-		}
-
-		// e.g. { price: 'abc' } fails Number coercion at save time as a CastError,
-		// not a ValidationError — left uncaught this fell through to a 500.
-		if (error.name === 'CastError') {
-			return res.status(400).json({
-				success: false,
-				message: `Dữ liệu không hợp lệ: ${error.path}`
+				message: error.fieldErrors.map(entry => entry.message).join(', ')
 			});
 		}
 
@@ -247,7 +234,7 @@ router.put('/:id', authenticateAdmin, gated(async (req, res) => {
 		const { id } = req.params;
 		const { name, description, price, categoryRequirements, priority, isActive, salesChannel } = req.body;
 
-		if (salesChannel !== undefined && !asEnum(salesChannel, Product.SALES_CHANNELS)) {
+		if (salesChannel !== undefined && !asEnum(salesChannel, productRepo.SALES_CHANNELS)) {
 			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
 		}
 
@@ -259,7 +246,7 @@ router.put('/:id', authenticateAdmin, gated(async (req, res) => {
 			});
 		}
 
-		const combo = await Combo.findById(id);
+		const combo = await comboRepo.findById(id);
 		if (!combo) {
 			return res.status(404).json({
 				success: false,
@@ -278,7 +265,7 @@ router.put('/:id', authenticateAdmin, gated(async (req, res) => {
 
 			// Check if all categories exist
 			const categories = categoryRequirements.map(req => req.category);
-			const existingCategories = await Product.distinct('category');
+			const existingCategories = await productRepo.listCategories();
 			const invalidCategories = categories.filter(cat => !existingCategories.includes(cat));
 
 			if (invalidCategories.length > 0) {
@@ -289,39 +276,29 @@ router.put('/:id', authenticateAdmin, gated(async (req, res) => {
 			}
 		}
 
-		// Update fields
-		if (name !== undefined) combo.name = name;
-		if (description !== undefined) combo.description = description;
-		if (price !== undefined) combo.price = price;
-		if (categoryRequirements !== undefined) combo.categoryRequirements = categoryRequirements;
-		if (priority !== undefined) combo.priority = priority;
-		if (isActive !== undefined) combo.isActive = isActive;
-		if (salesChannel !== undefined) combo.salesChannel = salesChannel;
-
-		await combo.save();
+		const updated = await comboRepo.update(id, {
+			name, description, price, categoryRequirements, priority, isActive, salesChannel
+		});
+		// Deleted between the lookup above and the save.
+		if (!updated) {
+			return res.status(404).json({
+				success: false,
+				message: 'Không tìm thấy combo'
+			});
+		}
 
 		res.json({
 			success: true,
-			data: { combo },
+			data: { combo: updated },
 			message: 'Cập nhật combo thành công'
 		});
 	} catch (error) {
 		ErrorLogger.logRoute('PUT /combos/:id', error, req);
 
-		if (error.name === 'ValidationError') {
-			const errors = Object.values(error.errors).map(err => err.message);
+		if (error instanceof RecordValidationError) {
 			return res.status(400).json({
 				success: false,
-				message: errors.join(', ')
-			});
-		}
-
-		// e.g. { price: 'abc' } fails Number coercion at save time as a CastError,
-		// not a ValidationError — left uncaught this fell through to a 500.
-		if (error.name === 'CastError') {
-			return res.status(400).json({
-				success: false,
-				message: `Dữ liệu không hợp lệ: ${error.path}`
+				message: error.fieldErrors.map(entry => entry.message).join(', ')
 			});
 		}
 
@@ -349,7 +326,7 @@ router.delete('/:id', authenticateAdmin, gated(async (req, res) => {
 			});
 		}
 
-		const combo = await Combo.findById(id);
+		const combo = await comboRepo.findById(id);
 		if (!combo) {
 			return res.status(404).json({
 				success: false,
@@ -357,7 +334,7 @@ router.delete('/:id', authenticateAdmin, gated(async (req, res) => {
 			});
 		}
 
-		await Combo.findByIdAndDelete(id);
+		await comboRepo.remove(id);
 
 		res.json({
 			success: true,
@@ -389,7 +366,7 @@ router.get('/:id', authenticateAdmin, async (req, res) => {
 			});
 		}
 
-		const combo = await Combo.findById(id);
+		const combo = await comboRepo.findById(id);
 		if (!combo) {
 			return res.status(404).json({
 				success: false,

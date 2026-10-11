@@ -16,9 +16,27 @@
  *   (ObjectId); another backend returns the id as a lowercase 24-hex string.
  *   Pricing copies those ids into order lines, and its callers only `String()`
  *   them or compare the normalised form.
+ * - `translateWriteError(err)` turns this store's own write error into the domain
+ *   error above, or returns it unchanged. Only code not yet behind a repository needs it.
  * - Lean records carry the store's `__v`; other backends will not. Callers must
  *   not read it.
  * - `combos.findSellable` keeps nested `categoryRequirements[]._id` as native ids.
+ * - Errors: a repository write raises `DuplicateKeyError` (unique constraint),
+ *   `RecordValidationError` (schema rule) or `InvalidIdError` (value of the wrong
+ *   type, with `path` and `value`) from data/errors.js. Repositories not yet
+ *   converted (orders, the merge import) still let the engine's own error through.
+ * - A repository that pages returns `{ rows, total }`: the page's rows and the
+ *   count of every match, for a page and limit the caller already clamped.
+ *   Rows sort by their key and then by id, so a page boundary never repeats or
+ *   drops a row.
+ * - Computed fields: `combos.listSellable`, `combos.findById`, `combos.create` and
+ *   `combos.update` return records that include the `totalRequiredQuantity`
+ *   virtual (sum of the requirement quantities) and `id`; `products.findById`,
+ *   `create`, `update` and `listPage` include `inStock` (`stockQuantity > 0`).
+ *   Another backend must compute them. Lean list reads carry none.
+ * - Single-record reads that feed a response (`findById`, `create`, `update`)
+ *   return complete records with the schema defaults applied; list reads return
+ *   the stored fields only.
  * - `dataSnapshot` moves whole rows in the wire form of data/snapshot.js (ids as
  *   hex strings, dates as ISO strings, `__v` kept), unlike the other repositories.
  */
@@ -29,7 +47,8 @@ const BACKENDS = {
 		products: require('./mongo/products'),
 		combos: require('./mongo/combos'),
 		dataSnapshot: require('./mongo/data-snapshot'),
-		withTransaction: require('./mongo/tx').withTransaction
+		withTransaction: require('./mongo/tx').withTransaction,
+		translateWriteError: require('./mongo/errors').translateWriteError
 	})
 };
 

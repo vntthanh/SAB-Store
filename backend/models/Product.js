@@ -1,7 +1,6 @@
 const mongoose = require('mongoose');
-const mongoosePaginate = require('mongoose-paginate-v2');
 const { publicCodePlugin } = require('../utils/public-code');
-const { SALES_CHANNELS, productSellableFilter } = require('../data/mongo/sellable');
+const { SALES_CHANNELS } = require('../data/mongo/sellable');
 
 const productSchema = new mongoose.Schema({
 	name: {
@@ -135,14 +134,6 @@ productSchema.virtual('inStock').get(function () {
 	return this.stockQuantity > 0;
 });
 
-// Query form of the sellable rule (data/mongo/sellable.js) for routes that
-// chain their own sort and paging onto it.
-productSchema.statics.findSellable = function (channel, filter = {}) {
-	return this.find(productSellableFilter(channel, filter));
-};
-
-// Add pagination plugin
-productSchema.plugin(mongoosePaginate);
 productSchema.plugin(publicCodePlugin);
 
 const Product = mongoose.model('Product', productSchema);

@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
-const mongoosePaginate = require('mongoose-paginate-v2');
-const { SALES_CHANNELS, COMBO_SELLABLE_SORT, comboSellableFilter } = require('../data/mongo/sellable');
+const { SALES_CHANNELS } = require('../data/mongo/sellable');
 const { publicCodePlugin } = require('../utils/public-code');
 
 const categoryRequirementSchema = new mongoose.Schema({
@@ -74,14 +73,6 @@ comboSchema.virtual('totalRequiredQuantity').get(function () {
 	return this.categoryRequirements.reduce((total, req) => total + req.quantity, 0);
 });
 
-// Query form of the sellable rule (data/mongo/sellable.js) for routes that
-// chain their own paging onto it.
-comboSchema.statics.findSellable = function (channel, filter = {}) {
-	return this.find(comboSellableFilter(channel, filter)).sort(COMBO_SELLABLE_SORT);
-};
-
-// Add pagination plugin
-comboSchema.plugin(mongoosePaginate);
 comboSchema.plugin(publicCodePlugin);
 
 module.exports = mongoose.model('Combo', comboSchema);

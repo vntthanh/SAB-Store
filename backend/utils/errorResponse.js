@@ -1,5 +1,7 @@
 const { ERROR_CODES, ERROR_MESSAGES, ERROR_CODE_TO_HTTP_STATUS, HTTP_STATUS } = require('../constants/errorCodes');
 const ErrorLogger = require('./errorLogger');
+const { InvalidIdError, DuplicateKeyError, RecordValidationError, duplicateKeyFields } = require('../data/errors');
+const { translateWriteError } = require('../data');
 
 class AppError extends Error {
 	constructor(errorCode, message, statusCode, details = {}, isOperational = true) {
@@ -147,21 +149,35 @@ class ErrorResponse {
 	}
 }
 
-function handleMongooseError(error) {
-	if (error.name === 'ValidationError') {
-		const errors = Object.values(error.errors).map(err => ({
-			field: err.path,
-			message: err.message
-		}));
-		return ErrorResponse.validationError('Dữ liệu không hợp lệ', { errors });
+/**
+ * True for a failed write the repositories report (or, for routes not yet behind
+ * a repository, the engine's own error for the same three cases).
+ */
+// The `name`/`code` checks go once every route reaches the store through `data/`.
+function isDataError(error) {
+	return error instanceof RecordValidationError
+		|| error instanceof InvalidIdError
+		|| error instanceof DuplicateKeyError
+		|| error.name === 'ValidationError'
+		|| error.name === 'CastError'
+		|| error.code === 11000;
+}
+
+function handleDataError(raw) {
+	// Routes still reading the store directly raise its own errors; one
+	// translation here gives both kinds the same answer.
+	const error = translateWriteError(raw);
+
+	if (error instanceof RecordValidationError) {
+		return ErrorResponse.validationError('Dữ liệu không hợp lệ', { errors: error.fieldErrors });
 	}
 
-	if (error.name === 'CastError') {
+	if (error instanceof InvalidIdError) {
 		return ErrorResponse.badRequestError(`ID không hợp lệ: ${error.value}`);
 	}
 
-	if (error.code === 11000) {
-		const field = Object.keys(error.keyPattern)[0];
+	if (error instanceof DuplicateKeyError) {
+		const field = error.fields[0] || duplicateKeyFields(error);
 		return ErrorResponse.conflictError(`${field} đã tồn tại`, { field });
 	}
 
@@ -179,5 +195,6 @@ function handleMongooseError(error) {
 
 module.exports = {
 	ErrorResponse,
-	handleMongooseError
+	isDataError,
+	handleDataError
 };

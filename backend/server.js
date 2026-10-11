@@ -8,7 +8,7 @@ const { auth, getAllowedOrigins } = require('./lib/auth');
 const { connectDB } = require('./lib/database');
 const { toNodeHandler } = require('better-auth/node');
 const ErrorLogger = require('./utils/errorLogger');
-const { ErrorResponse, handleMongooseError } = require('./utils/errorResponse');
+const { ErrorResponse, isDataError, handleDataError } = require('./utils/errorResponse');
 const { ERROR_CODES, HTTP_STATUS } = require('./constants/errorCodes');
 const { buildTrustedProxies } = require('./lib/trusted-proxies');
 const { requestLogger, errorRateLimiter, healthCheckEndpoint } = require('./middleware/logger');
@@ -205,8 +205,8 @@ function createApp() {
 
 		let error = err;
 
-		if (err.name === 'ValidationError' || err.name === 'CastError' || err.code === 11000) {
-			error = handleMongooseError(err);
+		if (isDataError(err)) {
+			error = handleDataError(err);
 		}
 
 		if (!error.errorCode) {

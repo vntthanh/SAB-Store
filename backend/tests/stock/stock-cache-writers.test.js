@@ -22,7 +22,9 @@ const LEDGER_STORAGE = /^data\/[^/]+\/stock-ledger\.js$/;
 // write it, and why. A new write in one of these files changes the count.
 const PRODUCT_CREATION_WRITERS = new Map([
 	['models/Product.js', { writes: 1, why: 'schema definition of the field' }],
-	['routes/admin/products.js', { writes: 1, why: 'create product: opening balance, recorded as an applied opening movement' }],
+	// The create route hands the opening balance to the repository, which sets the field on the new row;
+	// the route records the matching applied opening movement in the same transaction.
+	['data/mongo/products.js', { writes: 1, why: 'create product: opening balance, recorded as an applied opening movement' }],
 	['routes/admin/database.js', { writes: 1, why: 'database import: field whitelist of imported products, each with its opening movement' }],
 	['init-database.js', { writes: 2, why: 'first-run seed products' }],
 	// A restore inserts whole product rows with the cache the file holds. The field is never

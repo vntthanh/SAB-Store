@@ -31,8 +31,8 @@
  * - `failNextProductInsertAsRetryable` writes the product and then fails the
  *   attempt with the store's retryable-transaction error, so the SQL version
  *   must raise what the repository treats as a retryable transaction (a
- *   serialization failure) after the insert. `failProductCatalogReads` makes
- *   the catalogue read of sellable products throw.
+ *   serialization failure) after the insert. `failProductCatalogReads` spies on
+ *   the repository function `products.findSellable`, so it needs no SQL counterpart.
  * - `failNextTransactionStart` makes the next attempt to open a transaction
  *   reject; on SQL, the next transaction begin fails.
  * - `failNextPendingMovementScan` makes the next read of pending stock
@@ -71,6 +71,7 @@
  * per store); on SQL it inserts that row with the payment columns only.
  */
 const mongoose = require('mongoose');
+const data = require('../../data');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
 const Order = require('../../models/Order');
@@ -341,8 +342,8 @@ function failNextProductInsertAsRetryable() {
 	return { ...handleOf(spy), fired: () => thrown };
 }
 
-/** Makes every catalogue read of sellable products throw `message` until `remove()` is called. */
-const failProductCatalogReads = (message) => handleOf(vi.spyOn(Product, 'findSellable').mockImplementation(() => {
+/** Makes the repository read of sellable products (`products.findSellable`) throw `message` until `remove()` is called. */
+const failProductCatalogReads = (message) => handleOf(vi.spyOn(data.products, 'findSellable').mockImplementation(() => {
 	throw new Error(message);
 }));
 

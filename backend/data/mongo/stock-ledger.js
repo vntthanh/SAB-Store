@@ -234,6 +234,31 @@ async function countPendingByProduct(productIds) {
 	return new Map(rows.map((r) => [String(r._id), r.pending]));
 }
 
+/**
+ * One page of a product's movement history, newest first (ties by id), with the
+ * fields the admin history shows. `total` counts every movement of the product.
+ *
+ * @param {string} productId
+ * @param {{page: number, limit: number}} paging
+ * @returns {Promise<{rows: object[], total: number}>}
+ */
+async function listMovementsOfProduct(productId, { page, limit }) {
+	const filter = { productId };
+	const [rows, total] = await Promise.all([
+		StockMovement.find(filter)
+			.sort({ createdAt: -1, _id: -1 })
+			.skip((page - 1) * limit)
+			.limit(limit)
+			.select('type delta target stockAfter status reason createdBy orderId createdAt appliedAt')
+			.lean(),
+		StockMovement.countDocuments(filter)
+	]);
+	return {
+		rows: rows.map((row) => ({ ...row, _id: String(row._id), ...(row.orderId && { orderId: String(row.orderId) }) })),
+		total
+	};
+}
+
 module.exports = {
 	MOVEMENT_TYPES,
 	findMovementByKey,
@@ -244,5 +269,6 @@ module.exports = {
 	listPendingIdsCreatedBefore,
 	summarizePending,
 	readLedgerState,
-	countPendingByProduct
+	countPendingByProduct,
+	listMovementsOfProduct
 };

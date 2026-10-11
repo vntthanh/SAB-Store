@@ -75,9 +75,7 @@ describe('products.findSellable', () => {
 		await makeProduct({ name: 'needle wrong channel', salesChannel: 'offline' });
 		await makeProduct({ name: 'unrelated', salesChannel: 'online' });
 
-		const found = await Product.findSellable('online', {
-			$or: [{ name: /needle/ }, { description: /needle/ }]
-		});
+		const found = await products.listSellable('online', { search: 'needle' });
 
 		expect(idsOf(found)).toEqual([wanted._id.toString()]);
 	});
