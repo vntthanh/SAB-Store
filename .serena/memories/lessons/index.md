@@ -15,7 +15,7 @@
 - `mem:lessons/verification/husky_hooks_setup` — husky + hook theo loại file (gốc workspace/shared/frontend); hooksPath riêng từng máy; re-exec bash ≥4; ref pre-push qua env; flake orders-route chưa tái hiện.
 
 ## workspace
-- `mem:lessons/workspace/workspace_docker_images` — đọc trước khi sửa Dockerfile, dockerignore hoặc dependency: root context, ignore per-Dockerfile, `pnpm deploy` không `--legacy`.
+- `mem:lessons/workspace/workspace_docker_images` — đọc trước khi sửa Dockerfile, dockerignore hoặc dependency: root context, ignore per-Dockerfile, `pnpm deploy` không `--legacy`; cắt optional peer bằng `.pnpmfile.cjs`.
 - `mem:lessons/workspace/shared_package_build` — đọc khi sửa `packages/shared` hoặc thấy test xanh mà hành vi cũ: build cũ = xanh giả, `jitless`, không import `zod` trực tiếp.
 - `mem:lessons/workspace/validation_golden_fixtures` — đọc trước khi đổi validation của route: fixture vàng, khối `intentional`, replay qua một server.
 - `mem:lessons/workspace/dependency_upgrade_limits` — đọc trước khi nâng package/ảnh: better-auth >1.3.8 vỡ Jest 29 (ESM-only; backend đã sang Vitest 11/10), ảnh dùng chung trên david-host, Redis 8 một chiều + RAM, đường lên mongo.
