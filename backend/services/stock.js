@@ -12,12 +12,11 @@
  * never taken (orders created before stock was tracked per order) and keeps two
  * cancels from returning them twice.
  */
-const Order = require('../models/Order');
+const { orders, withTransaction } = require('../data');
 const { recordMovement } = require('./stock-ledger');
-const { withTransaction } = require('../utils/transaction');
 const { logEvent } = require('../utils/log-event');
 
-const { FINAL_ORDER_STATUSES } = Order;
+const { FINAL_ORDER_STATUSES } = orders;
 
 const MOVEMENT_SIGN = { order: -1, order_cancel: 1 };
 
@@ -41,13 +40,14 @@ function unitsByProduct(items) {
  *
  * @param {{orderId: *, items: Array<{productId: *, quantity: number}>, type: 'order'|'order_cancel',
  *          keyTag: string, createdBy: string, reason: string}} movement
- * @param {{session: import('mongoose').ClientSession}} opts
- * @returns {Promise<Array<import('mongoose').Document>>}
+ * @param {{tx?: object, session?: object}} opts the transaction; callers may pass it as `tx` or `session`
+ * @returns {Promise<Array<object>>}
  */
-async function recordOrderMovements({ orderId, items, type, keyTag, createdBy, reason }, { session }) {
+async function recordOrderMovements({ orderId, items, type, keyTag, createdBy, reason }, opts) {
+	const tx = opts.tx || opts.session;
 	const sign = MOVEMENT_SIGN[type];
 	const recorded = [];
-	// Sequential: one transaction session cannot run concurrent operations.
+	// Sequential: one transaction cannot run concurrent operations.
 	for (const [productId, quantity] of unitsByProduct(items)) {
 		recorded.push(await recordMovement({
 			productId,
@@ -57,7 +57,7 @@ async function recordOrderMovements({ orderId, items, type, keyTag, createdBy, r
 			reason,
 			createdBy,
 			idempotencyKey: `order:${orderId}:${productId}:${keyTag}`
-		}, { session }));
+		}, { tx }));
 	}
 	return recorded;
 }
@@ -91,14 +91,14 @@ function stockEffectOfTransition({ stockDeducted, previousStatus, newStatus }) {
  * @param {{orderId: string, status: string, setFields: object, historyEntry: object, actor: string}} change
  *        `setFields` / `historyEntry` carry the status and whatever else the
  *        route records (transaction code, cancel reason, note, who).
- * @returns {Promise<{outcome: 'not_found'|'final'|'unchanged'|'conflict'|'ok', order?: import('mongoose').Document,
- *                    movements?: Array<import('mongoose').Document>}>}
+ * @returns {Promise<{outcome: 'not_found'|'final'|'unchanged'|'conflict'|'ok', order?: object,
+ *                    movements?: Array<object>}>}
  *          `final` means the order is cancelled or delivered and refuses any status
  *          change; `unchanged` means it already has `status`.
  */
 async function transitionOrderWithStock({ orderId, status, setFields, historyEntry, actor }) {
-	const result = await withTransaction(async (session) => {
-		const existing = await Order.findById(orderId).session(session).lean();
+	const result = await withTransaction(async (tx) => {
+		const existing = await orders.findById(orderId, tx);
 		if (!existing) return { outcome: 'not_found' };
 		// Read inside the transaction so a cancel racing a delivery sees the winner.
 		if (FINAL_ORDER_STATUSES.includes(existing.status)) return { outcome: 'final' };
@@ -110,14 +110,12 @@ async function transitionOrderWithStock({ orderId, status, setFields, historyEnt
 			newStatus: status
 		});
 
-		const order = await Order.findOneAndUpdate(
-			{ _id: orderId, status: existing.status },
-			{
-				$set: { ...setFields, ...(effect && { stockDeducted: effect.stockDeducted }) },
-				$push: { statusHistory: historyEntry }
-			},
-			{ new: true, runValidators: true, session }
-		);
+		const order = await orders.applyStatusChange({
+			orderId,
+			fromStatus: existing.status,
+			fields: { ...setFields, ...(effect && { stockDeducted: effect.stockDeducted }) },
+			historyEntry
+		}, tx);
 		if (!order) return { outcome: 'conflict' };
 		if (!effect) return { outcome: 'ok', order, movements: [], from: existing.status };
 
@@ -128,7 +126,7 @@ async function transitionOrderWithStock({ orderId, status, setFields, historyEnt
 			keyTag: `cancel:${order.statusHistory.length}`,
 			createdBy: actor,
 			reason: `Huỷ đơn ${order.orderCode}`
-		}, { session });
+		}, { tx });
 		return { outcome: 'ok', order, movements, from: existing.status };
 	});
 

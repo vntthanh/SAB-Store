@@ -13,11 +13,10 @@
  * never claims items its stock ledger does not back. Call
  * `enqueueMovements(result.movements)` after this resolves.
  */
-const Order = require('../models/Order');
+const { orders, withTransaction } = require('../data');
 const { computeOrderPricing } = require('./pricing');
 const { unitsByProduct } = require('./stock');
 const { recordMovement } = require('./stock-ledger');
-const { withTransaction } = require('../utils/transaction');
 
 const EDITABLE_ORDER_STATUSES = ['confirmed', 'paid'];
 
@@ -37,7 +36,7 @@ function unitDifferences(previousItems, nextItems) {
  * @param {{orderId: string, items: Array<{productId: string, quantity: number}>,
  *          expectedRevision: number, reason: string, actor: string}} edit
  * @returns {Promise<{outcome: 'not_found'|'final'|'changed'|'total_changed'|'unchanged'|'ok',
- *                    order?: object, movements?: Array<import('mongoose').Document>,
+ *                    order?: object, movements?: Array<object>,
  *                    expected?: number, actual?: number}>}
  *          `changed`: the order's revision or status moved since the client read it.
  *          `total_changed`: carries the stored total (`expected`) and the new set's (`actual`).
@@ -45,10 +44,10 @@ function unitDifferences(previousItems, nextItems) {
  * @throws {import('./pricing').PricingError} the engine refuses the new item set
  */
 function editOrderItems({ orderId, items, expectedRevision, reason, actor }) {
-	return withTransaction(async (session) => {
+	return withTransaction(async (tx) => {
 		// Everything is read again on every run: the driver re-runs this callback
 		// after a transient error or a write conflict with a racing edit or cancel.
-		const existing = await Order.findById(orderId).session(session).lean();
+		const existing = await orders.findById(orderId, tx);
 		if (!existing) return { outcome: 'not_found' };
 		// Only confirmed and paid orders are editable; a final order, or a legacy
 		// status the enum no longer has, is answered as final.
@@ -60,7 +59,7 @@ function editOrderItems({ orderId, items, expectedRevision, reason, actor }) {
 
 		const pricing = await computeOrderPricing(items, {
 			channel: existing.isDirectSale ? 'offline' : 'online',
-			session,
+			session: tx,
 			// The admin is amending an order that already exists, not selling to a customer.
 			enforceQuantityLimits: false
 		});
@@ -72,33 +71,25 @@ function editOrderItems({ orderId, items, expectedRevision, reason, actor }) {
 		if (differences.size === 0) return { outcome: 'unchanged', order: existing };
 
 		const newRevision = currentRevision + 1;
-		const order = await Order.findOneAndUpdate(
-			{
-				_id: orderId,
-				status: existing.status,
-				// A missing field matches `null`, which is how a legacy order is found.
-				itemsRevision: currentRevision === 0 ? { $in: [0, null] } : currentRevision
-			},
-			{
-				$set: { items: pricing.orderItems, comboInfo: pricing.comboInfo },
-				$inc: { itemsRevision: 1 },
-				$push: {
-					itemsHistory: {
-						previousItems: existing.items,
-						previousComboInfo: existing.comboInfo ?? null,
-						editedBy: actor,
-						editedAt: new Date(),
-						reason
-					}
-				}
-			},
-			{ new: true, runValidators: true, session }
-		);
+		const order = await orders.replaceItems({
+			orderId,
+			fromStatus: existing.status,
+			fromRevision: currentRevision,
+			items: pricing.orderItems,
+			comboInfo: pricing.comboInfo,
+			historyEntry: {
+				previousItems: existing.items,
+				previousComboInfo: existing.comboInfo ?? null,
+				editedBy: actor,
+				editedAt: new Date(),
+				reason
+			}
+		}, tx);
 		if (!order) return { outcome: 'changed' };
 
 		const movements = [];
 		if (existing.stockDeducted === true) {
-			// Sequential: one transaction session cannot run concurrent operations.
+			// Sequential: one transaction cannot run concurrent operations.
 			for (const [productId, difference] of differences) {
 				movements.push(await recordMovement({
 					productId,
@@ -109,7 +100,7 @@ function editOrderItems({ orderId, items, expectedRevision, reason, actor }) {
 					reason: `Sửa đơn ${order.orderCode}`,
 					createdBy: actor,
 					idempotencyKey: `order:${order._id}:${productId}:edit:${newRevision}`
-				}, { session }));
+				}, { tx }));
 			}
 		}
 		return { outcome: 'ok', order, movements };

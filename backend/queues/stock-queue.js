@@ -2,13 +2,13 @@
  * BullMQ transport for stock movements.
  *
  * Redis here is a dispatcher, never the source of truth: the pending movement in
- * MongoDB is. A job lost with Redis' data, or never enqueued because Redis was
+ * the database is. A job lost with Redis' data, or never enqueued because Redis was
  * down, only delays the cache; the sweeper below re-enqueues anything still
  * pending after a minute, using the same job id so it cannot be queued twice.
  */
 const { Queue, Worker, DelayedError } = require('bullmq');
 const IORedis = require('ioredis');
-const StockMovement = require('../models/StockMovement');
+const { stockLedger } = require('../data');
 const { applyMovement } = require('../services/stock-ledger');
 const ErrorLogger = require('../utils/errorLogger');
 const { logEvent } = require('../utils/log-event');
@@ -67,7 +67,7 @@ function getQueue() {
 		defaultJobOptions: {
 			attempts: 5,
 			backoff: { type: 'exponential', delay: 1_000 },
-			// MongoDB keeps the history. A job left behind (completed or failed) would
+			// The database keeps the history. A job left behind (completed or failed) would
 			// also make a later add with the same id a no-op, so the sweeper could
 			// never retry that movement.
 			removeOnComplete: true,
@@ -102,24 +102,17 @@ async function enqueueMovementJobs(movementIds) {
  */
 async function sweepOnce({ olderThanMs = SWEEP_MIN_AGE_MS, limit = SWEEP_BATCH } = {}) {
 	const cutoff = new Date(Date.now() - olderThanMs);
-	const stale = await StockMovement.find({ status: 'pending', createdAt: { $lt: cutoff } })
-		.sort({ createdAt: 1, _id: 1 })
-		.limit(limit)
-		.select('_id')
-		.lean();
+	const stale = await stockLedger.listPendingIdsCreatedBefore({ createdBefore: cutoff, limit });
 	if (stale.length === 0) return 0;
-	await enqueueMovementJobs(stale.map((m) => String(m._id)));
+	await enqueueMovementJobs(stale);
 	return stale.length;
 }
 
 /** Backlog of pending movements: how many, and how long the oldest has waited. */
 async function pendingBacklog() {
-	const [pending, oldest] = await Promise.all([
-		StockMovement.countDocuments({ status: 'pending' }),
-		StockMovement.findOne({ status: 'pending' }).sort({ createdAt: 1, _id: 1 }).select('createdAt').lean()
-	]);
-	const oldestPendingSec = oldest ? Math.max(0, Math.round((Date.now() - oldest.createdAt.getTime()) / 1000)) : 0;
-	return { pending, oldestPendingSec };
+	const { count, oldestCreatedAt } = await stockLedger.summarizePending();
+	const oldestPendingSec = oldestCreatedAt ? Math.max(0, Math.round((Date.now() - oldestCreatedAt.getTime()) / 1000)) : 0;
+	return { pending: count, oldestPendingSec };
 }
 
 /**

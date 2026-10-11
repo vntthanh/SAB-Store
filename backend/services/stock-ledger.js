@@ -9,18 +9,18 @@
  * Flow: a caller `recordMovement`s inside its own transaction (an order and its
  * movements commit together), calls `enqueueMovements` after the commit, and a
  * queue worker runs `applyMovement`. Redis only dispatches: if it is down or
- * loses a job the movement is still `pending` in MongoDB and the sweeper in
+ * loses a job the movement is still `pending` in the database and the sweeper in
  * queues/stock-queue.js re-enqueues it.
  *
  * Stock may go negative on purpose: an order is never refused for lack of stock.
  */
-const mongoose = require('mongoose');
-const Product = require('../models/Product');
-const StockMovement = require('../models/StockMovement');
+const { stockLedger: store } = require('../data');
+const { isDuplicateKeyError } = require('../data/errors');
+const { isRecordId } = require('../data/ids');
 const ErrorLogger = require('../utils/errorLogger');
 const { logEvent } = require('../utils/log-event');
 
-const { MOVEMENT_TYPES } = StockMovement;
+const { MOVEMENT_TYPES } = store;
 
 // Failed apply attempts after which the failure is logged as critical. The
 // movement stays pending and keeps being retried; the log is the alarm.
@@ -53,7 +53,7 @@ const DELTA_RULES = {
 };
 
 function validateMovement({ productId, type, delta, target, idempotencyKey, reason, createdBy }) {
-	if (!mongoose.isValidObjectId(productId)) throw new StockLedgerError('productId is not a valid id');
+	if (!isRecordId(productId)) throw new StockLedgerError('productId is not a valid id');
 	if (!MOVEMENT_TYPES.includes(type)) throw new StockLedgerError(`unknown movement type: ${String(type)}`);
 	if (typeof idempotencyKey !== 'string' || idempotencyKey.length === 0 || idempotencyKey.length > MAX_TEXT_LENGTH) {
 		throw new StockLedgerError('idempotencyKey must be a non-empty string of at most 200 characters');
@@ -82,34 +82,28 @@ function validateMovement({ productId, type, delta, target, idempotencyKey, reas
  * stored instead of recording a second one.
  *
  * @param {{productId, type, delta?, target?, orderId?, reason?, createdBy?, idempotencyKey}} movement
- * @param {{session?: import('mongoose').ClientSession|null}} [opts]
- * @returns {Promise<import('mongoose').Document>}
+ * @param {{tx?: object|null, session?: object|null}} [opts] the transaction; callers may pass it as `tx` or `session`
+ * @returns {Promise<object>} the stored movement
  */
 async function recordMovement(movement, opts = {}) {
-	const session = opts.session || null;
+	const tx = opts.tx || opts.session || null;
 	validateMovement(movement);
 
-	const existing = await findByKey(movement.idempotencyKey, session);
+	const existing = await store.findMovementByKey(movement.idempotencyKey, tx);
 	if (existing) return existing;
 
 	try {
-		const [created] = await StockMovement.create([buildDocument(movement)], session ? { session } : undefined);
-		return created;
+		return await store.createMovement(buildDocument(movement), tx);
 	} catch (err) {
 		// Inside a transaction a duplicate-key error has already aborted it, so
 		// the caller has to see the error and retry from the top, where the
 		// lookup above finds the winner. Outside one, the winner can be returned.
-		if (!session && err && err.code === 11000) {
-			const winner = await findByKey(movement.idempotencyKey, null);
+		if (!tx && isDuplicateKeyError(err)) {
+			const winner = await store.findMovementByKey(movement.idempotencyKey, null);
 			if (winner) return winner;
 		}
 		throw err;
 	}
-}
-
-function findByKey(idempotencyKey, session) {
-	const query = StockMovement.findOne({ idempotencyKey });
-	return session ? query.session(session) : query;
 }
 
 function buildDocument({ productId, type, delta, target, orderId, reason, createdBy, idempotencyKey }) {
@@ -135,24 +129,22 @@ function buildDocument({ productId, type, delta, target, orderId, reason, create
  * behind and defaults to `quantity` (a product that starts at nothing).
  *
  * @param {{productId, quantity: number, stockAfter?: number, createdBy?: string, reason?: string}} opening
- * @param {{session?: import('mongoose').ClientSession|null}} [opts]
+ * @param {{tx?: object|null, session?: object|null}} [opts] the transaction; callers may pass it as `tx` or `session`
  */
 async function recordAppliedOpening({ productId, quantity, stockAfter = quantity, createdBy, reason }, opts = {}) {
-	const session = opts.session || null;
+	const tx = opts.tx || opts.session || null;
 	const idempotencyKey = `opening:${productId}`;
 	validateMovement({ productId, type: 'opening', delta: quantity, idempotencyKey, createdBy, reason });
 
-	const existing = await findByKey(idempotencyKey, session);
+	const existing = await store.findMovementByKey(idempotencyKey, tx);
 	if (existing) return existing;
 
-	const now = new Date();
-	const [created] = await StockMovement.create([{
+	return store.createMovement({
 		...buildDocument({ productId, type: 'opening', delta: quantity, createdBy, reason, idempotencyKey }),
 		status: 'applied',
-		appliedAt: now,
+		appliedAt: new Date(),
 		stockAfter
-	}], session ? { session } : undefined);
-	return created;
+	}, tx);
 }
 
 /**
@@ -179,46 +171,29 @@ async function enqueueMovements(movements) {
 	}
 }
 
-/** Movements of the same product apply in (createdAt, _id) order. */
-function hasOlderPending(movement) {
-	return StockMovement.exists({
-		productId: movement.productId,
-		status: 'pending',
-		$or: [
-			{ createdAt: { $lt: movement.createdAt } },
-			{ createdAt: movement.createdAt, _id: { $lt: movement._id } }
-		]
-	});
-}
-
 /**
  * Apply one movement to the product cache. Called by the queue worker.
  *
  * Safe to run any number of times, concurrently or after a crash: the flip
- * `pending -> applied` and the `$inc` happen in one transaction gated on the
- * movement still being pending, so exactly one run ever counts.
+ * `pending -> applied` and the cache increment happen in one transaction gated on
+ * the movement still being pending, so exactly one run ever counts.
  *
  * Movements of one product apply strictly in creation order, because a
  * `set_target` only means something relative to the movements before it. When an
  * older one is still pending this returns `deferred` and the caller retries later.
  *
- * @param {string|import('mongoose').Types.ObjectId} movementId
+ * @param {string} movementId
  * @returns {Promise<{applied: boolean, deferred: boolean}>}
  */
 async function applyMovement(movementId) {
-	const movement = await StockMovement.findById(movementId).lean();
-	if (!movement || movement.status !== 'pending') return { applied: false, deferred: false };
-
-	if (await hasOlderPending(movement)) return { applied: false, deferred: true };
-
-	await StockMovement.updateOne(
-		{ _id: movement._id, status: 'pending' },
-		{ $set: { claimedAt: new Date() }, $inc: { attempts: 1 } }
-	);
+	const claim = await store.claimForApply(movementId);
+	if (claim.state === 'missing') return { applied: false, deferred: false };
+	if (claim.state === 'deferred') return { applied: false, deferred: true };
+	const { movement } = claim;
 
 	const startedAt = Date.now();
 	try {
-		const applied = await applyInTransaction(movement._id);
+		const applied = await store.applyClaimed(movement._id);
 		if (applied) logEvent('stock.movement.applied', { movementType: movement.type, ms: Date.now() - startedAt });
 		return { applied, deferred: false };
 	} catch (err) {
@@ -227,71 +202,17 @@ async function applyMovement(movementId) {
 	}
 }
 
-async function applyInTransaction(movementId) {
-	const session = await mongoose.startSession();
-	let applied = false;
-	try {
-		// withTransaction re-runs the callback on a transient error (e.g. a write
-		// conflict with a concurrent run of the same movement), so it must start
-		// from a clean state and re-read everything.
-		await session.withTransaction(async () => {
-			applied = false;
-
-			const movement = await StockMovement.findOne({ _id: movementId, status: 'pending' }).session(session).lean();
-			if (!movement) return;
-
-			const product = await Product.findById(movement.productId).select('stockQuantity').session(session).lean();
-			const appliedAt = new Date();
-
-			if (!product) {
-				// The product was deleted. Leaving the movement pending would block the
-				// queue for a product that no longer exists.
-				const res = await StockMovement.updateOne(
-					{ _id: movement._id, status: 'pending' },
-					{ $set: { status: 'applied', appliedAt, delta: movement.delta ?? 0, lastError: 'PRODUCT_NOT_FOUND' } },
-					{ session }
-				);
-				applied = res.modifiedCount === 1;
-				return;
-			}
-
-			const current = product.stockQuantity || 0;
-			const delta = movement.type === 'set_target' ? movement.target - current : movement.delta;
-
-			// The gate: only the run that flips this movement goes on to touch the product.
-			const gate = await StockMovement.updateOne(
-				{ _id: movement._id, status: 'pending' },
-				{ $set: { status: 'applied', appliedAt, delta, stockAfter: current + delta, lastError: null } },
-				{ session }
-			);
-			if (gate.modifiedCount !== 1) return;
-
-			if (delta !== 0) {
-				await Product.updateOne({ _id: movement.productId }, { $inc: { stockQuantity: delta } }, { session });
-			}
-			applied = true;
-		});
-	} finally {
-		await session.endSession();
-	}
-	return applied;
-}
-
 async function recordFailure(movement, err) {
 	const movementId = movement._id;
 	const errorText = String(err && err.message);
 	let failed;
 	try {
-		failed = await StockMovement.findOneAndUpdate(
-			{ _id: movementId, status: 'pending' },
-			{ $set: { lastError: errorText.slice(0, 500) } },
-			{ new: true }
-		).lean();
+		failed = await store.recordApplyFailure(movementId, errorText);
 	} catch (bookkeepingError) {
 		// The original error is what matters and is rethrown by the caller. The
 		// failure is still reported: a failing database is when it matters most.
 		ErrorLogger.logWarning('Could not record stock movement failure', {
-			movementId: String(movementId),
+			movementId,
 			error: bookkeepingError.message
 		});
 		failed = undefined;
@@ -307,8 +228,8 @@ async function recordFailure(movement, err) {
 	});
 	if (failed && failed.attempts >= CRITICAL_AFTER_ATTEMPTS) {
 		ErrorLogger.logCritical('Stock movement keeps failing to apply', err, {
-			movementId: String(movementId),
-			productId: String(failed.productId),
+			movementId,
+			productId: failed.productId,
 			attempts: failed.attempts
 		});
 	}
@@ -324,26 +245,13 @@ async function recordFailure(movement, err) {
  * @returns {Promise<Array<{productId: string, name: string, cached: number, ledgerSum: number, diff: number, pending: number}>>}
  */
 async function reconcile() {
-	const [sums, pendingCounts, products] = await Promise.all([
-		StockMovement.aggregate([
-			{ $match: { status: 'applied' } },
-			{ $group: { _id: '$productId', ledgerSum: { $sum: '$delta' } } }
-		]),
-		StockMovement.aggregate([
-			{ $match: { status: 'pending' } },
-			{ $group: { _id: '$productId', pending: { $sum: 1 } } }
-		]),
-		Product.find({}).select('name stockQuantity').lean()
-	]);
-
-	const sumById = new Map(sums.map((s) => [String(s._id), s.ledgerSum]));
-	const pendingById = new Map(pendingCounts.map((p) => [String(p._id), p.pending]));
+	const { appliedSumByProduct, pendingByProduct, products } = await store.readLedgerState();
 
 	const discrepancies = [];
 	for (const product of products) {
-		const id = String(product._id);
+		const id = product.productId;
 		const cached = product.stockQuantity || 0;
-		const ledgerSum = sumById.get(id) || 0;
+		const ledgerSum = appliedSumByProduct.get(id) || 0;
 		if (cached === ledgerSum) continue;
 		discrepancies.push({
 			productId: id,
@@ -351,7 +259,7 @@ async function reconcile() {
 			cached,
 			ledgerSum,
 			diff: cached - ledgerSum,
-			pending: pendingById.get(id) || 0
+			pending: pendingByProduct.get(id) || 0
 		});
 	}
 	return discrepancies;
@@ -364,11 +272,7 @@ async function reconcile() {
  */
 async function countPendingByProduct(productIds) {
 	if (productIds.length === 0) return new Map();
-	const rows = await StockMovement.aggregate([
-		{ $match: { productId: { $in: productIds }, status: 'pending' } },
-		{ $group: { _id: '$productId', pending: { $sum: 1 } } }
-	]);
-	return new Map(rows.map((r) => [String(r._id), r.pending]));
+	return store.countPendingByProduct(productIds);
 }
 
 module.exports = {
