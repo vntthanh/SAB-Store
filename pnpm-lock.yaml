@@ -73,9 +73,6 @@ importers:
       mongoose:
         specifier: ^8.24.5
         version: 8.24.5
-      mongoose-paginate-v2:
-        specifier: ^1.9.5
-        version: 1.9.5(mongoose@8.24.5)
       multer:
         specifier: 1.4.5-lts.2
         version: 1.4.5-lts.2
@@ -3204,23 +3201,9 @@ packages:
       socks:
         optional: true
 
-  mongoose-lean-virtuals@1.1.1:
-    resolution: {integrity: sha512-8chOqpVE3bcoWT2pIgcJeIZlXaOfQCavZgQZF4qytUtjRBqsNMyzUoR16qdw9XL2kC478N8iA8z0AA+NSS0d1A==}
-    engines: {node: '>=16.20.1'}
-    peerDependencies:
-      mongoose: '>=5.11.10'
-
-  mongoose-paginate-v2@1.9.5:
-    resolution: {integrity: sha512-sgPbV0G7SfdW1XdEuNMokzJOT85GNx786itp6UiNmDvKGyxMSHbeyn4tMZBseOmGu2uOo5ByVgfjhaxkOBY71A==}
-    engines: {node: '>=4.0.0'}
-
   mongoose@8.24.5:
     resolution: {integrity: sha512-S1cvmzLhw5Xthv450UjInCBq2JreRvvyfGSA3FmDw8yThPxUbPAyJqtXMz0dNm8BBFm2ctRBOBKJxDPqM2sG0w==}
     engines: {node: '>=16.20.1'}
-
-  mpath@0.8.4:
-    resolution: {integrity: sha512-DTxNZomBcTWlrMW76jy1wvV37X/cNNxPW1y2Jzd4DZkAaC5ZGsm8bfGfNOthcDuRJujXLqiuS6o3Tpy0JEoh7g==}
-    engines: {node: '>=4.0.0'}
 
   mpath@0.9.0:
     resolution: {integrity: sha512-ikJRQTk8hw5DEoFVxHG1Gn9T/xcjtdnOKIU1JTmGjZZlg9LST2mBLmcX3/ICIbgJydT2GOc15RnNy5mHmzfSew==}
@@ -7423,17 +7406,6 @@ snapshots:
       bson: 7.3.3
       mongodb-connection-string-url: 7.0.2
 
-  mongoose-lean-virtuals@1.1.1(mongoose@8.24.5):
-    dependencies:
-      mongoose: 8.24.5
-      mpath: 0.8.4
-
-  mongoose-paginate-v2@1.9.5(mongoose@8.24.5):
-    dependencies:
-      mongoose-lean-virtuals: 1.1.1(mongoose@8.24.5)
-    transitivePeerDependencies:
-      - mongoose
-
   mongoose@8.24.5:
     dependencies:
       bson: 6.10.4
@@ -7452,8 +7424,6 @@ snapshots:
       - snappy
       - socks
       - supports-color
-
-  mpath@0.8.4: {}
 
   mpath@0.9.0: {}
 

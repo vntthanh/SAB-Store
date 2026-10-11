@@ -100,14 +100,24 @@ describe('admin stock routes', () => {
 			const res = await request(app).get(`/api/admin/products/${product._id}/stock-movements?page=1&limit=2`).set('Cookie', cookies);
 
 			expect(res.status).toBe(200);
-			expect(res.body.data.items.map((m) => m.delta)).toEqual([3, 2]);
-			expect(res.body.data.pagination).toEqual({ page: 1, pages: 2, total: 3, limit: 2 });
-			expect(Object.keys(res.body.data.items[0]).sort()).toEqual(
+			// Contract change: the shared { data, meta } envelope replaced { data: { items, pagination } }.
+			expect(res.body.data.map((m) => m.delta)).toEqual([3, 2]);
+			expect(res.body.meta).toEqual({ page: 1, limit: 2, total: 3, totalPages: 2 });
+			expect(Object.keys(res.body.data[0]).sort()).toEqual(
 				['_id', 'appliedAt', 'createdAt', 'createdBy', 'delta', 'orderId', 'reason', 'status', 'stockAfter', 'target', 'type'].sort()
 			);
 
 			const page2 = await request(app).get(`/api/admin/products/${product._id}/stock-movements?page=2&limit=2`).set('Cookie', cookies);
-			expect(page2.body.data.items.map((m) => m.delta)).toEqual([1]);
+			expect(page2.body.data.map((m) => m.delta)).toEqual([1]);
+		});
+
+		it('reports totalPages 0 for a product with no movements', async () => {
+			const product = await makeProduct();
+
+			const res = await request(app).get(`/api/admin/products/${product._id}/stock-movements`).set('Cookie', cookies);
+
+			expect(res.body.data).toEqual([]);
+			expect(res.body.meta).toEqual({ page: 1, limit: 20, total: 0, totalPages: 0 });
 		});
 
 		it('answers 400 for a malformed id and ignores operator-shaped paging input', async () => {

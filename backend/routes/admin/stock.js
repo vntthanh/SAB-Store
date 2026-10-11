@@ -87,16 +87,9 @@ router.get('/products/:id/stock-movements', async (req, res) => {
 			return res.status(400).json({ success: false, code: ERROR_CODES.VALIDATION_ERROR, message: 'ID sản phẩm không hợp lệ' });
 		}
 
-		const { page, limit } = asPageLimit(req.query.page, req.query.limit);
-		const { rows: items, total } = await stockLedger.listMovementsOfProduct(id, { page, limit });
+		const { data, meta } = await stockLedger.listMovementsOfProduct(id, asPageLimit(req.query.page, req.query.limit));
 
-		res.json({
-			success: true,
-			data: {
-				items,
-				pagination: { page, pages: Math.ceil(total / limit), total, limit }
-			}
-		});
+		res.json({ success: true, data, meta });
 	} catch (error) {
 		console.error('Stock movements error:', error);
 		res.status(500).json({ success: false, code: ERROR_CODES.INTERNAL_SERVER_ERROR, message: 'Lỗi server khi lấy lịch sử tồn kho' });

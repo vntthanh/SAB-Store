@@ -437,11 +437,11 @@ describe('itemsHistory visibility', () => {
 			.send({ status: 'paid' });
 
 		expect(list.status).toBe(200);
-		expect(list.body.data.orders).toHaveLength(1);
-		expect(list.body.data.orders[0]).not.toHaveProperty('itemsHistory');
+		expect(list.body.data).toHaveLength(1);
+		expect(list.body.data[0]).not.toHaveProperty('itemsHistory');
 		expect(detail.body.data.itemsHistory).toHaveLength(1);
 		expect(sellerList.status).toBe(200);
-		expect(sellerList.body.data.orders[0]).not.toHaveProperty('itemsHistory');
+		expect(sellerList.body.data[0]).not.toHaveProperty('itemsHistory');
 		expect(sellerDetail.status).toBe(200);
 		expect(sellerDetail.body.data.order).not.toHaveProperty('itemsHistory');
 		expect(sellerStatus.status).toBe(200);

@@ -6,6 +6,7 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
 import ChangePassword from '../../components/ChangePassword';
 import { isFinalOrderStatus } from '../../utils/order-status';
+import { describePage } from '../../utils/pagination';
 
 const SellerDashboard = () => {
 	// const [stats, setStats] = useState(null); // Xóa thống kê cho seller
@@ -23,6 +24,7 @@ const SellerDashboard = () => {
 		limit: 10
 	});
 	const [pagination, setPagination] = useState(null);
+	const pageRange = pagination && describePage(pagination);
 
 	// Handle modal close
 	const closeModal = () => {
@@ -39,8 +41,8 @@ const SellerDashboard = () => {
 				const response = await sellerService.getOrders(filters);
 
 				if (response.success) {
-					setOrders(response.data.orders);
-					setPagination(response.data.pagination);
+					setOrders(response.data);
+					setPagination(response.meta);
 				}
 			} catch (error) {
 				console.error('Error fetching orders:', error);
@@ -190,8 +192,8 @@ const SellerDashboard = () => {
 				// Refresh orders list
 				const ordersResponse = await sellerService.getOrders(filters);
 				if (ordersResponse.success) {
-					setOrders(ordersResponse.data.orders);
-					setPagination(ordersResponse.data.pagination);
+					setOrders(ordersResponse.data);
+					setPagination(ordersResponse.meta);
 				}
 			}
 		} catch (error) {
@@ -202,8 +204,8 @@ const SellerDashboard = () => {
 			try {
 				const ordersResponse = await sellerService.getOrders(filters);
 				if (ordersResponse.success) {
-					setOrders(ordersResponse.data.orders);
-					setPagination(ordersResponse.data.pagination);
+					setOrders(ordersResponse.data);
+					setPagination(ordersResponse.meta);
 				}
 			} catch (refreshError) {
 				console.error('Error refreshing orders:', refreshError);
@@ -414,27 +416,25 @@ const SellerDashboard = () => {
 					<div className="bg-gray-50 px-6 py-3 border-t border-gray-200">
 						<div className="flex items-center justify-between">
 							<div className="text-sm text-gray-700">
-								Hiển thị {((pagination.currentPage - 1) * pagination.itemsPerPage) + 1} đến{' '}
-								{Math.min(pagination.currentPage * pagination.itemsPerPage, pagination.totalItems)} trong{' '}
-								{pagination.totalItems} đơn hàng
+								Hiển thị {pageRange.from} đến {pageRange.to} trong {pagination.total} đơn hàng
 							</div>
 
 							<div className="flex space-x-2">
 								<button
-									onClick={() => handlePageChange(pagination.currentPage - 1)}
-									disabled={!pagination.hasPrev}
+									onClick={() => handlePageChange(pagination.page - 1)}
+									disabled={!pageRange.hasPrev}
 									className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									<i className="fas fa-chevron-left"></i>
 								</button>
 
 								<span className="px-3 py-2 text-sm text-gray-700">
-									Trang {pagination.currentPage} / {pagination.totalPages}
+									Trang {pagination.page} / {pagination.totalPages}
 								</span>
 
 								<button
-									onClick={() => handlePageChange(pagination.currentPage + 1)}
-									disabled={!pagination.hasNext}
+									onClick={() => handlePageChange(pagination.page + 1)}
+									disabled={!pageRange.hasNext}
 									className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									<i className="fas fa-chevron-right"></i>

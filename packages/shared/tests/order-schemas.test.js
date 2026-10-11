@@ -139,11 +139,29 @@ describe('orderCreate', () => {
 });
 
 describe('directOrder', () => {
-	it('validates only the displayed total', () => {
+	const OID = '507f1f77bcf86cd799439011';
+
+	it('checks the displayed total and leaves the cart shape to the route', () => {
 		expect(directOrder.safeParse({ expectedTotal: 0 }).success).toBe(true);
 		expect(directOrder.safeParse({ expectedTotal: 0, allowOverMax: true, items: 'ignored' }).success).toBe(true);
+		expect(directOrder.safeParse({ expectedTotal: 0, items: [null, 1, 'x', [{}]] }).success).toBe(true);
+		expect(directOrder.safeParse({ expectedTotal: 0, items: [{ productId: OID, quantity: 0 }] }).success).toBe(true);
 		expect(pairs(errorsOf(directOrder, {}))).toEqual([
 			['expectedTotal', 'Thiếu tổng tiền hiển thị, vui lòng tải lại trang'],
+		]);
+	});
+
+	it('accepts a record id on every line, in either case', () => {
+		const items = [{ productId: OID, quantity: 1 }, { productId: OID.toUpperCase(), quantity: 1 }];
+		expect(directOrder.safeParse({ expectedTotal: 0, items }).success).toBe(true);
+	});
+
+	it('refuses a line whose product id is not a record id, naming the line and echoing the value', () => {
+		const items = [{ productId: OID, quantity: 1 }, { productId: 'nope', quantity: 1 }, { quantity: 1 }, { productId: [OID] }];
+		expect(errorsOf(directOrder, { expectedTotal: 0, items })).toEqual([
+			{ field: 'items[1].productId', message: 'ID sản phẩm không hợp lệ', value: 'nope' },
+			{ field: 'items[2].productId', message: 'ID sản phẩm không hợp lệ' },
+			{ field: 'items[3].productId', message: 'ID sản phẩm không hợp lệ', value: [OID] },
 		]);
 	});
 });

@@ -76,6 +76,21 @@ function duplicateKeyFields(err) {
 const UNKNOWN_KEY_LABEL = 'khoá duy nhất';
 
 /**
+ * True when `err` is a unique-constraint violation on one of the named columns.
+ * A retry loop asks this so it re-draws only for the collision it knows how to
+ * fix; a clash on another column (or one that names no column) is not its to retry.
+ *
+ * @param {unknown} err
+ * @param {...string} fields
+ * @returns {boolean}
+ */
+function isDuplicateKeyOn(err, ...fields) {
+	if (!isDuplicateKeyError(err)) return false;
+	const named = err instanceof DuplicateKeyError ? err.fields : indexFields(err);
+	return named.some((field) => fields.includes(field));
+}
+
+/**
  * The column names a duplicate-key error is about, or none when it does not say.
  * A bulk write reports only the message ("... index: a_1_b_1 dup key: { ... }");
  * an index name is its fields each followed by a direction, so `a_1_b_-1` is a, b.
@@ -89,4 +104,4 @@ function indexFields(err) {
 	return index ? [...index[1].matchAll(/(.+?)_-?\d+(?:_|$)/g)].map((part) => part[1]) : [];
 }
 
-module.exports = { InvalidIdError, DuplicateKeyError, RecordValidationError, isDuplicateKeyError, duplicateKeyFields, indexFields };
+module.exports = { InvalidIdError, DuplicateKeyError, RecordValidationError, isDuplicateKeyError, isDuplicateKeyOn, duplicateKeyFields, indexFields };

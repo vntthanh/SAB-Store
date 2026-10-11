@@ -23,10 +23,10 @@
  * would make its rollback check pass without exercising anything. Armed faults
  * are undone by `remove()` or `vi.restoreAllMocks()` (afterEach).
  * - `failNextMovementInsert`, `failNextStockWrite` and
- *   `failNextOrderInsertAsDuplicateCode` spy on the model the production code
+ *   `failNextOrderInsertAsDuplicateCode` and `failNextOrderInsertAsDuplicateOn` spy on the model the production code
  *   calls, so they must be reimplemented at the repository boundary. The
- *   duplicate-code fault throws the Mongo duplicate-key shape (`code` 11000 on
- *   `orderCode`); the SQL version must throw whatever the repository's
+ *   duplicate faults throw the Mongo duplicate-key shape (`code` 11000 on the
+ *   named index, `orderCode` by default); the SQL version must throw whatever the repository's
  *   duplicate-key translation expects.
  * - `failNextProductInsertAsRetryable` writes the product and then fails the
  *   attempt with the store's retryable-transaction error, so the SQL version
@@ -309,20 +309,22 @@ const failNextPendingMovementScan = (message) => handleOf(vi.spyOn(StockMovement
 }));
 
 /**
- * Makes the next order insert fail as a duplicate order code (the race where
- * two requests pick the same fresh code), then lets later inserts through to
- * the real write.
+ * Makes the next order insert fail as a duplicate on `column` (the race where
+ * two requests pick the same fresh code, or a clash on another unique column),
+ * then lets later inserts through to the real write.
  */
-function failNextOrderInsertAsDuplicateCode() {
+function failNextOrderInsertAsDuplicateOn(column) {
 	let thrown = false;
 	const spy = vi.spyOn(Order.prototype, 'save').mockImplementationOnce(async () => {
 		thrown = true;
-		const error = new Error('E11000 duplicate key error collection: orders index: orderCode_1');
+		const error = new Error(`E11000 duplicate key error collection: orders index: ${column}_1`);
 		error.code = 11000;
 		throw error;
 	});
 	return { ...handleOf(spy), fired: () => thrown };
 }
+
+const failNextOrderInsertAsDuplicateCode = () => failNextOrderInsertAsDuplicateOn('orderCode');
 
 /**
  * Makes the next product insert write its row and then fail with the store's
@@ -391,6 +393,7 @@ module.exports = {
 	failNextPendingMovementScan,
 	failNextStockWrite,
 	failNextOrderInsertAsDuplicateCode,
+	failNextOrderInsertAsDuplicateOn,
 	failNextProductInsertAsRetryable,
 	failProductCatalogReads,
 };

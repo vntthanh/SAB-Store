@@ -7,10 +7,6 @@
  * - Records are plain objects, never store documents or query objects. The id is
  *   `_id`, a string, which is also the public id in the API.
  * - `tx` is opaque: obtain it from `withTransaction` and pass it back unchanged.
- * - Exceptions, still returning hydrated documents: `orders.applyStatusChange`
- *   and `orders.replaceItems`. Their callers serialise the result, and a
- *   document's JSON differs from a plain object's (virtuals, `__v`, subdocument
- *   ids); they are serialised by routes that still read the store directly.
  * - Exceptions, keeping the store's native `_id`: `products.findSellableForPricing`
  *   and `combos.findSellableForPricing`. This store returns its id object
  *   (ObjectId); another backend returns the id as a lowercase 24-hex string.
@@ -23,8 +19,10 @@
  * - `combos.findSellable` keeps nested `categoryRequirements[]._id` as native ids.
  * - Errors: a repository write raises `DuplicateKeyError` (unique constraint),
  *   `RecordValidationError` (schema rule) or `InvalidIdError` (value of the wrong
- *   type, with `path` and `value`) from data/errors.js. Repositories not yet
- *   converted (orders, the merge import) still let the engine's own error through.
+ *   type, with `path` and `value`) from data/errors.js. A retry loop on a unique
+ *   column asks `isDuplicateKeyOn(err, 'column')`, never `err.code`. The merge
+ *   import is the one writer not yet converted and still lets the engine's own
+ *   error through.
  * - A repository that pages returns `{ data, meta: { page, limit, total, totalPages } }`:
  *   the page's rows and the count of every match, for a page and limit the
  *   caller already clamped. `totalPages` is 0 for an empty result.
@@ -38,6 +36,14 @@
  * - Single-record reads that feed a response (`findById`, `create`, `update`)
  *   return complete records with the schema defaults applied; list reads return
  *   the stored fields only.
+ * - Orders: records keep the store's native ids nested in `items[]` (`_id`,
+ *   `productId`, `comboId`), `statusHistory[]` and `createdBy`; only the record's
+ *   own `_id` and an attached product's `_id` are strings. `withProducts: [fields]`
+ *   turns each `items[].productId` into `{ _id, ...fields }`, or `null` for a
+ *   product that no longer exists. `orders.listPage` takes one `sort` entry and
+ *   appends the id as tie-break. `complete: true` applies schema defaults to
+ *   stored fields (`findDetail`, `listPage`); `findByCode`, `create`,
+ *   `updateNotes`, `applyStatusChange` and `replaceItems` always do.
  * - `settings.findStorefront` returns stored values only: missing or NULL means "not
  *   set" and the caller applies the code default; `''` means deliberately hidden.
  *   `findConfig` and `upsertConfig` return the row with the code defaults applied, only

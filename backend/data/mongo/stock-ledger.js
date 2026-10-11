@@ -11,6 +11,7 @@ const mongoose = require('mongoose');
 const Product = require('../../models/Product');
 const StockMovement = require('../../models/StockMovement');
 const { normalizeRecordId } = require('../ids');
+const { toSkipTake, buildPaginationMeta } = require('@sab/shared');
 
 const { MOVEMENT_TYPES } = StockMovement;
 
@@ -236,26 +237,27 @@ async function countPendingByProduct(productIds) {
 
 /**
  * One page of a product's movement history, newest first (ties by id), with the
- * fields the admin history shows. `total` counts every movement of the product.
+ * fields the admin history shows. `meta.total` counts every movement of the product.
  *
  * @param {string} productId
  * @param {{page: number, limit: number}} paging
- * @returns {Promise<{rows: object[], total: number}>}
+ * @returns {Promise<{data: object[], meta: object}>}
  */
 async function listMovementsOfProduct(productId, { page, limit }) {
 	const filter = { productId };
+	const { skip, take } = toSkipTake(page, limit);
 	const [rows, total] = await Promise.all([
 		StockMovement.find(filter)
 			.sort({ createdAt: -1, _id: -1 })
-			.skip((page - 1) * limit)
-			.limit(limit)
+			.skip(skip)
+			.limit(take)
 			.select('type delta target stockAfter status reason createdBy orderId createdAt appliedAt')
 			.lean(),
 		StockMovement.countDocuments(filter)
 	]);
 	return {
-		rows: rows.map((row) => ({ ...row, _id: String(row._id), ...(row.orderId && { orderId: String(row.orderId) }) })),
-		total
+		data: rows.map((row) => ({ ...row, _id: String(row._id), ...(row.orderId && { orderId: String(row.orderId) }) })),
+		meta: buildPaginationMeta(total, { page, limit })
 	};
 }
 

@@ -1,19 +1,20 @@
 const express = require('express');
 const { ORDER_STATUSES } = require('@sab/shared');
-const Order = require('../../models/Order');
+const { orders } = require('../../data');
+const { InvalidIdError, RecordValidationError } = require('../../data/errors');
 const { ERROR_CODES, ERROR_MESSAGES } = require('../../constants/errorCodes');
 const { validateOrderUpdate, validateOrderNotes, validateOrderItemsEdit, trimText, trimStatusText } = require('../../middleware/validation');
 const { editOrderItems } = require('../../services/order-edit');
 const { PricingError, pricingErrorBody } = require('../../services/pricing');
-const { getPaginationInfo } = require('../../utils/helpers');
 const { sendOrderToAppScript } = require('../../utils/appscript');
 const { transitionOrderWithStock } = require('../../services/stock');
 const { enqueueMovements } = require('../../services/stock-ledger');
 const { gated } = require('../../services/write-gate');
-const { asEnum, asSort, safeSearch, asPageLimit } = require('../../utils/query-guard');
+const { asEnum, asSort, asPageLimit } = require('../../utils/query-guard');
 const router = express.Router();
 
 const ORDER_SORTABLE_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode'];
+const SEARCH_FIELDS = ['orderCode', 'studentId', 'fullName', 'email'];
 
 /**
  * @route   GET /api/admin/orders
@@ -24,44 +25,16 @@ router.get('/', async (req, res) => {
 	try {
 		const { page, limit, search, status, sortBy, sortOrder } = req.query;
 
-		const statusFilter = asEnum(status, ORDER_STATUSES);
-		const searchMatch = safeSearch(search);
-
-		const query = {
-			...(statusFilter && { status: statusFilter }),
-			...(searchMatch && {
-				$or: [
-					{ orderCode: searchMatch },
-					{ studentId: searchMatch },
-					{ fullName: searchMatch },
-					{ email: searchMatch }
-				]
-			})
-		};
-
-		const { page: pageNum, limit: limitNum } = asPageLimit(page, limit);
-		const skip = (pageNum - 1) * limitNum;
-		const sortOptions = asSort(sortBy, sortOrder, ORDER_SORTABLE_FIELDS);
-
-		const [orders, total] = await Promise.all([
-			Order.find(query)
-				.sort(sortOptions)
-				.skip(skip)
-				.limit(limitNum)
-				.select('-itemsHistory')
-				.lean(),
-			Order.countDocuments(query)
-		]);
-
-		const pagination = getPaginationInfo(pageNum, limitNum, total);
-
-		res.json({
-			success: true,
-			data: {
-				orders,
-				pagination
-			}
+		const { data, meta } = await orders.listPage({
+			...asPageLimit(page, limit),
+			sort: asSort(sortBy, sortOrder, ORDER_SORTABLE_FIELDS),
+			status: asEnum(status, ORDER_STATUSES),
+			search,
+			searchFields: SEARCH_FIELDS,
+			omit: ['itemsHistory']
 		});
+
+		res.json({ success: true, data, meta });
 
 	} catch (error) {
 		console.error('Error fetching orders:', error);
@@ -79,7 +52,7 @@ router.get('/', async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
 	try {
-		const order = await Order.findById(req.params.id);
+		const order = await orders.findDetail(req.params.id, { complete: true });
 
 		if (!order) {
 			return res.status(404).json({
@@ -96,7 +69,7 @@ router.get('/:id', async (req, res) => {
 	} catch (error) {
 		console.error('Error fetching order:', error);
 
-		if (error.name === 'CastError') {
+		if (error instanceof InvalidIdError) {
 			return res.status(400).json({
 				success: false,
 				message: 'ID đơn hàng không hợp lệ'
@@ -220,18 +193,17 @@ router.put('/:id', validateOrderUpdate, gated(async (req, res) => {
 	} catch (error) {
 		console.error('Error updating order:', error);
 
-		if (error.name === 'CastError') {
+		if (error instanceof InvalidIdError) {
 			return res.status(400).json({
 				success: false,
 				message: 'ID đơn hàng không hợp lệ'
 			});
 		}
 
-		if (error.name === 'ValidationError') {
-			const errorMessages = Object.values(error.errors).map(err => err.message);
+		if (error instanceof RecordValidationError) {
 			return res.status(400).json({
 				success: false,
-				message: errorMessages.join(', ')
+				message: error.message
 			});
 		}
 
@@ -327,17 +299,11 @@ router.patch('/:id/notes', validateOrderNotes, gated(async (req, res) => {
 		const additionalNote = trimText(req.body.additionalNote);
 		const note = trimText(req.body.note);
 
-		const update = {};
-		if (additionalNote !== undefined) update.$set = { additionalNote };
-		if (note !== undefined) {
-			update.$push = { internalNotes: { note, by: req.admin.username, at: new Date() } };
-		}
-
-		const order = await Order.findOneAndUpdate(
-			{ _id: req.params.id },
-			update,
-			{ new: true, runValidators: true }
-		);
+		const order = await orders.updateNotes({
+			orderId: req.params.id,
+			additionalNote,
+			...(note !== undefined && { internalNote: { note, by: req.admin.username, at: new Date() } })
+		});
 
 		if (!order) {
 			return res.status(404).json({
@@ -355,11 +321,10 @@ router.patch('/:id/notes', validateOrderNotes, gated(async (req, res) => {
 	} catch (error) {
 		console.error('Error updating order notes:', error);
 
-		if (error.name === 'ValidationError') {
-			const errorMessages = Object.values(error.errors).map(err => err.message);
+		if (error instanceof RecordValidationError) {
 			return res.status(400).json({
 				success: false,
-				message: errorMessages.join(', ')
+				message: error.message
 			});
 		}
 
@@ -384,7 +349,7 @@ router.delete('/', gated(async (req, res) => {
 		});
 
 		// Count total orders before deletion for reporting
-		const totalCount = await Order.countDocuments();
+		const totalCount = await orders.count();
 
 		if (totalCount === 0) {
 			return res.json({
@@ -400,11 +365,10 @@ router.delete('/', gated(async (req, res) => {
 		console.log(`📊 Found ${totalCount} orders to delete`);
 
 		// Perform bulk deletion
-		const result = await Order.deleteMany({});
+		const result = await orders.deleteAll();
 
 		console.log('✅ Bulk deletion completed:', {
 			deletedCount: result.deletedCount,
-			acknowledged: result.acknowledged,
 			admin: req.admin.username
 		});
 

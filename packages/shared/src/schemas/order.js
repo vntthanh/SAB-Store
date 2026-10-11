@@ -2,6 +2,7 @@ import { z } from '../z.js';
 import { STUDENT_ID_HINT, studentId } from './student-id.js';
 import {
 	arrayElement,
+	isPlainObject,
 	mongoId,
 	nullishAsEmpty,
 	onlyStrings,
@@ -87,10 +88,22 @@ export const orderCreate = z.object({
 	expectedTotal,
 });
 
-// A counter sale. The items and the over-the-limit override are checked by the
-// route and the pricing engine, which answer with their own error shapes;
-// only the displayed total is validated here.
+// A counter sale. Only the product id of each line is checked here, as a record
+// id. The list itself, the quantities and the over-the-limit override are checked
+// by the route and the pricing engine, which answer with their own error shapes,
+// so a line that is not an object is left to them.
+const productIdField = mongoId(PRODUCT_ID_INVALID);
+const directOrderItems = z.unknown().optional().superRefine((items, ctx) => {
+	if (!Array.isArray(items)) return;
+	items.forEach((item, index) => {
+		if (isPlainObject(item) && !productIdField.safeParse(item.productId).success) {
+			ctx.addIssue({ code: 'custom', message: PRODUCT_ID_INVALID, path: [index, 'productId'] });
+		}
+	});
+});
+
 export const directOrder = z.object({
+	items: directOrderItems,
 	expectedTotal,
 	allowOverMax: z.unknown().optional(),
 });

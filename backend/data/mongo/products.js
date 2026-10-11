@@ -153,6 +153,28 @@ async function listPage({ page, limit, search, category, available, salesChannel
 	return { data: rows.map(toRecord), meta: buildPaginationMeta(total, { page, limit }) };
 }
 
+/**
+ * How many products there are, how many are available and the cached stock of
+ * all of them together.
+ *
+ * @returns {Promise<{total: number, active: number, totalStock: number}>}
+ */
+async function summarizeCatalog() {
+	const [stats] = await Product.aggregate([
+		{
+			$group: {
+				_id: null,
+				totalProducts: { $sum: 1 },
+				activeProducts: {
+					$sum: { $cond: [{ $eq: ['$available', true] }, 1, 0] }
+				},
+				totalStock: { $sum: '$stockQuantity' }
+			}
+		}
+	]);
+	return { total: stats?.totalProducts || 0, active: stats?.activeProducts || 0, totalStock: stats?.totalStock || 0 };
+}
+
 /** True when a product with this id exists. */
 async function exists(id) {
 	return Boolean(await Product.exists({ _id: id }));
@@ -214,6 +236,7 @@ module.exports = {
 	listSellable,
 	listCategories,
 	listPage,
+	summarizeCatalog,
 	exists,
 	findById,
 	create,

@@ -1,11 +1,8 @@
 const express = require('express');
 const { ORDER_STATUSES } = require('@sab/shared');
-const Order = require('../models/Order');
-const Product = require('../models/Product');
-const User = require('../models/User');
 const { authenticateSeller } = require('../middleware/better-auth');
 const { validatePasswordChange, validateOrderUpdate, validateDirectOrder, trimStatusText } = require('../middleware/validation');
-const { getPaginationInfo, formatDate, formatCurrency } = require('../utils/helpers');
+const { formatDate, formatCurrency } = require('../utils/helpers');
 const { sendOrderToAppScript } = require('../utils/appscript');
 const { generateDirectSalePaymentQR } = require('../utils/paymentHelper');
 const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError } = require('../services/pricing');
@@ -13,15 +10,20 @@ const { auth } = require('../lib/auth');
 const { recordOrderMovements, transitionOrderWithStock } = require('../services/stock');
 const { enqueueMovements } = require('../services/stock-ledger');
 const { ERROR_CODES, ERROR_MESSAGES } = require('../constants/errorCodes');
-const { withTransaction } = require('../utils/transaction');
+const { orders, products, withTransaction } = require('../data');
+const { isDuplicateKeyOn } = require('../data/errors');
 const { gated } = require('../services/write-gate');
 const { logEvent, orderCreatedFields } = require('../utils/log-event');
-const { asEnum, asSort, asDate, safeSearch, asPageLimit } = require('../utils/query-guard');
+const { asEnum, asSort, asDate, asPageLimit } = require('../utils/query-guard');
 const router = express.Router();
 
 const MAX_ORDER_CODE_ATTEMPTS = 10;
 const WRONG_CURRENT_PASSWORD = 'Mật khẩu hiện tại không đúng';
 const ORDER_SORTABLE_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode', 'orderNumber'];
+const SEARCH_FIELDS = ['orderNumber', 'orderCode', 'fullName', 'studentId', 'email'];
+// Internal notes and the edit history (whole previous item sets) are admin-only.
+const ADMIN_ONLY_FIELDS = ['internalNotes', 'itemsHistory'];
+const PRODUCT_LINE_FIELDS = ['name', 'imageUrl', 'price', 'category'];
 
 // Apply seller authentication to all routes
 router.use(authenticateSeller);
@@ -87,96 +89,34 @@ router.get('/dashboard/stats', async (req, res) => {
 		const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
 		const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-		// Orders statistics
-		const [
-			totalOrders,
-			todayOrders,
-			weekOrders,
-			monthOrders,
-			deliveredOrders,
-			totalRevenue,
-			productStats
-		] = await Promise.all([
-			// Total orders
-			Order.countDocuments(),
-
-			// Today's orders
-			Order.countDocuments({ createdAt: { $gte: startOfToday } }),
-
-			// This week's orders
-			Order.countDocuments({ createdAt: { $gte: startOfWeek } }),
-
-			// This month's orders
-			Order.countDocuments({ createdAt: { $gte: startOfMonth } }),
-
-			// Delivered orders
-			Order.countDocuments({ status: 'delivered' }),
-
-			// Total revenue (from delivered orders)
-			Order.aggregate([
-				{ $match: { status: 'delivered' } },
-				{ $group: { _id: null, total: { $sum: '$totalAmount' } } }
-			]),
-
-			// Product statistics
-			Product.aggregate([
-				{
-					$group: {
-						_id: null,
-						totalProducts: { $sum: 1 },
-						activeProducts: {
-							$sum: { $cond: [{ $eq: ['$available', true] }, 1, 0] }
-						},
-						totalStock: { $sum: '$stockQuantity' }
-					}
-				}
-			])
-		]);
-
-		// Get recent orders
-		const recentOrders = await Order.find()
-			.select('-internalNotes -itemsHistory')
-			.populate('items.productId', 'name imageUrl')
-			.sort({ createdAt: -1 })
-			.limit(5)
-			.lean();
-
-		// Order status distribution
-		const statusDistribution = await Order.aggregate([
-			{
-				$group: {
-					_id: '$status',
-					count: { $sum: 1 }
-				}
-			}
+		const [summary, productStats, recentOrders] = await Promise.all([
+			orders.summarize({ todayFrom: startOfToday, weekFrom: startOfWeek, monthFrom: startOfMonth }),
+			products.summarizeCatalog(),
+			orders.listRecent({ limit: 5, omit: ADMIN_ONLY_FIELDS, withProducts: ['name', 'imageUrl'] })
 		]);
 
 		res.json({
 			success: true,
 			data: {
 				overview: {
-					totalOrders,
-					todayOrders,
-					weekOrders,
-					monthOrders,
-					deliveredOrders,
-					totalRevenue: totalRevenue[0]?.total || 0,
-					deliveryRate: totalOrders > 0 ? Math.round((deliveredOrders / totalOrders) * 100) : 0
+					totalOrders: summary.total,
+					todayOrders: summary.today,
+					weekOrders: summary.week,
+					monthOrders: summary.month,
+					deliveredOrders: summary.delivered,
+					totalRevenue: summary.deliveredRevenue,
+					deliveryRate: summary.total > 0 ? Math.round((summary.delivered / summary.total) * 100) : 0
 				},
-				products: {
-					total: productStats[0]?.totalProducts || 0,
-					active: productStats[0]?.activeProducts || 0,
-					totalStock: productStats[0]?.totalStock || 0
-				},
+				products: productStats,
 				recentOrders: recentOrders.map(order => ({
 					...order,
 					statusText: getStatusInVietnamese(order.status),
 					formattedDate: formatDate(order.createdAt),
 					formattedTotal: formatCurrency(order.totalAmount)
 				})),
-				statusDistribution: statusDistribution.map(item => ({
-					status: item._id,
-					statusText: getStatusInVietnamese(item._id),
+				statusDistribution: summary.byStatus.map(item => ({
+					status: item.status,
+					statusText: getStatusInVietnamese(item.status),
 					count: item.count
 				}))
 			}
@@ -200,70 +140,33 @@ router.get('/orders', async (req, res) => {
 	try {
 		const { page, limit, status, search, startDate, endDate, sortBy, sortOrder } = req.query;
 
-		// Build filter
-		const statusFilter = asEnum(status, ORDER_STATUSES);
-		const searchMatch = safeSearch(search);
-		const filter = {
-			...(statusFilter && { status: statusFilter }),
-			...(searchMatch && {
-				$or: [
-					{ orderNumber: searchMatch },
-					{ orderCode: searchMatch },
-					{ fullName: searchMatch },
-					{ studentId: searchMatch },
-					{ email: searchMatch }
-				]
-			})
-		};
-
 		const gte = asDate(startDate);
 		const lte = asDate(endDate);
-		if (gte || lte) {
-			filter.createdAt = {
-				...(gte && { $gte: gte }),
-				// endDate is a calendar-day boundary from the caller; extend it
-				// to the end of that day so "search up to endDate" is inclusive.
-				...(lte && { $lte: new Date(lte.getTime() + 24 * 60 * 60 * 1000 - 1) })
-			};
-		}
 
-		const { page: pageNum, limit: limitNum } = asPageLimit(page, limit);
-		const sort = asSort(sortBy, sortOrder, ORDER_SORTABLE_FIELDS);
-
-		const options = {
-			page: pageNum,
-			limit: limitNum,
-			sort,
-			select: '-internalNotes -itemsHistory',
-			populate: [
-				{
-					path: 'items.productId',
-					select: 'name imageUrl price category'
-				}
-			]
-		};
-
-		const result = await Order.paginate(filter, options);
-
-		// Format orders for response
-		const formattedOrders = result.docs.map(order => ({
-			...order.toObject(),
-			statusText: getStatusInVietnamese(order.status),
-			formattedDate: formatDate(order.createdAt),
-			formattedTotal: formatCurrency(order.totalAmount)
-		}));
+		const { data, meta } = await orders.listPage({
+			...asPageLimit(page, limit),
+			sort: asSort(sortBy, sortOrder, ORDER_SORTABLE_FIELDS),
+			status: asEnum(status, ORDER_STATUSES),
+			search,
+			searchFields: SEARCH_FIELDS,
+			createdFrom: gte,
+			// endDate is a calendar-day boundary from the caller; extend it
+			// to the end of that day so "search up to endDate" is inclusive.
+			createdTo: lte && new Date(lte.getTime() + 24 * 60 * 60 * 1000 - 1),
+			omit: ADMIN_ONLY_FIELDS,
+			withProducts: PRODUCT_LINE_FIELDS,
+			complete: true
+		});
 
 		res.json({
 			success: true,
-			data: {
-				orders: formattedOrders,
-				pagination: {
-					page: result.page,
-					pages: result.totalPages,
-					total: result.totalDocs,
-					limit: result.limit
-				}
-			}
+			data: data.map(order => ({
+				...order,
+				statusText: getStatusInVietnamese(order.status),
+				formattedDate: formatDate(order.createdAt),
+				formattedTotal: formatCurrency(order.totalAmount)
+			})),
+			meta
 		});
 
 	} catch (error) {
@@ -351,10 +254,7 @@ router.put('/orders/:id/status', validateOrderUpdate, gated(async (req, res) => 
 
 		await enqueueMovements(result.movements);
 
-		// The transaction's session has ended; populate must not reuse it.
-		const transitioned = result.order;
-		transitioned.$session(null);
-		await transitioned.populate('items.productId', 'name imageUrl price');
+		const transitioned = await orders.attachProducts(result.order, ['name', 'imageUrl', 'price']);
 
 		const appscriptData = {
 			orderCode: transitioned.orderCode,
@@ -374,8 +274,7 @@ router.put('/orders/:id/status', validateOrderUpdate, gated(async (req, res) => 
 			});
 		});
 
-		// Internal notes and the edit history (whole previous item sets) are admin-only.
-		const { internalNotes: _adminOnly, itemsHistory: _adminHistory, ...visibleOrder } = transitioned.toObject();
+		const { internalNotes: _adminOnly, itemsHistory: _adminHistory, ...visibleOrder } = transitioned;
 		res.json({
 			success: true,
 			message: 'Cập nhật trạng thái đơn hàng thành công',
@@ -407,10 +306,7 @@ router.get('/orders/:id', async (req, res) => {
 	try {
 		const { id } = req.params;
 
-		const order = await Order.findById(id)
-			.select('-internalNotes -itemsHistory')
-			.populate('items.productId', 'name imageUrl price category')
-			.lean();
+		const order = await orders.findDetail(id, { omit: ADMIN_ONLY_FIELDS, withProducts: PRODUCT_LINE_FIELDS });
 
 		if (!order) {
 			return res.status(404).json({
@@ -479,34 +375,29 @@ router.post('/orders/direct', validateDirectOrder, gated(async (req, res) => {
 
 		// Price, order and stock movements are one transaction; stock is never
 		// checked, so a counter sale for a product with none left goes through.
-		// A duplicate orderNumber / orderCode (E11000) aborts the transaction and
+		// A duplicate orderNumber / orderCode aborts the transaction and
 		// the whole thing runs again: orderNumber is read from the latest order
 		// each time, orderCode is drawn afresh.
 		let created;
 		for (let attempt = 1; !created; attempt++) {
 			try {
-				created = await withTransaction(async (session) => {
+				created = await withTransaction(async (tx) => {
 					const pricing = await computeOrderPricing(items, {
 						channel: 'offline',
-						session,
+						session: tx,
 						enforceQuantityLimits: true,
 						allowOverMax: req.body.allowOverMax === true
 					});
 					assertExpectedTotal(expectedTotal, pricing.totalAmount);
 
-					const lastOrder = await Order.findOne(
-						{ orderNumber: { $regex: /^SAB\d{6}$/ } },
-						{ orderNumber: 1 }
-					).sort({ orderNumber: -1 }).session(session).lean();
-					const nextNumber = lastOrder && lastOrder.orderNumber
-						? parseInt(lastOrder.orderNumber.replace('SAB', ''), 10) + 1
-						: 1;
+					const lastNumber = await orders.latestOrderNumber(tx);
+					const nextNumber = lastNumber ? parseInt(lastNumber.replace('SAB', ''), 10) + 1 : 1;
 
 					// D100000-D999999 (900,000 values); old D#### codes on existing
 					// orders remain valid.
 					const orderCode = `D${String(Math.floor(Math.random() * 900000) + 100000)}`;
 
-					const order = await new Order({
+					const order = await orders.create({
 						orderNumber: `SAB${String(nextNumber).padStart(6, '0')}`,
 						orderCode,
 						// For direct sales, don't include customer data fields
@@ -528,7 +419,7 @@ router.post('/orders/direct', validateDirectOrder, gated(async (req, res) => {
 								note: `Bán vượt số lượng tối đa — xác nhận bởi ${username}`
 							})
 						}]
-					}).save({ session });
+					}, tx);
 
 					const movements = await recordOrderMovements({
 						orderId: order._id,
@@ -537,7 +428,7 @@ router.post('/orders/direct', validateDirectOrder, gated(async (req, res) => {
 						keyTag: 'create',
 						createdBy: username,
 						reason: `Bán trực tiếp ${order.orderCode}`
-					}, { session });
+					}, { tx });
 
 					return { order, pricing, movements };
 				});
@@ -545,8 +436,9 @@ router.post('/orders/direct', validateDirectOrder, gated(async (req, res) => {
 				if (error instanceof PricingError) {
 					return res.status(error.httpStatus).json(pricingErrorBody(error));
 				}
-				if (error.code === 11000 && attempt < MAX_ORDER_CODE_ATTEMPTS) continue;
-				if (error.code === 11000) {
+				const codeCollision = isDuplicateKeyOn(error, 'orderNumber', 'orderCode');
+				if (codeCollision && attempt < MAX_ORDER_CODE_ATTEMPTS) continue;
+				if (codeCollision) {
 					return res.status(500).json({
 						success: false,
 						message: 'Không thể tạo mã đơn hàng duy nhất sau nhiều lần thử'
@@ -570,21 +462,18 @@ router.post('/orders/direct', validateDirectOrder, gated(async (req, res) => {
 			console.error('❌ Failed to generate direct sale QR URL:', qrError.message);
 		}
 
-		// Populate order for response
-		const populatedOrder = await Order.findById(order._id)
-			.select('-internalNotes -itemsHistory')
-			.populate('items.productId', 'name imageUrl')
-			.lean();
+		// Response carries each item's product name and image, as the order screens show them.
+		const orderDetail = await orders.findDetail(order._id, { omit: ADMIN_ONLY_FIELDS, withProducts: ['name', 'imageUrl'] });
 
 		res.status(201).json({
 			success: true,
 			message: 'Tạo đơn hàng bán trực tiếp thành công',
 			data: {
-				...populatedOrder,
+				...orderDetail,
 				comboInfo,
 				qrUrl,
-				statusText: getStatusInVietnamese(populatedOrder.status),
-				formattedTotal: formatCurrency(populatedOrder.totalAmount)
+				statusText: getStatusInVietnamese(orderDetail.status),
+				formattedTotal: formatCurrency(orderDetail.totalAmount)
 			}
 		});
 
