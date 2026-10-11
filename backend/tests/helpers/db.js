@@ -35,14 +35,28 @@
  *   uppercase hex string or a number, for example).
  * - `ensureMovementStore` exists only because Mongo creates a collection on
  *   first insert; it disappears on SQL.
+ * - `failNextProductInsertAsRetryable` and `failProductCatalogReads` are fault
+ *   seams of the same kind as the ones above (handle, `fired()` must be
+ *   asserted). The first writes the product and then fails the attempt with
+ *   the store's retryable-transaction error, so the SQL version must raise
+ *   what the repository treats as a retryable transaction (a serialization
+ *   failure) after the insert. The second makes the catalogue read of
+ *   sellable products throw.
+ * - `settingsDefaults` is not data access: it hands tests the default notice
+ *   and contact values and the notice length limit, which production code
+ *   defines on the settings model today. They move to wherever the settings
+ *   repository keeps them; only this file changes.
+ * - `insertRawSettings` writes the single settings row (there is one per
+ *   store); on SQL it inserts that row with the payment columns only.
  */
 const mongoose = require('mongoose');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
 const Order = require('../../models/Order');
 const StockMovement = require('../../models/StockMovement');
+const Settings = require('../../models/Settings');
 
-const KINDS = { product: Product, combo: Combo, order: Order, movement: StockMovement };
+const KINDS = { product: Product, combo: Combo, order: Order, movement: StockMovement, settings: Settings };
 
 const toObjectId = (id) => new mongoose.Types.ObjectId(String(id));
 
@@ -83,6 +97,11 @@ const findOrder = (id) => findOne(Order, { _id: id });
 const findOrderByCode = (orderCode) => findOne(Order, { orderCode });
 const findMovement = (id) => findOne(StockMovement, { _id: id });
 
+/** Every product, oldest first. */
+async function listProducts() {
+	return plain(await Product.find().sort(byAge).lean());
+}
+
 /** Every order, oldest first. */
 async function listOrders() {
 	return plain(await Order.find().sort(byAge).lean());
@@ -101,11 +120,15 @@ async function stockOf(productId) {
 	return product ? product.stockQuantity : null;
 }
 
-/** Row count of `kind` ('product' | 'combo' | 'order' | 'movement'), optionally narrowed by `filter`. */
-function countRows(kind, filter = {}) {
+function rowsOf(kind) {
 	const Model = KINDS[kind];
-	if (!Model) throw new Error(`countRows: unknown kind "${kind}"`);
-	return Model.countDocuments(toQuery(filter));
+	if (!Model) throw new Error(`unknown row kind "${kind}"`);
+	return Model;
+}
+
+/** Row count of `kind` ('product' | 'combo' | 'order' | 'movement' | 'settings'), optionally narrowed by `filter`. */
+function countRows(kind, filter = {}) {
+	return rowsOf(kind).countDocuments(toQuery(filter));
 }
 
 /**
@@ -123,6 +146,21 @@ const insertRaw = (Model) => async (fields) => {
 const insertRawOrder = insertRaw(Order);
 const insertRawProduct = insertRaw(Product);
 const insertRawCombo = insertRaw(Combo);
+
+/**
+ * The settings row as an older version stored it: the given fields only, no
+ * defaults for fields added since (notices, contact, store title). Same raw,
+ * uncast contract as the other `insertRaw*`. The row key defaults to the one
+ * the application reads; a caller may pass `key` to pin the stored value.
+ */
+const insertRawSettings = (fields) => insertRaw(Settings)({ key: Settings.SETTINGS_KEY, ...fields });
+
+/** Default notice texts, default contact details and the notice length limit that the settings API applies. */
+const settingsDefaults = {
+	notices: Settings.DEFAULT_NOTICES,
+	contact: Settings.DEFAULT_CONTACT,
+	noticeMaxLength: Settings.NOTICE_MAX_LENGTH,
+};
 
 /**
  * Overwrites fields of an existing row without validation, hooks or the
@@ -146,6 +184,18 @@ const unsetOrderField = (id, field) => update(Order, id, { $unset: { [field]: ''
 
 async function deleteProduct(id) {
 	await Product.deleteOne({ _id: id });
+}
+
+// Catalogue kinds only: emptying movements or orders would leave cached stock
+// that no ledger row explains.
+const DELETABLE_KINDS = new Set(['product', 'combo']);
+
+/** Empties every catalogue table of the given kinds (`'product'`, `'combo'`), to start a test from an empty catalogue mid-way. */
+async function deleteAllRows(...kinds) {
+	for (const kind of kinds) {
+		if (!DELETABLE_KINDS.has(kind)) throw new Error(`deleteAllRows: ${kind} is not a catalogue kind`);
+	}
+	await Promise.all(kinds.map((kind) => rowsOf(kind).deleteMany({})));
 }
 
 /**
@@ -210,6 +260,29 @@ function failNextOrderInsertAsDuplicateCode() {
 	return { ...handleOf(spy), fired: () => thrown };
 }
 
+/**
+ * Makes the next product insert write its row and then fail with the store's
+ * retryable-transaction error, so the transaction attempt is rerun from the
+ * start. `fired()` is true once the error was thrown.
+ */
+function failNextProductInsertAsRetryable() {
+	const realSave = Product.prototype.save;
+	let thrown = false;
+	const spy = vi.spyOn(Product.prototype, 'save').mockImplementationOnce(async function (...args) {
+		await realSave.apply(this, args);
+		const error = new mongoose.mongo.MongoServerError({ message: 'transient' });
+		error.addErrorLabel('TransientTransactionError');
+		thrown = true;
+		throw error;
+	});
+	return { ...handleOf(spy), fired: () => thrown };
+}
+
+/** Makes every catalogue read of sellable products throw `message` until `remove()` is called. */
+const failProductCatalogReads = (message) => handleOf(vi.spyOn(Product, 'findSellable').mockImplementation(() => {
+	throw new Error(message);
+}));
+
 module.exports = {
 	newId,
 	findProduct,
@@ -219,6 +292,7 @@ module.exports = {
 	findOrder,
 	findOrderByCode,
 	findMovement,
+	listProducts,
 	listOrders,
 	movements,
 	movementsFor,
@@ -227,12 +301,15 @@ module.exports = {
 	insertRawOrder,
 	insertRawProduct,
 	insertRawCombo,
+	insertRawSettings,
+	settingsDefaults,
 	patchProduct,
 	patchOrder,
 	patchCombo,
 	patchMovement,
 	unsetOrderField,
 	deleteProduct,
+	deleteAllRows,
 	withTransaction,
 	txOptions,
 	isRowId,
@@ -240,4 +317,6 @@ module.exports = {
 	failNextMovementInsert,
 	failNextStockWrite,
 	failNextOrderInsertAsDuplicateCode,
+	failNextProductInsertAsRetryable,
+	failProductCatalogReads,
 };

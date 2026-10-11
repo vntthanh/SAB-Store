@@ -1,5 +1,3 @@
-const Product = require('../../models/Product');
-const Combo = require('../../models/Combo');
 const {
 	findPublicProductByCode,
 	findPublicComboByCode,
@@ -7,8 +5,7 @@ const {
 	ogVersion
 } = require('../../services/public-catalog');
 const { makeProduct, makeCombo } = require('../helpers/factories');
-
-beforeAll(() => Promise.all([Product.init(), Combo.init()]));
+const { findProduct, patchProduct, patchCombo } = require('../helpers/db');
 
 describe('findPublicProductByCode', () => {
 	it('returns a product sellable online, found by a case- and space-insensitive code', async () => {
@@ -37,7 +34,7 @@ describe('toPublicProduct', () => {
 			sku: 'SKU-1', salePrice: 10, tags: ['a'], weight: 3, dimensions: { length: 1 }, stockQuantity: 7
 		});
 
-		const dto = toPublicProduct(await Product.findById(product._id));
+		const dto = toPublicProduct(await findProduct(product._id));
 
 		expect(Object.keys(dto).sort()).toEqual([
 			'_id', 'publicCode', 'slug', 'path', 'name', 'description', 'price', 'imageUrl',
@@ -89,30 +86,16 @@ describe('findPublicComboByCode', () => {
 	});
 });
 
-describe('Combo.findSellable', () => {
-	it('works without a filter and with one, and drops combos of the other channel', async () => {
-		const online = await makeCombo({ salesChannel: 'online' });
-		const offline = await makeCombo({ salesChannel: 'offline' });
-
-		const all = await Combo.findSellable('online');
-		expect(all.map((c) => c._id.toString())).toEqual([online._id.toString()]);
-
-		const filtered = await Combo.findSellable('online', { publicCode: online.publicCode });
-		expect(filtered).toHaveLength(1);
-		expect(await Combo.findSellable('online', { publicCode: offline.publicCode })).toHaveLength(0);
-	});
-});
-
 describe('ogVersion', () => {
 	it('ignores stock and changes with the image', async () => {
 		const product = await makeProduct({ imageUrl: '/uploads/a.jpg' });
-		const before = ogVersion(toPublicProduct(await Product.findById(product._id)));
+		const before = ogVersion(toPublicProduct(await findProduct(product._id)));
 
-		await Product.updateOne({ _id: product._id }, { $set: { stockQuantity: 99 } });
-		expect(ogVersion(toPublicProduct(await Product.findById(product._id)))).toBe(before);
+		await patchProduct(product._id, { stockQuantity: 99 });
+		expect(ogVersion(toPublicProduct(await findProduct(product._id)))).toBe(before);
 
-		await Product.updateOne({ _id: product._id }, { $set: { imageUrl: '/uploads/b.jpg' } });
-		const after = ogVersion(toPublicProduct(await Product.findById(product._id)));
+		await patchProduct(product._id, { imageUrl: '/uploads/b.jpg' });
+		const after = ogVersion(toPublicProduct(await findProduct(product._id)));
 		expect(after).not.toBe(before);
 		expect(after).toMatch(/^[0-9a-f]{8}$/);
 	});
@@ -122,7 +105,7 @@ describe('ogVersion', () => {
 		const combo = await makeCombo({ salesChannel: 'online' });
 		const before = ogVersion(await findPublicComboByCode(combo.publicCode));
 
-		await Combo.updateOne({ _id: combo._id }, { $set: { price: 1 } });
+		await patchCombo(combo._id, { price: 1 });
 		expect(ogVersion(await findPublicComboByCode(combo.publicCode))).toBe(before);
 
 		await makeProduct({ imageUrl: '/uploads/p0.jpg' });

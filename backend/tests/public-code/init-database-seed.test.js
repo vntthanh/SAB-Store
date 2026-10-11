@@ -1,4 +1,4 @@
-const Product = require('../../models/Product');
+const { listProducts } = require('../helpers/db');
 const { PUBLIC_CODE_PATTERN } = require('../../utils/public-code');
 const { initDatabase } = require('../../init-database');
 
@@ -15,7 +15,6 @@ describe('initDatabase seed', () => {
 		process.env.ADMIN_PASSWORD = 'Seed-Admin-Pass-123';
 		delete process.env.INIT_EMPTY_DATABASE;
 		vi.spyOn(console, 'log').mockImplementation(() => {});
-		return Product.init();
 	});
 
 	afterEach(() => {
@@ -29,7 +28,7 @@ describe('initDatabase seed', () => {
 	it('gives every sample product, created by insertMany, a unique code and a slug', async () => {
 		await initDatabase();
 
-		const products = await Product.find({}).lean();
+		const products = await listProducts();
 		expect(products.length).toBeGreaterThan(0);
 		for (const product of products) {
 			expect(product.publicCode).toMatch(PUBLIC_CODE_PATTERN);

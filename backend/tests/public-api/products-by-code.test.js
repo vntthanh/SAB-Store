@@ -1,7 +1,6 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct } = require('../helpers/factories');
-const Product = require('../../models/Product');
 
 const PUBLIC_KEYS = [
 	'_id', 'publicCode', 'slug', 'path', 'name', 'description', 'price', 'imageUrl',
@@ -16,7 +15,6 @@ const withoutTimestamp = (body) => ({ ...body, error: { ...body.error, timestamp
 describe('GET /api/products/by-code/:code and /api/products/:id', () => {
 	let app;
 
-	beforeAll(() => Product.init());
 	beforeEach(() => {
 		app = buildTestApp();
 	});

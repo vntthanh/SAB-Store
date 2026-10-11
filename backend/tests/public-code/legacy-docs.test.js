@@ -7,7 +7,7 @@ const { buildTestApp } = require('../helpers/app');
 const { makeLegacyProduct, makeLegacyCombo } = require('../helpers/factories');
 const { expectedTotalFor } = require('../helpers/pricing');
 const { computeOrderPricing } = require('../../services/pricing');
-const Order = require('../../models/Order');
+const { countRows } = require('../helpers/db');
 
 describe('documents without a public code', () => {
 	let app;
@@ -52,6 +52,6 @@ describe('documents without a public code', () => {
 		});
 
 		expect(res.status).toBe(201);
-		expect(await Order.countDocuments()).toBe(1);
+		expect(await countRows('order')).toBe(1);
 	});
 });

@@ -13,6 +13,7 @@ const { insertRawProduct, insertRawCombo } = require('./db');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
 const Order = require('../../models/Order');
+const Settings = require('../../models/Settings');
 
 let sequence = 0;
 function nextSequence() {
@@ -79,6 +80,13 @@ async function makeOrder(overrides = {}) {
 		...overrides,
 	});
 }
+
+/**
+ * Creates the settings row. The caller supplies the required payment fields
+ * (`bankNameId`, `bankAccountId`); the key and every other field take their
+ * schema defaults.
+ */
+const makeSettings = (fields) => Settings.create(fields);
 
 /**
  * A document the way one written before public codes existed looks: inserted
@@ -156,6 +164,6 @@ async function makeSellerSession(app) {
 }
 
 module.exports = {
-	makeProduct, makeCombo, makeOrder, makeLegacyProduct, makeLegacyCombo,
+	makeProduct, makeCombo, makeOrder, makeSettings, makeLegacyProduct, makeLegacyCombo,
 	createAccount, makeAdminSession, makeSellerSession,
 };
