@@ -18,7 +18,7 @@ const { randomUUID } = require('crypto');
 const request = require('supertest');
 const mongoose = require('mongoose');
 const data = require('../../data');
-const { insertRawProduct, insertRawCombo, insertRawSettings, patchProduct, patchCombo, patchOrder } = require('./db');
+const { insertRawProduct, insertRawSettings, patchProduct, patchCombo, patchOrder } = require('./db');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
 const Order = require('../../models/Order');
@@ -147,17 +147,6 @@ function makeLegacyProduct(overrides = {}) {
 	}).then(asStored);
 }
 
-function makeLegacyCombo(overrides = {}) {
-	const n = nextSequence();
-	return insertRawCombo({
-		name: `Legacy Combo ${n}`,
-		price: 150000,
-		categoryRequirements: [{ category: 'general', quantity: 2 }],
-		isActive: true,
-		...overrides,
-	}).then(asStored);
-}
-
 const TEST_PASSWORD = 'factory-test-password-1';
 
 /**
@@ -203,6 +192,6 @@ async function makeSellerSession(app) {
 }
 
 module.exports = {
-	makeProduct, makeCombo, makeOrder, makeSettings, makeLegacyProduct, makeLegacyCombo,
+	makeProduct, makeCombo, makeOrder, makeSettings, makeLegacyProduct,
 	createAccount, makeAdminSession, makeSellerSession,
 };

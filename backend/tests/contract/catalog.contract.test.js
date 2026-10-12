@@ -1,6 +1,6 @@
 /**
  * The product and combo repositories, run against whichever backend DATA_BACKEND
- * selects (mongo by default; `pnpm test:contract:postgres` runs it on postgres).
+ * selects (postgres by default; `pnpm test:contract:mongo` runs it on the rollback store).
  * Rows are written and re-read through tests/helpers/db.js, so a backend that
  * returns the right records but stores the wrong rows fails here.
  */
@@ -288,6 +288,18 @@ describe('public code and slug', () => {
 
 		expect(error).toBeInstanceOf(RecordValidationError);
 		expect(fieldsOf(error)).toContain('publicCode');
+	});
+
+	it('refuses a supplied code that is not in the code format, for a product and a combo', async () => {
+		const productError = await failure(products.create({ ...VALID_PRODUCT, publicCode: 'nope' }, 0, null));
+		const comboError = await failure(combos.create({ ...VALID_COMBO, publicCode: 'nope' }));
+
+		for (const error of [productError, comboError]) {
+			expect(error).toBeInstanceOf(RecordValidationError);
+			expect(fieldsOf(error)).toContain('publicCode');
+		}
+		expect(await countRows('product')).toBe(0);
+		expect(await countRows('combo')).toBe(0);
 	});
 
 	it('makes the slug follow a rename and keeps it through other edits', async () => {

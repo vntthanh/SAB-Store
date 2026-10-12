@@ -1,8 +1,8 @@
 /**
- * Public code and slug on Postgres. The columns are NOT NULL and unique, so the
- * state the Mongo backfill repairs (a row without a code) cannot exist here: the
- * backfill functions are kept so the one-off tooling runs on either backend, and
- * find nothing to do.
+ * Public code and slug on Postgres. The columns are NOT NULL and unique, so a row
+ * without a code cannot exist here: the repository functions that repair such rows
+ * on Mongo (`listWithoutPublicCode`, `assignMissingPublicCode`, `ensureIndexes`)
+ * keep the same shape for the contract tests and find nothing to do.
  *
  * The draw is looked up on the util module object, not destructured, so a test
  * can stub it as it does on Mongo.
@@ -26,7 +26,7 @@ function drawCodeAndSlug(name, suppliedCode) {
 const slugFor = (name, storedCode) => publicCodeUtil.makeSlug(name, storedCode);
 
 /**
- * The backfill set for one model delegate (`prisma.product`, `prisma.combo`).
+ * The repair set (no-ops here) for one model delegate (`prisma.product`, `prisma.combo`).
  *
  * @param {() => object} delegate resolves the Prisma model delegate
  */

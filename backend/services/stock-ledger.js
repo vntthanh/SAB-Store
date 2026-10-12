@@ -42,7 +42,8 @@ class StockLedgerError extends Error {
 }
 
 // Expected sign of `delta` per type. An `opening` is a baseline, so any value
-// is allowed: it may be zero (no stock) or negative (see the backfill script).
+// is allowed: it may be zero (no stock) or negative (stock may go below zero, and
+// the opening records the figure as found).
 const DELTA_RULES = {
 	opening: () => true,
 	order: (d) => d < 0,
@@ -132,8 +133,8 @@ function buildDocument({ productId, type, delta, target, orderId, reason, create
 
 /**
  * Record an `opening` movement that is already applied, for a product whose
- * stock is established in the same transaction (a new product, or the one-off
- * backfill of existing stock). Does not touch the Product: the caller sets
+ * stock is established in the same transaction (a new product, or an existing
+ * product whose stock is first recorded in the ledger). Does not touch the Product: the caller sets
  * `stockQuantity` to `quantity` itself.
  *
  * `quantity` is the movement's delta; `stockAfter` is the cache value it leaves

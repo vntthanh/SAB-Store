@@ -1,6 +1,6 @@
 /**
  * The stock-ledger contract, run against whichever backend DATA_BACKEND selects
- * (mongo by default; `pnpm test:contract:postgres` runs it on postgres). Every
+ * (postgres by default; `pnpm test:contract:mongo` runs it on the rollback store). Every
  * assertion re-reads the database through tests/helpers/db.js, so a backend that
  * returns the right values but stores the wrong ones fails here.
  */

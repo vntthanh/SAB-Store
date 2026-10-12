@@ -316,8 +316,8 @@ confirmed: set `RATE_LIMIT_ENABLED=true` in `.env`, redeploy backend (step 5, ba
 
 ## Operator scripts
 
-Neither of these ran as part of this hardening pass. Both live in `backend/scripts/` and are
-invoked manually, on the server, by whoever decides to run them.
+Operator scripts live in `backend/scripts/` and are invoked manually, on the server, by whoever
+decides to run them.
 
 ### `backend/scripts/audit-combo-pricing.js` — read-only
 
@@ -327,38 +327,11 @@ instead of a real zero). Issues no writes, prints order codes only, never names 
 IDs.
 
 ```sh
-docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
+# Against the MongoDB this runbook deploys; the backend defaults to PostgreSQL
+# (DATABASE_URL) unless DATA_BACKEND=mongo is set.
+docker exec -e DATA_BACKEND=mongo -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
   node scripts/audit-combo-pricing.js
 ```
-
-### `backend/scripts/backfill-stock-deducted.js` — dry-run by default
-
-Backfills the new `Order.stockDeducted` field on orders created before this field existed,
-using the rule `stockDeducted = (order.isDirectSale === true)` (derivation in the script's
-own header comment). Idempotent — only touches documents missing the field.
-
-```sh
-# Dry run (default, no writes, prints counts only):
-docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
-  node scripts/backfill-stock-deducted.js
-# Apply, only after reviewing the dry-run counts:
-docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
-  node scripts/backfill-stock-deducted.js --apply
-```
-
-### `backend/scripts/backfill-stock-opening.js` — dry-run by default
-
-Records each product's current `stockQuantity` as an applied `opening` stock movement, so the
-ledger sum equals the cached stock from then on. Run once after the first deploy of the stock
-ledger; re-running records nothing. Same `docker exec … [--apply]` pattern as above.
-
-### `backend/scripts/backfill-public-codes.js` — dry-run by default
-
-Gives every product and combo created before public codes existed an 8-character
-`publicCode` and a `slug`, which the share links `/p/<CODE>/<slug>` and `/c/<CODE>/<slug>`
-need. Until it runs, those items have no detail page and the admin "Sao chép link" button is
-disabled. It builds the unique index first and only touches documents without a code, so
-re-running is a no-op. Same `docker exec … [--apply]` pattern as above.
 
 ### Checking a share preview
 

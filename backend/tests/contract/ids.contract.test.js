@@ -1,7 +1,8 @@
 /**
  * Record ids on each backend: the same input rules, and on postgres the legacy
  * 24-hex ids (carts, queued jobs, old backups) map to the uuid the row was
- * migrated under. Run with `pnpm test:contract:postgres` for the postgres half.
+ * migrated under. `pnpm test` runs the postgres half and `pnpm test:contract:mongo`
+ * the mongo half.
  */
 const { objectIdToUuidV7 } = require('@sab/shared');
 const { products } = require('../../data');
