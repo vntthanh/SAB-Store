@@ -1,5 +1,5 @@
 import { z } from '../z.js';
-import { arrayElement, mongoId, wholeNumber } from './primitives.js';
+import { arrayElement, recordId, wholeNumber } from './primitives.js';
 
 const ITEMS_RANGE = 'Danh sách sản phẩm phải có từ 1 đến 100 mục';
 
@@ -15,7 +15,7 @@ export function makeComboItems({ maxUnits }) {
 		items: z
 			.array(
 				arrayElement({
-					productId: mongoId('ID sản phẩm không hợp lệ'),
+					productId: recordId('ID sản phẩm không hợp lệ'),
 					quantity: wholeNumber({ min: 1, max: maxUnits, message: `Số lượng phải từ 1-${maxUnits}` }),
 				}),
 				{ error: ITEMS_RANGE },

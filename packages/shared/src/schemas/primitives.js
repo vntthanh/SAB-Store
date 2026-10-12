@@ -1,4 +1,5 @@
 import { z } from '../z.js';
+import { isRecordId } from '../ids.js';
 
 export const isPlainObject = (value) =>
 	value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -31,8 +32,12 @@ export function wholeNumber({ min, max = Number.MAX_SAFE_INTEGER, message }) {
 	);
 }
 
-const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
-export const mongoId = (message) => z.string({ error: message }).regex(OBJECT_ID, message);
+// A record id as a request carries it: a UUID (the id on Postgres) or a legacy
+// 24-hex id (carts, links and backups made before the move). Which one the store
+// actually accepts is decided behind the validation, by the repository.
+// Case does not matter (a link or cart may carry an uppercase id); the store lowercases it.
+export const recordId = (message) =>
+	z.string({ error: message }).refine((value) => isRecordId(value.toLowerCase()), message);
 
 // An array element that is not an object reports every field of the element,
 // rather than one "expected object" error.

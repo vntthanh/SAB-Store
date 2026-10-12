@@ -2,6 +2,7 @@ const express = require('express');
 const { gated } = require('../services/write-gate');
 const { combos: comboRepo, products: productRepo } = require('../data');
 const { RecordValidationError } = require('../data/errors');
+const { isRecordId } = require('../data/ids');
 const { authenticateAdmin, authenticateSeller, authenticateUser } = require('../middleware/better-auth');
 const { validateComboItems } = require('../middleware/validation');
 const { computeOrderPricing, pricingErrorBody, PricingError } = require('../services/pricing');
@@ -238,8 +239,8 @@ router.put('/:id', authenticateAdmin, gated(async (req, res) => {
 			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
 		}
 
-		// Validate ObjectId format
-		if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+		// The store's own id format (hex or uuid)
+		if (!isRecordId(id)) {
 			return res.status(400).json({
 				success: false,
 				message: 'ID combo không hợp lệ'
@@ -318,8 +319,8 @@ router.delete('/:id', authenticateAdmin, gated(async (req, res) => {
 	try {
 		const { id } = req.params;
 
-		// Validate ObjectId format
-		if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+		// The store's own id format (hex or uuid)
+		if (!isRecordId(id)) {
 			return res.status(400).json({
 				success: false,
 				message: 'ID combo không hợp lệ'
@@ -358,8 +359,8 @@ router.get('/:id', authenticateAdmin, async (req, res) => {
 	try {
 		const { id } = req.params;
 
-		// Validate ObjectId format
-		if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+		// The store's own id format (hex or uuid)
+		if (!isRecordId(id)) {
 			return res.status(400).json({
 				success: false,
 				message: 'ID combo không hợp lệ'

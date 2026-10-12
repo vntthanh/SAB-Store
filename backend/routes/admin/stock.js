@@ -8,6 +8,7 @@
 const express = require('express');
 const { randomUUID } = require('crypto');
 const { products, stockLedger } = require('../../data');
+const { isRecordId } = require('../../data/ids');
 const { asPageLimit } = require('../../utils/query-guard');
 const { ERROR_CODES } = require('../../constants/errorCodes');
 const { recordMovement, enqueueMovements, reconcile } = require('../../services/stock-ledger');
@@ -15,7 +16,6 @@ const { gated } = require('../../services/write-gate');
 
 const router = express.Router();
 
-const OBJECT_ID_PATTERN = /^[0-9a-f]{24}$/i;
 const MODES = ['delta', 'target'];
 const MAX_REASON_LENGTH = 200;
 // Far above any real stock count; only keeps sums well inside safe-integer range.
@@ -46,7 +46,7 @@ function parseAdjustment(body) {
 router.post('/products/:id/stock-adjustments', gated(async (req, res) => {
 	try {
 		const { id } = req.params;
-		if (!OBJECT_ID_PATTERN.test(id)) return invalid(res, 'ID sản phẩm không hợp lệ');
+		if (!isRecordId(id)) return invalid(res, 'ID sản phẩm không hợp lệ');
 
 		const parsed = parseAdjustment(req.body);
 		if (parsed.error) return invalid(res, parsed.error);
@@ -83,7 +83,7 @@ router.post('/products/:id/stock-adjustments', gated(async (req, res) => {
 router.get('/products/:id/stock-movements', async (req, res) => {
 	try {
 		const { id } = req.params;
-		if (!OBJECT_ID_PATTERN.test(id)) {
+		if (!isRecordId(id)) {
 			return res.status(400).json({ success: false, code: ERROR_CODES.VALIDATION_ERROR, message: 'ID sản phẩm không hợp lệ' });
 		}
 

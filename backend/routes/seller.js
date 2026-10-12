@@ -11,7 +11,7 @@ const { recordOrderMovements, transitionOrderWithStock } = require('../services/
 const { enqueueMovements } = require('../services/stock-ledger');
 const { ERROR_CODES, ERROR_MESSAGES } = require('../constants/errorCodes');
 const { orders, products, withTransaction } = require('../data');
-const { isDuplicateKeyOn } = require('../data/errors');
+const { isDuplicateKeyOn, InvalidIdError } = require('../data/errors');
 const { gated } = require('../services/write-gate');
 const { logEvent, orderCreatedFields } = require('../utils/log-event');
 const { asEnum, asSort, asDate, asPageLimit } = require('../utils/query-guard');
@@ -289,6 +289,9 @@ router.put('/orders/:id/status', validateOrderUpdate, gated(async (req, res) => 
 		});
 
 	} catch (error) {
+		if (error instanceof InvalidIdError) {
+			return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ' });
+		}
 		console.error('Update order status error:', error);
 		res.status(500).json({
 			success: false,

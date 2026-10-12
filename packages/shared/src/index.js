@@ -20,7 +20,7 @@ export {
 	onlyStrings,
 	digitStringAsNumber,
 	wholeNumber,
-	mongoId,
+	recordId,
 	arrayElement,
 	optionalText,
 } from './schemas/primitives.js';

@@ -3,6 +3,7 @@ const multer = require('multer');
 const { randomUUID } = require('crypto');
 
 const { asString } = require('../../utils/query-guard');
+const { isRecordId } = require('../../data/ids');
 const { dataSnapshot, products, combos, orders, withTransaction } = require('../../data');
 const { isDuplicateKeyError, duplicateKeyFields, RecordValidationError } = require('../../data/errors');
 const {
@@ -68,8 +69,8 @@ const upload = multer({
  * reference products that no longer exist (populate → null, dashboard
  * `$group` by productId splits). Phase 08's instinct not to trust a
  * client-supplied `_id` is kept, just moved from "discard it" to "validate
- * it" — see `pick()` below, which only accepts a well-formed 24-hex ObjectId
- * string and silently drops anything else, exactly as before.
+ * it" — see `pick()` below, which only accepts a well-formed record id
+ * string (a legacy 24-hex one is accepted on postgres too) and silently drops anything else, exactly as before.
  *
  * `orders` excludes both `_id` (nothing a merge writes references an order's
  * own id) and `totalAmount` — Phase 05 closed the hole where a client sets its
@@ -101,9 +102,6 @@ const IMPORT_WHITELIST = {
 	]
 };
 
-/** A 24-char hex string — the only shape `JSON.stringify`d ObjectId export produces. */
-const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
-
 // A merge import writes business data only. Credential sections are never
 // written; a file that includes one is not silently dropped, its record count
 // is reported back so an admin importing a real backup notices the gap instead
@@ -133,7 +131,7 @@ const KNOWN_IMPORT_SECTIONS = [
  * Keep only whitelisted keys from an untrusted record.
  *
  * `_id` gets special handling: it is accepted only when it is a well-formed
- * 24-hex ObjectId string (see F2 doc comment on IMPORT_WHITELIST above) — a
+ * record id string (see F2 doc comment on IMPORT_WHITELIST above) — a
  * missing/malformed/forged `_id` is silently dropped, same as before this
  * field was ever whitelisted, and Mongo assigns a fresh one.
  *
@@ -148,7 +146,7 @@ function pick(obj, allowed, dropped = []) {
 	for (const key of allowed) {
 		if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
 		if (key === '_id') {
-			if (OBJECT_ID_RE.test(String(obj._id))) {
+			if (isRecordId(String(obj._id))) {
 				out._id = obj._id;
 			} else {
 				dropped.push('_id');

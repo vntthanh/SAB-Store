@@ -278,6 +278,9 @@ router.put('/:id/items', validateOrderItemsEdit, gated(async (req, res) => {
 		if (error instanceof PricingError) {
 			return res.status(error.httpStatus).json(pricingErrorBody(error));
 		}
+		if (error instanceof InvalidIdError) {
+			return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ' });
+		}
 		console.error('Error editing order items:', error);
 		res.status(500).json({
 			success: false,
@@ -320,6 +323,10 @@ router.patch('/:id/notes', validateOrderNotes, gated(async (req, res) => {
 
 	} catch (error) {
 		console.error('Error updating order notes:', error);
+
+		if (error instanceof InvalidIdError) {
+			return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ' });
+		}
 
 		if (error instanceof RecordValidationError) {
 			return res.status(400).json({

@@ -1,5 +1,6 @@
 const express = require('express');
 const { products: productRepo } = require('../data');
+const { isRecordId } = require('../data/ids');
 const { asString } = require('../utils/query-guard');
 const { authenticateSeller } = require('../middleware/better-auth');
 const { findPublicProductByCode, toPublicProduct } = require('../services/public-catalog');
@@ -7,7 +8,6 @@ const { ErrorResponse } = require('../utils/errorResponse');
 const ErrorLogger = require('../utils/errorLogger');
 const router = express.Router();
 
-const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
 
 // One body for every "not public" reason (missing, stopped, counter-only,
 // malformed): a caller must not be able to tell a hidden product from an absent one.
@@ -132,7 +132,7 @@ router.get('/by-code/:code', async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
 	try {
-		if (!OBJECT_ID_PATTERN.test(req.params.id)) return sendProductNotFound(req, res);
+		if (!isRecordId(req.params.id)) return sendProductNotFound(req, res);
 
 		const [product] = await productRepo.findSellable('online', { id: req.params.id });
 		if (!product) return sendProductNotFound(req, res);
