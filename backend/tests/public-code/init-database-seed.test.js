@@ -1,4 +1,4 @@
-const { listProducts, countRows } =require('../helpers/db');
+const { listProducts, countRows } = require('../helpers/db');
 const { PUBLIC_CODE_PATTERN } = require('../../utils/public-code');
 const { initDatabase } = require('../../init-database');
 
@@ -37,9 +37,9 @@ describe('initDatabase seed', () => {
 		expect(new Set(products.map((p) => p.publicCode)).size).toBe(products.length);
 	});
 
-	it('seeds a mixed-case admin once and recognises it on the next run', async () => {
-		// The auth library stores email and username lower-cased; a seed that compared
-		// the raw env value would miss the admin on the second boot and fail creating it.
+	it('seeds a mixed-case admin once and leaves it alone on the next run', async () => {
+		// The second boot finds an admin and must not create another from the raw
+		// env values, whatever case the auth library stored them in.
 		process.env.ADMIN_EMAIL = 'Seed-Admin@Example.com';
 		process.env.ADMIN_USERNAME = 'SeedAdmin';
 

@@ -1,6 +1,6 @@
 /**
- * The active data implementation. `DATA_BACKEND` picks it (`mongo`, the default,
- * or `postgres`), transactions included; an unknown value stops the process at
+ * The active data implementation. `DATA_BACKEND` picks it (`postgres`, the default,
+ * or `mongo`, the rollback store), transactions included; an unknown value stops the process at
  * require time rather than falling back to another store. On `postgres`, ids are
  * UUID strings.
  *
@@ -69,15 +69,18 @@
  *   `orders.existsByCode`, `products.SALES_CHANNELS`, `products.existsByName`,
  *   `combos.exists`, `combos.listNames`, and `dataSnapshot.countRows` (row counts
  *   including the login tables, never their rows).
- * - One-off tooling: `orders.listWithCombo`, `orders.countMissingStockDeducted`,
- *   `orders.backfillStockDeducted`, `products.listIds`, `products.listCategoryById`,
- *   `stockLedger.readOpeningBasis` and the public-code backfill set on `products`
- *   and `combos` (`count`, `listWithoutPublicCode`, `assignMissingPublicCode`,
- *   `ensureIndexes`). The stock-deducted pair exists only for a store where the
- *   field can be absent; a NOT NULL column makes it a no-op. `bootstrap` serves
- *   the first-run seed (`databaseName`, `hasLoginUsers`, `loginUserExists`) and reads
- *   the auth library's login table directly. `databaseName` may be async (postgres
- *   asks the server), so callers `await` it.
+ * - Used by `scripts/audit-combo-pricing.js`: `orders.listWithCombo`,
+ *   `orders.count` and `products.listCategoryById`.
+ * - Repair functions for rows a legacy store can hold and Postgres cannot, kept with
+ *   the same shape on both backends and exercised by the contract tests only:
+ *   `orders.countMissingStockDeducted` and `orders.backfillStockDeducted` (the field
+ *   can be absent on Mongo; a NOT NULL column makes them a no-op), `products.listIds`,
+ *   `stockLedger.readOpeningBasis`, and on `products`
+ *   and `combos` `count`, `listWithoutPublicCode`, `assignMissingPublicCode` and
+ *   `ensureIndexes`. `bootstrap` serves the first-run seed (`databaseName`,
+ *   `hasLoginUsers`, `hasAdmin`) and reads the auth library's login table
+ *   directly. `databaseName` may be async (postgres asks the server), so callers
+ *   `await` it.
  * - `dataSnapshot` moves whole rows in the wire form of data/snapshot.js (ids as
  *   strings, dates as ISO strings; mongo keeps `__v`, postgres has none), unlike the
  *   other repositories. On postgres a restore maps every id of the file, legacy hex

@@ -61,19 +61,66 @@ describe('initDatabase seed guard', () => {
 			expect(await countRows('user')).toBe(0);
 		});
 
-		it('creates the admin when other users exist but the admin does not', async () => {
-			await insertRawUser({ email: 'customer@example.com', username: 'customer', name: 'Customer' });
+		it('creates no user while an admin exists, even when ADMIN_* matches nobody', async () => {
+			// The admin may have renamed the account; a second admin with the
+			// deploy-time password must never appear.
+			await insertRawUser({ email: 'renamed-admin@example.com', username: 'renamed', name: 'Renamed Admin', role: 'admin' });
 
 			await initDatabase();
 
-			expect(await countRows('user', { email: 'init-admin@example.com' })).toBe(1);
+			expect(await countRows('user')).toBe(1);
+			expect(await countRows('user', { email: 'init-admin@example.com' })).toBe(0);
 		});
 
-		it('does not require the opt-in once a user already exists', async () => {
+		it('boots without ADMIN_* while an admin exists', async () => {
+			await insertRawUser({ email: 'renamed-admin@example.com', username: 'renamed', name: 'Renamed Admin', role: 'admin' });
+			delete process.env.ADMIN_EMAIL;
+			delete process.env.ADMIN_USERNAME;
+			delete process.env.ADMIN_PASSWORD;
+
+			await initDatabase();
+
+			expect(await countRows('user')).toBe(1);
+		});
+
+		it('creates the admin from ADMIN_* when only a non-admin user exists, without the opt-in', async () => {
+			// A store that lost its admin recovers from the deploy variables; the store
+			// is not empty, so INIT_EMPTY_DATABASE is not needed.
+			await insertRawUser({ email: 'customer@example.com', username: 'customer', name: 'Customer', role: 'user' });
+
+			await initDatabase();
+
+			expect(await countRows('user')).toBe(2);
+			expect(await countRows('user', { email: 'init-admin@example.com', role: 'admin' })).toBe(1);
+		});
+
+		it('keeps booting without an admin when only a non-admin user exists and ADMIN_* is incomplete', async () => {
+			// Throwing here would crash-loop a store that still serves its users.
+			await insertRawUser({ email: 'customer@example.com', username: 'customer', name: 'Customer', role: 'user' });
+			delete process.env.ADMIN_PASSWORD;
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			await initDatabase();
+
+			expect(await countRows('user')).toBe(1);
+			expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/no admin/));
+			warnSpy.mockRestore();
+		});
+
+		it('requires ADMIN_* to create the first admin', async () => {
+			process.env.INIT_EMPTY_DATABASE = databaseName();
+			delete process.env.ADMIN_PASSWORD;
+
+			await expect(initDatabase()).rejects.toThrow(/required to create the first admin/);
+			expect(await countRows('user')).toBe(0);
+		});
+
+		it('does not require the opt-in once an admin already exists', async () => {
 			await insertRawUser({
 				email: process.env.ADMIN_EMAIL,
 				username: process.env.ADMIN_USERNAME,
 				name: 'Existing Admin',
+				role: 'admin',
 			});
 
 			await initDatabase();

@@ -3,6 +3,7 @@ const { auth } = require('./lib/auth');
 const { bootstrap, settings, products, withTransaction } = require('./data');
 const { recordAppliedOpening } = require('./services/stock-ledger');
 const { withPublicCodeRetry } = require('./utils/public-code');
+const ErrorLogger = require('./utils/errorLogger');
 require('dotenv').config({ quiet: true });
 
 const SEED_CREATED_BY = 'init-database';
@@ -13,19 +14,13 @@ async function initDatabase() {
 	const isProduction = process.env.NODE_ENV === 'production';
 
 	await connectDB();
-	console.log('✅ Connected to MongoDB via Mongoose');
+	console.log('✅ Connected to the database');
 
 	const adminEmail = process.env.ADMIN_EMAIL;
 	const adminUsername = process.env.ADMIN_USERNAME;
 	const adminPassword = process.env.ADMIN_PASSWORD;
 
-	// No fallbacks: a deploy with a missing .env used to silently create an
-	// admin with a well-known password.
-	if (!adminEmail || !adminUsername || !adminPassword) {
-		throw new Error('ADMIN_EMAIL, ADMIN_USERNAME and ADMIN_PASSWORD are all required');
-	}
-
-	// A MONGODB_URI naming the wrong database looks exactly like a fresh
+	// A connection string naming the wrong database looks exactly like a fresh
 	// install. Creating an admin there would silently split production data
 	// across two databases, so a first deploy must opt in by naming the database
 	// it expects. A plain `true` would keep the guard off forever if the flag
@@ -43,11 +38,28 @@ async function initDatabase() {
 		console.warn('⚠️  INIT_EMPTY_DATABASE is set but the database already has users - remove it');
 	}
 
-	if (await bootstrap.loginUserExists({ email: adminEmail, username: adminUsername })) {
-		console.log('⚠️ Existing admin user found');
+	// The admin is seeded only when the store has none, so a store whose admin
+	// account was lost can recover from the deploy variables. While any admin
+	// exists the ADMIN_* variables are never read: an admin renamed in the UI no
+	// longer matches them, and matching by them would mint a second admin with
+	// the deploy-time password on the next boot. The guard above keys on "no
+	// users at all"; a store with only non-admin users is not empty, so it needs
+	// no opt-in.
+	if (await bootstrap.hasAdmin()) {
+		if (adminEmail || adminUsername || adminPassword) {
+			console.info('ADMIN_EMAIL/ADMIN_USERNAME/ADMIN_PASSWORD are only read when the store has no admin');
+		}
+	}
+	else if (!adminEmail || !adminUsername || !adminPassword) {
+		// No fallbacks: a deploy with a missing .env used to silently create an
+		// admin with a well-known password. A store that already serves users keeps
+		// running without an admin rather than crash-looping the whole site.
+		if (!hasUsers) {
+			throw new Error('ADMIN_EMAIL, ADMIN_USERNAME and ADMIN_PASSWORD are all required to create the first admin');
+		}
+		console.warn('⚠️  The store has no admin - set ADMIN_EMAIL, ADMIN_USERNAME and ADMIN_PASSWORD and restart to create one');
 	}
 	else {
-
 		await auth.api.createUser({
 			body: {
 				email: adminEmail,
@@ -129,7 +141,9 @@ if (require.main === module) {
 	initDatabase()
 		.then(() => process.exit(0))
 		.catch((error) => {
-			console.error('❌ Error initializing database:', error);
+			// Through the logger, not console.error(error): driver errors can quote the
+				// connection string, and the logger removes its credentials.
+				ErrorLogger.logCritical('Error initializing database', error, { stage: 'init-database' });
 			process.exit(1);
 		});
 }
