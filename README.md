@@ -4,7 +4,7 @@
 
 ## 🏗️ Kiến trúc hệ thống
 
-- **Backend**: ExpressJS, PostgreSQL (Prisma; production còn chạy MongoDB tới khi cutover), Better-Auth, REST API, gửi email xác nhận, xuất Excel, bảo mật với Helmet, Rate Limit (có nhưng **tắt mặc định**, xem [Cấu hình môi trường](#-cấu-hình-môi-trường)), CORS.
+- **Backend**: ExpressJS, PostgreSQL (Prisma), Better-Auth, REST API, gửi email xác nhận, xuất Excel, bảo mật với Helmet, Rate Limit (có nhưng **tắt mặc định**, xem [Cấu hình môi trường](#-cấu-hình-môi-trường)), CORS.
 - **Frontend**: ReactJS (Vite), React Router v6, Context API, TailwindCSS, React Toastify, SweetAlert2. Build tĩnh, gọi API qua path tương đối `/api` — không cần biến môi trường nào lúc runtime hay build.
 - **Authentication**: Better-Auth với username/password, session management, role-based access control, admin plugin.
 - **Một cổng vào duy nhất**: chỉ `store.sabies.vn` phục vụ cả frontend lẫn `/api/*`; domain `api.store.sabies.vn` riêng đã bị gỡ.
@@ -140,15 +140,15 @@ Không biến nào ở trên từng đúng với code hiện tại — `BETTER_A
 
 Danh sách biến thật, có chú thích tại chỗ giải thích từng biến: [`.env.example`](.env.example) (đọc bởi `docker compose`, ở **root** repo) và [`backend/.env.example`](backend/.env.example) (chỉ dùng khi chạy backend trực tiếp, không qua Docker). Chi tiết + lý do gộp/không gộp: [`docs/ENV_SETUP.md`](docs/ENV_SETUP.md).
 
-Tóm tắt các biến bắt buộc (production, thiếu 1 biến là container **không boot**): `PUBLIC_URL`, `JWT_SECRET`, `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB` (PostgreSQL; `DATABASE_URL` ghép từ chúng, production hiện chỉ đưa cho postgres và release cho tới khi cutover), `REDIS_PASSWORD`, `MONGODB_URI`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD` (MongoDB, store production cho tới khi cutover), `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` (tên `MINIO_*` giữ nguyên vì backend dùng SDK `minio`; giá trị là credential của SeaweedFS, ≥ 16 ký tự, không phải `minioadmin`), `APPSCRIPT_URL`. `ADMIN_EMAIL`/`ADMIN_USERNAME`/`ADMIN_PASSWORD` chỉ đọc để tạo admin đầu tiên khi database chưa có admin (cần đủ cả ba; database chưa có user nào thì thiếu chúng là backend không boot). `CORS_ORIGIN`/`BASE_URL` không set riêng — cả hai nội suy từ `PUBLIC_URL`.
+Tóm tắt các biến bắt buộc (production, thiếu 1 biến là container **không boot**): `PUBLIC_URL`, `JWT_SECRET`, `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB` (PostgreSQL; `DATABASE_URL` ghép từ chúng, chỉ postgres, release và backend nhận), `REDIS_PASSWORD`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD` (MongoDB: Coolify chỉ giữ nó với dữ liệu lúc cutover để rollback; `MONGODB_URI` chỉ `prod.compose.yml` còn cần, vì backend ở đó vẫn chạy trên MongoDB), `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` (tên `MINIO_*` giữ nguyên vì backend dùng SDK `minio`; giá trị là credential của SeaweedFS, ≥ 16 ký tự, không phải `minioadmin`), `APPSCRIPT_URL`. `ADMIN_EMAIL`/`ADMIN_USERNAME`/`ADMIN_PASSWORD` chỉ đọc để tạo admin đầu tiên khi database chưa có admin (cần đủ cả ba; database chưa có user nào thì thiếu chúng là backend không boot). `CORS_ORIGIN`/`BASE_URL` không set riêng — cả hai nội suy từ `PUBLIC_URL`.
 
 ## 🐳 Docker Configuration
 
-Hệ thống sử dụng `compose.yml` (dev) / `prod.compose.yml` (production), không có service `nginx` riêng:
+Hệ thống sử dụng `compose.yml` (dev) / `coolify.compose.yml` (production; `prod.compose.yml` là bản dự phòng cho host không có Coolify), không có service `nginx` riêng:
 
-- **sabstore-postgres**: PostgreSQL, store mặc định của backend (dev đã chạy trên nó; production chuyển sang khi cutover)
+- **sabstore-postgres**: PostgreSQL, database của backend (dev và production trên Coolify)
 - **sabstore-release**: job chạy một lần trước backend — `pg_dump` rồi `prisma migrate deploy`, xong thì thoát
-- **mongodb**: store production hiện tại cho tới khi cutover (trong `compose.yml` chỉ chạy với `--profile legacy`)
+- **mongodb**: dữ liệu lúc cutover, không service nào kết nối trên Coolify; `prod.compose.yml` vẫn dùng nó (trong `compose.yml` chỉ chạy với `--profile legacy`)
 - **sabstore-redis**: hàng đợi stock movement (BullMQ), không phải nguồn sự thật
 - **sabstore-seaweedfs**: Object storage (SeaweedFS, S3 API) cho hình ảnh sản phẩm
 - **backend**: ExpressJS API server (internal port 5000)
@@ -228,7 +228,7 @@ docker compose -f prod.compose.yml up -d
 ### Environment Variables cho Production
 - Set `PUBLIC_URL=https://store.sabies.vn` — `CORS_ORIGIN`/`BASE_URL` tự nội suy theo, không set riêng
 - Dùng secret dài, ngẫu nhiên cho `JWT_SECRET` (không có `BETTER_AUTH_SECRET` trong code)
-- Mọi secret khác (`SAB_PG_PASSWORD`, `REDIS_PASSWORD`, `MONGODB_URI`, `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_PASSWORD`, `APPSCRIPT_URL`) đều bắt buộc — thiếu 1 là container không boot; `ADMIN_*` chỉ cần cho lần tạo admin đầu tiên
+- Mọi secret khác (`SAB_PG_PASSWORD`, `REDIS_PASSWORD`, `MONGODB_URI` (chỉ `prod.compose.yml`), `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_PASSWORD`, `APPSCRIPT_URL`) đều bắt buộc — thiếu 1 là container không boot; `ADMIN_*` chỉ cần cho lần tạo admin đầu tiên
 - HTTPS do NPM (Nginx Proxy Manager) đứng trước xử lý, ngoài phạm vi compose file này
 
 ## 🤝 Contributing

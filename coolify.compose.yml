@@ -35,9 +35,6 @@
 # MongoDB runs as a single-node replica set (`rs0`) because transactions need one; the
 # healthcheck initiates it on first start. The keyfile is written from MONGO_REPLICA_KEY
 # into /etc/mongo, never /tmp (fs.protected_regular crash-loops a restarted container).
-# MONGODB_URI must carry `replicaSet=rs0`. Rollback (together with reverting the backend's
-# replica-set startup check, or it refuses to boot): drop --replSet/--keyFile and the
-# `replicaSet` URI option; mongod then starts standalone on the same data dir.
 # Deploy downtime: Coolify removes EVERY container of the project before `compose up`
 # (even services whose config did not change), so the site is down from the first stop
 # until the new frontend is healthy. Measured on one deploy: ~100 s = 30 s nginx stop +
@@ -53,8 +50,14 @@
 # crash-looped on an invalid base URL and databases that would have been handed a
 # password of `POSTGRES_PASSWORD must be set`. Plain `${VAR}` is used instead; the
 # values come from the platform environment store.
+# The backend's database is PostgreSQL (`sabstore-postgres`); the one-shot
+# `sabstore-release` job dumps it and applies pending migrations before every
+# backend start. MongoDB still runs but nothing connects to it: it holds the data as
+# it was at the cutover. Reverting the cutover commit points the backend back at it,
+# which loses every write made on PostgreSQL since (orders, edits, stock, sessions):
+# only do it before the shop has taken any.
 services:
-  # SAB Store MongoDB Database
+  # SAB Store MongoDB Database (pre-cutover data, no client; see above)
   mongodb:
     image: mongo:6.0.28@sha256:8b6d8f5bbedb25cb73517b65cf99f13aeb75ad5b157a56c479287a840bbad3ac
     cpus: 2
@@ -275,9 +278,7 @@ services:
       # steady-state interval, decides how soon dependants and the proxy see it healthy.
       start_interval: 1s
 
-  # SAB Store PostgreSQL, the store the backend moves to from MongoDB. Until the
-  # cutover the backend stays pinned to MongoDB (DATA_BACKEND below), and only the
-  # release job connects here.
+  # SAB Store PostgreSQL, the backend's database.
   sabstore-postgres:
     image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     cpus: 1
@@ -407,10 +408,11 @@ services:
       # their own copies that can drift apart.
       PUBLIC_URL: ${PUBLIC_URL}
       BASE_URL: ${PUBLIC_URL}
-      # The backend defaults to PostgreSQL; this stack still runs MongoDB until
-      # the cutover switches the store, so the choice is pinned here.
-      DATA_BACKEND: mongo
-      MONGODB_URI: ${MONGODB_URI}
+      DATA_BACKEND: postgres
+      DATABASE_URL: postgresql://${SAB_PG_USER}:${SAB_PG_PASSWORD}@sabstore-postgres:5432/${SAB_PG_DB}
+      # Must stay the value the data was migrated under: the signing key in the
+      # jwks table is encrypted with it, and with any other secret every session
+      # check answers 500.
       JWT_SECRET: ${JWT_SECRET}
       # Optional: read only to create the first admin when the database has none.
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
@@ -433,14 +435,15 @@ services:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
     expose:
       - "5000"
-    # service_started, not service_healthy: start.js retries MongoDB (30 x 2 s) before
-    # it listens and creates the storage bucket in the background after, and Redis is
-    # optional. Waiting for health here only serialised the slowest dependency
-    # (SeaweedFS) in front of the backend and frontend during the window the site is down.
+    # The release job must finish first: the backend refuses to boot while
+    # migrations are pending. The others are service_started, not service_healthy:
+    # start.js creates the storage bucket in the background after it listens, and
+    # Redis is optional. Waiting for health here only serialised the slowest
+    # dependency (SeaweedFS) in front of the backend and frontend during the window
+    # the site is down.
     depends_on:
-      mongodb:
-        condition: service_started
-        restart: true
+      sabstore-release:
+        condition: service_completed_successfully
       sabstore-seaweedfs:
         condition: service_started
         restart: true

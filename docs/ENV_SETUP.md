@@ -28,9 +28,10 @@ instead of silently falling back to `localhost`.
 ## PostgreSQL and credential scoping
 
 PostgreSQL is the backend's default store (`DATA_BACKEND` unset or `postgres`, connection in
-`DATABASE_URL`). The dev stack (`compose.yml`) already runs on it. The production compose files
-(`coolify.compose.yml`, `prod.compose.yml`) run the postgres service and the release job, but
-pin the backend to MongoDB (`DATA_BACKEND: mongo`) until the data cutover.
+`DATABASE_URL`). The dev stack (`compose.yml`) and production (`coolify.compose.yml`) run on it.
+`prod.compose.yml`, the fallback for a host without Coolify, runs the postgres service and the
+release job but still pins the backend to MongoDB (`DATA_BACKEND: mongo`); using it needs the
+same data migration first.
 
 - `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB` are new credentials, never a reused Mongo
   value. The user and database names use only `a-z 0-9 _`; the password is lowercase hex of at
@@ -38,9 +39,9 @@ pin the backend to MongoDB (`DATA_BACKEND: mongo`) until the data cutover.
   `DATABASE_URL`. Otherwise the postgres container exits at start-up with the reason in its log.
 - Only the containers that connect receive them, each listing them explicitly in its
   `environment:`: the postgres service (`POSTGRES_*`), the release job (`DATABASE_URL`) and,
-  once it runs on PostgreSQL (dev today, production after the cutover), the backend
-  (`DATABASE_URL`). The separate `SAB_PG_*` names keep the generic names out of every other container. In Coolify,
-  create them with "Available during build" off, or every build stage receives them as `ARG`.
+  when it runs on PostgreSQL, the backend (`DATABASE_URL`). The separate `SAB_PG_*` names keep
+  the generic names out of every other container. In Coolify, create them with "Available
+  during build" off, or every build stage receives them as `ARG`.
 - `POSTGRES_INITDB_ARGS` (builtin `C.UTF-8` locale, the same as the test databases) only takes
   effect when the data directory is initialised; changing it later does nothing.
 - The release job (`backend/scripts/release.sh`) runs before the backend: it writes a
@@ -48,8 +49,9 @@ pin the backend to MongoDB (`DATA_BACKEND: mongo`) until the data cutover.
   stops it before any migration. The backend refuses to boot while migrations are pending.
 
 The Mongo variables (`MONGO_INITDB_*`, `MONGO_REPLICA_KEY`, `MONGODB_URI`) stay until MongoDB is
-removed after the cutover, for the rollback path only. The Mongo root account still doubles as
-the app's credential there; it retires with MongoDB instead of being split.
+removed, for the rollback path and `prod.compose.yml` only. In Coolify no service receives
+`MONGODB_URI` any more. In `prod.compose.yml` the Mongo root account still doubles as the app's
+credential; it retires with MongoDB instead of being split.
 
 ## Object storage (SeaweedFS)
 
