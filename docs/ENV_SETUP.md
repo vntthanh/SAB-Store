@@ -11,13 +11,13 @@
   source (see the comment at the top of `backend/.env.example`).
 - The frontend needs no `.env` file. It is a static Vite/React bundle that calls the API via
   the relative path `/api` — no build-time or runtime URL variable exists (`VITE_API_URL` was
-  deleted, not renamed; see AD-3 in the hardening plan).
+  deleted, not renamed; the SPA calls the API on its own origin).
 
 Both `.env.example` files are commented in place with what each variable does and why — that
 comment is the source of truth for the current variable list, not this document. Read it
 before copying.
 
-## Why `PUBLIC_URL` (AD-2)
+## Why `PUBLIC_URL`
 
 `CORS_ORIGIN` and `BASE_URL` used to be set independently and had drifted to hold copies of
 the same domain. `prod.compose.yml`/`compose.yml` now derive both from one `PUBLIC_URL`
@@ -25,14 +25,31 @@ the same domain. `prod.compose.yml`/`compose.yml` now derive both from one `PUBL
 and `${PUBLIC_URL:?PUBLIC_URL is required}` makes a missing value fail the container at boot
 instead of silently falling back to `localhost`.
 
-## What was deliberately NOT merged
+## PostgreSQL and credential scoping
 
-`MONGO_INITDB_ROOT_PASSWORD` (the Mongo root account) currently doubles as the application's
-own credential (the password inside `MONGODB_URI`). They read as duplicates but are not the
-same thing — a root credential should not also be the app's day-to-day credential. The root
-`.env.example` carries a `TODO` at the relevant lines: split it into a scoped user
-(`db.createUser()` with `readWrite` on the app database) rather than merging further. Not
-done yet — the user still needs to be created deliberately by an operator with server access.
+PostgreSQL is the backend's default store (`DATA_BACKEND` unset or `postgres`, connection in
+`DATABASE_URL`). The dev stack (`compose.yml`) already runs on it. The production compose files
+(`coolify.compose.yml`, `prod.compose.yml`) run the postgres service and the release job, but
+pin the backend to MongoDB (`DATA_BACKEND: mongo`) until the data cutover.
+
+- `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB` are new credentials, never a reused Mongo
+  value. The user and database names use only `a-z 0-9 _`; the password is lowercase hex of at
+  least 32 characters (`openssl rand -hex 24`) because it is embedded unescaped in
+  `DATABASE_URL`. Otherwise the postgres container exits at start-up with the reason in its log.
+- Only the containers that connect receive them, each listing them explicitly in its
+  `environment:`: the postgres service (`POSTGRES_*`), the release job (`DATABASE_URL`) and,
+  once it runs on PostgreSQL (dev today, production after the cutover), the backend
+  (`DATABASE_URL`). The separate `SAB_PG_*` names keep the generic names out of every other container. In Coolify,
+  create them with "Available during build" off, or every build stage receives them as `ARG`.
+- `POSTGRES_INITDB_ARGS` (builtin `C.UTF-8` locale, the same as the test databases) only takes
+  effect when the data directory is initialised; changing it later does nothing.
+- The release job (`backend/scripts/release.sh`) runs before the backend: it writes a
+  `pg_dump` to the backups volume and then runs `prisma migrate deploy`. A failed or empty dump
+  stops it before any migration. The backend refuses to boot while migrations are pending.
+
+The Mongo variables (`MONGO_INITDB_*`, `MONGO_REPLICA_KEY`, `MONGODB_URI`) stay until MongoDB is
+removed after the cutover, for the rollback path only. The Mongo root account still doubles as
+the app's credential there; it retires with MongoDB instead of being split.
 
 ## Object storage (SeaweedFS)
 
@@ -49,11 +66,17 @@ the variables keep the `MINIO_*` names — the names describe the client, not th
 - `MINIO_ENDPOINT` is fixed to the storage service name in the compose files; a stale value
   left in the platform's environment is ignored.
 
-## `INIT_EMPTY_DATABASE`
+## `ADMIN_*` and `INIT_EMPTY_DATABASE`
+
+`ADMIN_EMAIL`, `ADMIN_USERNAME` and `ADMIN_PASSWORD` are read only when the database has no
+admin, to create the first one, and then all three are needed together. Once an admin exists
+they are ignored and can be removed from the environment. On a database with no users at all
+the backend refuses to boot without them; on one that has users but no admin it boots and
+logs a warning.
 
 In production the backend refuses to initialise a database that has no users, and never
 seeds sample products or placeholder bank accounts. The refusal protects against a
-`MONGODB_URI` that points at a wrong or empty database. For the first production deploy on
+connection string that points at a wrong or empty database. For the first production deploy on
 a genuinely empty database, set `INIT_EMPTY_DATABASE` to that database's name (e.g.
 `INIT_EMPTY_DATABASE=sabstore`), then remove it. The value must match the database the
 backend connects to, so a leftover flag never unlocks a different, mistyped one; the backend
@@ -65,8 +88,8 @@ Settings before opening the store.
 
 ## Before deploying
 
-1. Every secret is `${VAR:?message}` in `prod.compose.yml` — a missing one refuses to boot the
-   container. See `docs/deployment.md` for the full pre-deploy checklist and the correct order
+1. Every secret in `prod.compose.yml` is `${VAR:?message}` — a missing one refuses to boot
+   the container (`ADMIN_*` are not secrets of that kind; see above). See `docs/deployment.md` for the full pre-deploy checklist and the correct order
    to rotate the Mongo password (rotating it in `.env` alone, without first running
    `db.changeUserPassword()` against the live database, is a no-op against an existing data
    volume).

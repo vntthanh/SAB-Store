@@ -558,7 +558,7 @@ const ComboManagement = () => {
 														<ShareButton
 															mode="copy"
 															path={comboPath(combo)}
-															disabledHint="Chưa có mã — chạy backfill"
+															disabledHint="Chưa có mã chia sẻ"
 															className="px-3 py-1 text-xs whitespace-nowrap"
 														/>
 														<button

@@ -1,7 +1,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession } = require('../helpers/factories');
-const User = require('../../models/User');
+const { findUser, countRows } = require('../helpers/db');
 
 // Passwords reach the server through the admin API (create / reset) and the
 // self-service change; each is checked against the length minimum and the
@@ -29,15 +29,15 @@ describe('password policy', () => {
 
 		expect(res.status).toBe(400);
 		expect(res.body.message).toMatch(/ít nhất 8/);
-		expect(await User.findOne({ email: 'short-password@example.com' })).toBeNull();
-		expect(await User.countDocuments({})).toBe(1); // the admin only
+		expect(await findUser({ email: 'short-password@example.com' })).toBeNull();
+		expect(await countRows('user', {})).toBe(1); // the admin only
 	});
 
 	it('rejects the most common leaked password, "123456"', async () => {
 		const res = await createUser('weak-password@example.com', '123456');
 
 		expect(res.status).toBe(400);
-		expect(await User.findOne({ email: 'weak-password@example.com' })).toBeNull();
+		expect(await findUser({ email: 'weak-password@example.com' })).toBeNull();
 	});
 
 	it('accepts a password of exactly the minimum length', async () => {
@@ -58,7 +58,7 @@ describe('password policy', () => {
 		const res = await createUser('common-password@example.com', 'password1'); // 9 chars, in COMMON_PASSWORDS
 
 		expect(res.status).toBe(400);
-		expect(await User.findOne({ email: 'common-password@example.com' })).toBeNull();
+		expect(await findUser({ email: 'common-password@example.com' })).toBeNull();
 	});
 
 	it('rejects a common password on an admin password reset', async () => {
@@ -79,6 +79,6 @@ describe('password policy', () => {
 		const res = await createUser('strong-password@example.com', 'Str0ngPassw0rd!');
 
 		expect(res.status).toBe(200);
-		expect(await User.findOne({ email: 'strong-password@example.com' })).not.toBeNull();
+		expect(await findUser({ email: 'strong-password@example.com' })).not.toBeNull();
 	});
 });

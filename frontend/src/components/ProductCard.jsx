@@ -18,7 +18,7 @@ const ProductCard = ({ product }) => {
 	} = useCart();
 
 	const quantity = getItemQuantity(product._id);
-	// Docs without a public code yet (before backfill) have no detail page to link to.
+	// Legacy records without a public code have no detail page to link to.
 	const detailPath = product.path ?? productPath(product);
 
 	const handleAddToCart = () => {

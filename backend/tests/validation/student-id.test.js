@@ -1,6 +1,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct } = require('../helpers/factories');
+const { listOrders } = require('../helpers/db');
 const { STUDENT_ID_PATTERN } = require('../../utils/student-id');
 
 describe('student ID (MSSV) rule', () => {
@@ -35,8 +36,7 @@ describe('student ID (MSSV) rule', () => {
 			const product = await makeProduct({ price: 50000, salesChannel: 'all' });
 			const res = await request(app).post('/api/orders').send(body(' 26123456 ', String(product._id)));
 			expect(res.status).toBe(201);
-			const Order = require('../../models/Order');
-			expect((await Order.findOne({}).lean()).studentId).toBe('26123456');
+			expect((await listOrders())[0].studentId).toBe('26123456');
 		});
 
 		it('rejects a non-numeric student ID with a clear message', async () => {

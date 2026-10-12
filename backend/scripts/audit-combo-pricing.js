@@ -13,16 +13,17 @@
  * This script only reads. It issues no update, insert or delete, and prints no
  * personal data — order codes only, never names or student IDs.
  *
- * Run on the server, where MONGODB_URI is already set:
- *   docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
- *     node scripts/audit-combo-pricing.js
+ * Run on the server, where the database URL (DATABASE_URL, or MONGODB_URI with
+ * DATA_BACKEND=mongo) is already set:
+ *   docker exec sab-store-backend-1 node scripts/audit-combo-pricing.js
+ *
+ * Connects through lib/database, which applies the same start-up checks as the
+ * server (applied migrations on postgres, a replica set on mongo), read-only
+ * audit included.
  */
 require('dotenv').config({ quiet: true });
-const mongoose = require('mongoose');
-
-const Order = require('../models/Order');
-const Product = require('../models/Product');
-const Combo = require('../models/Combo');
+const { connectDB, closeDB } = require('../lib/database');
+const { orders, products, combos: comboRepo } = require('../data');
 
 // The corrected rule: every requirement must be satisfiable, and the number of
 // applications is the minimum across all of them.
@@ -44,27 +45,16 @@ function comboRefsOf(comboInfo) {
 }
 
 async function main() {
-	const uri = process.env.MONGODB_URI;
-	if (!uri) throw new Error('MONGODB_URI is required');
+	await connectDB();
 
-	await mongoose.connect(uri);
-
-	const orders = await Order.find({
-		$or: [{ 'comboInfo.comboId': { $ne: null } }, { 'comboInfo.combos.0': { $exists: true } }]
-	})
-		.select('orderCode status totalAmount items comboInfo createdAt')
-		.lean();
-
-	const combos = await Combo.find({}).lean();
-	const comboById = new Map(combos.map((c) => [String(c._id), c]));
-
-	const products = await Product.find({}).select('category').lean();
-	const categoryByProduct = new Map(products.map((p) => [String(p._id), p.category]));
+	const withCombo = await orders.listWithCombo();
+	const comboById = new Map((await comboRepo.list()).map((c) => [String(c._id), c]));
+	const categoryByProduct = new Map((await products.listCategoryById()).map((p) => [String(p._id), p.category]));
 
 	const suspect = [];
 	const unverifiable = [];
 
-	for (const order of orders) {
+	for (const order of withCombo) {
 		const refs = comboRefsOf(order.comboInfo);
 		const applied = refs.map((ref) => comboById.get(String(ref.comboId)));
 		if (refs.length === 0 || applied.some((combo) => !combo)) {
@@ -101,12 +91,12 @@ async function main() {
 		}
 	}
 
-	const totalOrders = await Order.countDocuments({});
+	const totalOrders = await orders.count();
 	const understated = suspect.reduce((sum, o) => sum + (o.claimedSavings || 0), 0);
 
 	console.log('--- combo pricing audit (read-only) ---');
 	console.log('orders total:              ', totalOrders);
-	console.log('orders with a combo:       ', orders.length);
+	console.log('orders with a combo:       ', withCombo.length);
 	console.log('combo did NOT qualify:     ', suspect.length);
 	console.log('could not verify:          ', unverifiable.length);
 	console.log('savings granted on those:  ', understated.toLocaleString('vi-VN'), 'VND');
@@ -127,7 +117,7 @@ async function main() {
 	}
 
 	console.log('\nNo data was modified.');
-	await mongoose.disconnect();
+	await closeDB();
 }
 
 if (require.main === module) {

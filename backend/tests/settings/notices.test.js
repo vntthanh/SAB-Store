@@ -1,10 +1,29 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeAdminSession } = require('../helpers/factories');
-const Settings = require('../../models/Settings');
+const { makeAdminSession, makeSettings } = require('../helpers/factories');
+const { insertRawSettings, countRows, settingsDefaults } = require('../helpers/db');
 
-const { SETTINGS_KEY, DEFAULT_NOTICES, NOTICE_MAX_LENGTH } = Settings;
+const { notices: DEFAULT_NOTICES, noticeMaxLength: NOTICE_MAX_LENGTH } = settingsDefaults;
 const PAYMENT_FIELDS = { bankNameId: 'MB', bankAccountId: '0123456789', prefixMessage: 'SAB' };
+
+// The defaults above come from the code under test, so a changed default would
+// pass silently; these literals make it fail here instead.
+describe('notice defaults, pinned', () => {
+	it('keeps the notice length limit and the text of each default', () => {
+		expect(NOTICE_MAX_LENGTH).toBe(5000);
+		expect(DEFAULT_NOTICES.checkoutNotice).toBe([
+			'- Vui lòng kiểm tra kỹ thông tin trước khi xác nhận',
+			'- Sau khi xác nhận, bạn vui lòng quét mã chuyển khoản trong vòng 1 giờ',
+			'- SAB sẽ gửi thông tin xác nhận thanh toán **trong vòng 7 ngày**',
+			'- Thời gian nhận hàng dự kiến từ ngày T4 08/10/2025 đến ngày 19/10/2025 tại **Cơ sở 1 - 227 Nguyễn Văn Cừ, Phường Chợ Quán**'
+		].join('\n'));
+		expect(DEFAULT_NOTICES.eventNotice).toBe([
+			'- Vui lòng kiểm tra kỹ thông tin trước khi xác nhận.',
+			'- Sau khi xác nhận, bạn vui lòng quét mã chuyển khoản trong vòng 1 giờ.'
+		].join('\n'));
+		expect(DEFAULT_NOTICES.paymentNotice).toBe('Để được xử lý nhanh nhất, bạn vui lòng thanh toán trong vòng 1 giờ');
+	});
+});
 
 describe('customer notice settings', () => {
 	let app;
@@ -14,7 +33,7 @@ describe('customer notice settings', () => {
 	});
 
 	it('serves the default notices for a document saved before the fields existed', async () => {
-		await Settings.collection.insertOne({ key: SETTINGS_KEY, ...PAYMENT_FIELDS });
+		await insertRawSettings(PAYMENT_FIELDS);
 
 		const res = await request(app).get('/api/settings');
 
@@ -24,7 +43,7 @@ describe('customer notice settings', () => {
 	// The admin form reads every notice as a string, so this path must fill defaults too.
 	it('reports the default notices to the admin for a document saved before the fields existed', async () => {
 		const { cookies } = await makeAdminSession(app);
-		await Settings.collection.insertOne({ key: SETTINGS_KEY, ...PAYMENT_FIELDS });
+		await insertRawSettings(PAYMENT_FIELDS);
 
 		const res = await request(app).get('/api/admin/settings').set('Cookie', cookies);
 
@@ -87,7 +106,7 @@ describe('customer notice settings', () => {
 
 	it('keeps the current notice when the field is omitted', async () => {
 		const { cookies } = await makeAdminSession(app);
-		await Settings.create({ ...PAYMENT_FIELDS, paymentNotice: 'Kept' });
+		await makeSettings({ ...PAYMENT_FIELDS, paymentNotice: 'Kept' });
 
 		const put = await request(app)
 			.put('/api/admin/settings')
@@ -109,6 +128,6 @@ describe('customer notice settings', () => {
 			.send({ ...PAYMENT_FIELDS, checkoutNotice });
 
 		expect(res.status).toBe(400);
-		expect(await Settings.countDocuments()).toBe(0);
+		expect(await countRows('settings')).toBe(0);
 	});
 });

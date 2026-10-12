@@ -7,14 +7,15 @@
  * in logs and pasted into chats.
  */
 require('dotenv').config({ quiet: true });
+const { backendName } = require('./data/backend-name');
+
+// The store DATA_BACKEND selects decides which connection string is needed.
+const DATABASE_VARIABLE = backendName === 'postgres' ? 'DATABASE_URL' : 'MONGODB_URI';
 
 // Missing any of these means the process cannot serve traffic correctly.
 const REQUIRED = [
-	'MONGODB_URI',
+	DATABASE_VARIABLE,
 	'JWT_SECRET',
-	'ADMIN_EMAIL',
-	'ADMIN_USERNAME',
-	'ADMIN_PASSWORD',
 	'CORS_ORIGIN',
 	// The storage container refuses default or short keys, so there is no
 	// working fallback for these.
@@ -24,11 +25,16 @@ const REQUIRED = [
 
 // Absent values fall back to a working default, so they are reported but not fatal.
 const OPTIONAL = [
+	'DATA_BACKEND',
 	'NODE_ENV',
 	'PORT',
 	'BASE_URL',
 	'APPSCRIPT_URL',
 	'INIT_EMPTY_DATABASE',
+	// Read only to create the first admin in an empty database.
+	'ADMIN_EMAIL',
+	'ADMIN_USERNAME',
+	'ADMIN_PASSWORD',
 	'MINIO_ENDPOINT',
 	'MINIO_PORT',
 	'MINIO_BUCKET_NAME',
@@ -37,7 +43,7 @@ const OPTIONAL = [
 ];
 
 // Names whose values must never be echoed, even in truncated form.
-const SECRET = /SECRET|PASSWORD|KEY|URI|TOKEN/i;
+const SECRET = /SECRET|PASSWORD|KEY|URI|TOKEN|^DATABASE_URL$/i;
 
 function describe(name) {
 	const value = process.env[name];

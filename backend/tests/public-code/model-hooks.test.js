@@ -2,14 +2,16 @@ const publicCode = require('../../utils/public-code');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
 const { makeProduct, makeCombo, makeLegacyProduct } = require('../helpers/factories');
+const { POSTGRES } = require('../helpers/backend');
 
 const { PUBLIC_CODE_PATTERN, makeSlug } = publicCode;
 
-beforeAll(() => Promise.all([Product.init(), Combo.init()]));
+// The models build their indexes through a Mongo connection, which only a mongo run opens.
+beforeAll(() => (POSTGRES ? undefined : Promise.all([Product.init(), Combo.init()])));
 
 describe('publicCode + slug on new documents', () => {
 	it('gives a new product and a new combo a code and a slug', async () => {
-		const product = await Product.create({ name: 'Móc khoá SAB', price: 1000, category: 'general' });
+		const product = await makeProduct({ name: 'Móc khoá SAB', price: 1000, category: 'general' });
 		const combo = await makeCombo({ name: 'Combo Quà Tặng' });
 
 		expect(product.publicCode).toMatch(PUBLIC_CODE_PATTERN);
@@ -18,12 +20,14 @@ describe('publicCode + slug on new documents', () => {
 		expect(combo.slug).toBe('combo-qua-tang');
 	});
 
-	it('rejects a malformed explicit code', async () => {
+	// Skipped on Postgres: writes through the Mongoose model. The repository rejects the same malformed code on both backends in contract/catalog.contract.test.js ("not in the code format").
+	it.skipIf(POSTGRES)('rejects a malformed explicit code', async () => {
 		await expect(Product.create({ name: 'x', price: 1, category: 'g', publicCode: 'nope' })).rejects.toThrow();
 	});
 });
 
-describe('slug follows the current name, the code never changes', () => {
+// Skipped on Postgres: drives Mongoose model hooks (save, findByIdAndUpdate, updateOne); a repository has none. The same rules (slug follows the name, the code never changes) are asserted through the repositories in contract/catalog.contract.test.js.
+describe.skipIf(POSTGRES)('slug follows the current name, the code never changes', () => {
 	it('on save()', async () => {
 		const product = await makeProduct({ name: 'Tên cũ' });
 		const code = product.publicCode;
@@ -74,9 +78,11 @@ describe('slug follows the current name, the code never changes', () => {
 	});
 });
 
-describe('documents written before public codes existed', () => {
+// Skipped on Postgres: raw legacy Mongo documents without a code; public_code is NOT NULL on Postgres, so no such row can exist.
+describe.skipIf(POSTGRES)('documents written before public codes existed', () => {
 	// publicCode is immutable, so a save cannot add it. This pins that fact so
-	// nobody builds on the hook to heal old rows: the backfill does that.
+	// nobody builds on the hook to heal old rows: only the repository's
+	// assignMissingPublicCode writes a code to an existing row.
 	it('stay without a code after save()', async () => {
 		const legacy = await makeLegacyProduct({ name: 'Cũ' });
 		const doc = await Product.findById(legacy._id);

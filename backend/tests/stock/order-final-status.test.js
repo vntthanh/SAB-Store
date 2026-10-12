@@ -1,14 +1,13 @@
 /**
  * Cancelled and delivered orders are final: no route changes their status
- * again, and only notes stay editable. Every assertion re-reads MongoDB.
+ * again, and only notes stay editable. Every assertion re-reads the database.
  */
 const { randomUUID } = require('crypto');
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeAdminSession, makeSellerSession } = require('../helpers/factories');
 const { applyPendingMovements } = require('../helpers/stock');
-const Order = require('../../models/Order');
-const StockMovement = require('../../models/StockMovement');
+const { findOrder, findOrderByCode, countRows } = require('../helpers/db');
 const { recordMovement } = require('../../services/stock-ledger');
 
 const customer = {
@@ -23,8 +22,7 @@ const FINAL_MESSAGE = 'Đơn đã ở trạng thái cuối, chỉ sửa được
 let app;
 let admin;
 
-beforeAll(async () => {
-	await Promise.all([Order.init(), StockMovement.init()]);
+beforeAll(() => {
 	app = buildTestApp();
 });
 
@@ -38,12 +36,12 @@ async function placeOrder(quantity = 2, price = 10000) {
 		.post('/api/orders')
 		.send({ ...customer, items: [{ productId: String(product._id), quantity }], expectedTotal: price * quantity });
 	expect(res.status).toBe(201);
-	const order = await Order.findOne({ orderCode: res.body.data.orderCode });
+	const order = await findOrderByCode(res.body.data.orderCode);
 	await applyPendingMovements();
 	return { order, product };
 }
 
-const movementCount = (product) => StockMovement.countDocuments({ productId: product._id });
+const movementCount = (product) => countRows('movement', { productId: String(product._id) });
 
 async function makeSellerCookies() {
 	return (await makeSellerSession(app)).cookies;
@@ -59,14 +57,14 @@ describe.each([
 		const { order, product } = await placeOrder();
 		expect((await change(order._id, { status: 'cancelled', cancelReason: 'x' })).status).toBe(200);
 		await applyPendingMovements();
-		const before = await Order.findById(order._id).lean();
+		const before = await findOrder(order._id);
 		const movementsBefore = await movementCount(product);
 
 		const res = await change(order._id, { status: target });
 
 		expect(res.status).toBe(409);
 		expect(res.body).toMatchObject({ code: 'ORDER_FINAL', message: FINAL_MESSAGE });
-		expect(await Order.findById(order._id).lean()).toEqual(before);
+		expect(await findOrder(order._id)).toEqual(before);
 		expect(await movementCount(product)).toBe(movementsBefore);
 	});
 
@@ -79,9 +77,9 @@ describe.each([
 
 		expect(res.status).toBe(409);
 		expect(res.body.code).toBe('ORDER_FINAL');
-		expect(await Order.findById(order._id).lean()).toMatchObject({ status: 'delivered', stockDeducted: true });
+		expect(await findOrder(order._id)).toMatchObject({ status: 'delivered', stockDeducted: true });
 		expect(await movementCount(product)).toBe(movementsBefore);
-		expect(await StockMovement.countDocuments({ productId: product._id, type: 'order_cancel' })).toBe(0);
+		expect(await countRows('movement', { productId: String(product._id), type: 'order_cancel' })).toBe(0);
 	});
 
 	it('answers cancelled -> cancelled with ORDER_FINAL, not "already in this status"', async () => {
@@ -106,7 +104,7 @@ describe.each([
 		expect((await change(paid._id, { status: 'paid' })).status).toBe(200);
 		expect((await change(paid._id, { status: 'cancelled', cancelReason: 'x' })).status).toBe(200);
 
-		const statuses = await Promise.all([counter, web, paid].map(async (o) => (await Order.findById(o._id).lean()).status));
+		const statuses = await Promise.all([counter, web, paid].map(async (o) => (await findOrder(o._id)).status));
 		expect(statuses).toEqual(['delivered', 'delivered', 'cancelled']);
 	});
 });
@@ -120,14 +118,14 @@ describe('PATCH /api/admin/orders/:id/notes', () => {
 		await request(app).put(`/api/admin/orders/${order._id}`).set('Cookie', admin.cookies)
 			.send({ status: 'cancelled', cancelReason: 'x' });
 		await applyPendingMovements();
-		const before = await Order.findById(order._id).lean();
+		const before = await findOrder(order._id);
 		const movementsBefore = await movementCount(product);
 
 		const res = await patch(order._id, { additionalNote: '  giao sau 5h  ', note: 'khách gọi lại' });
 
 		expect(res.status).toBe(200);
 		expect(res.body.success).toBe(true);
-		const after = await Order.findById(order._id).lean();
+		const after = await findOrder(order._id);
 		expect(after.additionalNote).toBe('giao sau 5h');
 		expect(after.internalNotes).toHaveLength(1);
 		expect(after.internalNotes[0]).toMatchObject({ note: 'khách gọi lại', by: admin.username });
@@ -146,7 +144,7 @@ describe('PATCH /api/admin/orders/:id/notes', () => {
 		const res = await patch(order._id, { additionalNote: '', note: 'two' });
 
 		expect(res.status).toBe(200);
-		const after = await Order.findById(order._id).lean();
+		const after = await findOrder(order._id);
 		expect(after.additionalNote).toBe('');
 		expect(after.internalNotes.map((n) => n.note)).toEqual(['one', 'two']);
 	});
@@ -166,19 +164,19 @@ describe('PATCH /api/admin/orders/:id/notes', () => {
 		}
 		expect((await patch('not-an-id', { note: 'x' })).status).toBe(400);
 
-		const after = await Order.findById(order._id).lean();
+		const after = await findOrder(order._id);
 		expect(after.internalNotes).toHaveLength(0);
 		expect(after.status).toBe('confirmed');
 	});
 
 	it('ignores fields other than the two notes', async () => {
 		const { order } = await placeOrder();
-		const before = await Order.findById(order._id).lean();
+		const before = await findOrder(order._id);
 
 		const res = await patch(order._id, { note: 'ok', status: 'cancelled', totalAmount: 1, stockDeducted: false });
 
 		expect(res.status).toBe(200);
-		const after = await Order.findById(order._id).lean();
+		const after = await findOrder(order._id);
 		expect(after).toMatchObject({ status: before.status, totalAmount: before.totalAmount, stockDeducted: true });
 		expect(after.internalNotes).toHaveLength(1);
 	});
@@ -189,7 +187,7 @@ describe('PATCH /api/admin/orders/:id/notes', () => {
 
 		expect((await patch(order._id, { note: 'x' }, sellerCookies)).status).toBe(403);
 		expect((await request(app).patch(`/api/admin/orders/${order._id}/notes`).send({ note: 'x' })).status).toBe(401);
-		expect((await Order.findById(order._id).lean()).internalNotes).toHaveLength(0);
+		expect((await findOrder(order._id)).internalNotes).toHaveLength(0);
 	});
 });
 
@@ -198,7 +196,7 @@ describe('internal notes stay admin-only', () => {
 		const { order } = await placeOrder();
 		await request(app).patch(`/api/admin/orders/${order._id}/notes`).set('Cookie', admin.cookies)
 			.send({ note: 'secret-internal-note' });
-		expect((await Order.findById(order._id).lean()).internalNotes).toHaveLength(1);
+		expect((await findOrder(order._id)).internalNotes).toHaveLength(1);
 
 		const detail = await request(app).get(`/api/seller/orders/${order._id}`).set('Cookie', admin.cookies);
 		const list = await request(app).get('/api/seller/orders').set('Cookie', admin.cookies);

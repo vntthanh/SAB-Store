@@ -1,6 +1,4 @@
 const { betterAuth } = require("better-auth");
-const { MongoClient } = require("mongodb");
-const { mongodbAdapter } = require("better-auth/adapters/mongodb");
 const { admin, openAPI } = require("better-auth/plugins");
 const { username } = require("better-auth/plugins");
 const { jwt } = require("better-auth/plugins");
@@ -8,12 +6,10 @@ const { customSession } = require("better-auth/plugins");
 const { createAuthMiddleware, APIError } = require("better-auth/api");
 const { COMMON_PASSWORDS } = require("../utils/passwordValidator");
 const { buildTrustedProxies, toCidrs } = require("./trusted-proxies");
+const { isUuid } = require("@sab/shared");
+const { backendName } = require("../data/backend-name");
 
-// Get MongoDB URI from environment variables
-const MONGODB_URI = process.env.MONGODB_URI;
-if (!MONGODB_URI) {
-	throw new Error('MONGODB_URI environment variable is required');
-}
+const POSTGRES = backendName === 'postgres';
 
 // Session signing secret. Better-auth only hard-fails on its own DEFAULT_SECRET,
 // so a committed placeholder would boot silently with a publicly known key.
@@ -25,13 +21,39 @@ if (/change-this|your-super-secret|secret-key-here|changeme/i.test(JWT_SECRET)) 
 	throw new Error('JWT_SECRET is still a placeholder value; set a real secret');
 }
 
-// Create MongoDB connection
-const client = new MongoClient(MONGODB_URI);
-const db = client.db();
+// The login tables live in whichever store the data layer runs on. Each branch
+// loads only its own driver, so a process never opens the store it does not use.
+// Better Auth hands out ObjectId-shaped ids on mongo; on postgres the id columns
+// are native uuid, which refuses anything else (22P02), so ids are minted here.
+function createStorage() {
+	if (POSTGRES) {
+		const { prismaAdapter } = require("better-auth/adapters/prisma");
+		const { v7: uuidv7 } = require("uuid");
+		const { prisma, closeDb } = require("./prisma");
+		return {
+			database: prismaAdapter(prisma, { provider: "postgresql" }),
+			generateId: () => uuidv7(),
+			close: closeDb,
+		};
+	}
+	const MONGODB_URI = process.env.MONGODB_URI;
+	if (!MONGODB_URI) {
+		throw new Error('MONGODB_URI environment variable is required');
+	}
+	const { MongoClient } = require("mongodb");
+	const { mongodbAdapter } = require("better-auth/adapters/mongodb");
+	const client = new MongoClient(MONGODB_URI);
+	return {
+		database: mongodbAdapter(client.db()),
+		close: () => client.close(),
+	};
+}
+
+const storage = createStorage();
 
 // Origins allowed to hold a session cookie against this API. CORS_ORIGIN is
-// the single source of truth (Phase 03 derives it from PUBLIC_URL at the
-// compose layer) — no domain is ever hardcoded here, so this stays correct
+// the single source of truth (the compose layer derives it from PUBLIC_URL)
+// — no domain is ever hardcoded here, so this stays correct
 // regardless of which domain currently fronts production. server.js reuses
 // this same function for CORS and CSP so there is exactly one list.
 function getAllowedOrigins() {
@@ -54,11 +76,12 @@ const PASSWORD_FIELD_BY_PATH = {
 };
 
 const auth = betterAuth({
-	database: mongodbAdapter(db),
+	database: storage.database,
 	baseURL: process.env.BASE_URL || "http://localhost:5000",
 	secret: JWT_SECRET,
 	trustedOrigins: getAllowedOrigins(),
 	advanced: {
+		...(storage.generateId && { database: { generateId: storage.generateId } }),
 		// Better Auth refuses a multi-hop X-Forwarded-For unless told which hops to
 		// trust (the leftmost entry is client-controlled) and would key every
 		// request into one shared rate-limit bucket. With the list, the chain is
@@ -86,6 +109,15 @@ const auth = betterAuth({
 	// password gets the same defense ("123456" is its first entry).
 	hooks: {
 		before: createAuthMiddleware(async (ctx) => {
+			// A user id that is not a uuid reaches the native uuid column and fails there
+			// (22P02) as an empty 500; Mongo answers the same request with a 404. A legacy
+			// 24-hex id is refused too: the admin page only sends ids it got from list-users.
+			if (POSTGRES && ctx.path.startsWith("/admin/")) {
+				const ids = [ctx.body?.userId, ctx.path === "/admin/get-user" ? ctx.query?.id : undefined];
+				if (ids.some((id) => id !== undefined && !isUuid(id))) {
+					throw new APIError("BAD_REQUEST", { message: "Mã người dùng không hợp lệ" });
+				}
+			}
 			const passwordField = PASSWORD_FIELD_BY_PATH[ctx.path];
 			if (!passwordField) {
 				return;
@@ -169,7 +201,9 @@ const auth = betterAuth({
 	},
 });
 
-// Exposed so a caller that owns process shutdown (tests/setup.js) can close this
-// connection explicitly: better-auth never exposes it, and an open handle keeps
+// Exposed so a caller that owns process shutdown (tests/setup.js) can close what
+// auth opened: better-auth never exposes its connection, and an open handle keeps
 // the test worker alive after the last test.
-module.exports = { auth, getAllowedOrigins, client };
+const closeAuth = storage.close;
+
+module.exports = { auth, getAllowedOrigins, closeAuth };

@@ -25,7 +25,17 @@ const ERROR_CODES = {
 	COMBO_ERROR: 'COMBO_ERROR',
 	AUTH_ERROR: 'AUTH_ERROR',
 	RATE_LIMIT_ERROR: 'RATE_LIMIT_ERROR',
-	CORS_ERROR: 'CORS_ERROR'
+	CORS_ERROR: 'CORS_ERROR',
+	NO_FILE: 'NO_FILE',
+	RESTORE_CONFIRMATION_REQUIRED: 'RESTORE_CONFIRMATION_REQUIRED',
+	RESTORE_FORMAT_UNSUPPORTED: 'RESTORE_FORMAT_UNSUPPORTED',
+	RESTORE_FILE_INVALID: 'RESTORE_FILE_INVALID',
+	RESTORE_STOCK_MISMATCH: 'RESTORE_STOCK_MISMATCH',
+	RESTORE_IN_PROGRESS: 'RESTORE_IN_PROGRESS',
+	RESTORE_ERROR: 'RESTORE_ERROR',
+	RESTORE_BUSY: 'RESTORE_BUSY',
+	STORE_RESTORING: 'STORE_RESTORING',
+	EXPORT_TOO_LARGE: 'EXPORT_TOO_LARGE'
 };
 
 const ERROR_MESSAGES = {
@@ -136,6 +146,46 @@ const ERROR_MESSAGES = {
 	[ERROR_CODES.CORS_ERROR]: {
 		vi: 'Lỗi CORS',
 		en: 'CORS error'
+	},
+	[ERROR_CODES.NO_FILE]: {
+		vi: 'Chưa chọn file',
+		en: 'No file uploaded'
+	},
+	[ERROR_CODES.RESTORE_CONFIRMATION_REQUIRED]: {
+		vi: 'Cần nhập đúng cụm xác nhận để khôi phục',
+		en: 'The confirmation phrase is missing or wrong'
+	},
+	[ERROR_CODES.RESTORE_FORMAT_UNSUPPORTED]: {
+		vi: 'File này không dùng để khôi phục được. Hãy dùng chức năng Nhập Database (gộp dữ liệu), hoặc xuất một bản sao lưu mới rồi khôi phục từ đó',
+		en: 'This file is not a restorable backup; use the merge import instead'
+	},
+	[ERROR_CODES.RESTORE_FILE_INVALID]: {
+		vi: 'File sao lưu không hợp lệ, chưa có dữ liệu nào bị thay đổi',
+		en: 'The backup file is invalid; nothing was changed'
+	},
+	[ERROR_CODES.RESTORE_STOCK_MISMATCH]: {
+		vi: 'Tồn kho trong file không khớp với lịch sử nhập xuất, chưa có dữ liệu nào bị thay đổi',
+		en: 'Stock in the file does not match its ledger; nothing was changed'
+	},
+	[ERROR_CODES.RESTORE_IN_PROGRESS]: {
+		vi: 'Một lượt khôi phục khác đang chạy, vui lòng chờ',
+		en: 'Another restore is already running'
+	},
+	[ERROR_CODES.RESTORE_ERROR]: {
+		vi: 'Khôi phục thất bại, dữ liệu hiện tại được giữ nguyên',
+		en: 'Restore failed; current data is unchanged'
+	},
+	[ERROR_CODES.RESTORE_BUSY]: {
+		vi: 'Hệ thống còn thao tác ghi đang chạy nên chưa khôi phục được, vui lòng thử lại sau ít phút',
+		en: 'Writes are still in flight; restore did not start'
+	},
+	[ERROR_CODES.STORE_RESTORING]: {
+		vi: 'Hệ thống đang khôi phục dữ liệu, vui lòng thử lại sau ít phút',
+		en: 'The store is being restored, please retry in a few minutes'
+	},
+	[ERROR_CODES.EXPORT_TOO_LARGE]: {
+		vi: 'Bản sao lưu vượt quá giới hạn 10MB nên không thể khôi phục lại được, vì vậy không tạo file. Hãy liên hệ người quản trị hệ thống',
+		en: 'The backup exceeds the 10MB restore limit, so it was not produced'
 	}
 };
 
@@ -152,7 +202,8 @@ const HTTP_STATUS = {
 	TOO_MANY_REQUESTS: 429,
 	INTERNAL_SERVER_ERROR: 500,
 	BAD_GATEWAY: 502,
-	SERVICE_UNAVAILABLE: 503
+	SERVICE_UNAVAILABLE: 503,
+	PAYLOAD_TOO_LARGE: 413
 };
 
 const ERROR_CODE_TO_HTTP_STATUS = {
@@ -182,7 +233,17 @@ const ERROR_CODE_TO_HTTP_STATUS = {
 	[ERROR_CODES.COMBO_ERROR]: HTTP_STATUS.UNPROCESSABLE_ENTITY,
 	[ERROR_CODES.AUTH_ERROR]: HTTP_STATUS.UNAUTHORIZED,
 	[ERROR_CODES.RATE_LIMIT_ERROR]: HTTP_STATUS.TOO_MANY_REQUESTS,
-	[ERROR_CODES.CORS_ERROR]: HTTP_STATUS.FORBIDDEN
+	[ERROR_CODES.CORS_ERROR]: HTTP_STATUS.FORBIDDEN,
+	[ERROR_CODES.NO_FILE]: HTTP_STATUS.BAD_REQUEST,
+	[ERROR_CODES.RESTORE_CONFIRMATION_REQUIRED]: HTTP_STATUS.BAD_REQUEST,
+	[ERROR_CODES.RESTORE_FORMAT_UNSUPPORTED]: HTTP_STATUS.BAD_REQUEST,
+	[ERROR_CODES.RESTORE_FILE_INVALID]: HTTP_STATUS.BAD_REQUEST,
+	[ERROR_CODES.RESTORE_STOCK_MISMATCH]: HTTP_STATUS.BAD_REQUEST,
+	[ERROR_CODES.RESTORE_IN_PROGRESS]: HTTP_STATUS.CONFLICT,
+	[ERROR_CODES.RESTORE_ERROR]: HTTP_STATUS.INTERNAL_SERVER_ERROR,
+	[ERROR_CODES.RESTORE_BUSY]: HTTP_STATUS.SERVICE_UNAVAILABLE,
+	[ERROR_CODES.STORE_RESTORING]: HTTP_STATUS.SERVICE_UNAVAILABLE,
+	[ERROR_CODES.EXPORT_TOO_LARGE]: HTTP_STATUS.PAYLOAD_TOO_LARGE
 };
 
 module.exports = {

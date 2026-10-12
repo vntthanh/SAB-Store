@@ -41,8 +41,8 @@ const StockMovementsTable = ({ productId, refreshKey = 0 }) => {
 			try {
 				const response = await getStockMovements(productId, { page, limit: PAGE_SIZE });
 				if (cancelled) return;
-				setItems(response.data?.items || []);
-				setPagination(response.data?.pagination || null);
+				setItems(response.data || []);
+				setPagination(response.meta || null);
 			} catch (error) {
 				if (!cancelled) toast.error(error.message);
 			} finally {
@@ -55,7 +55,7 @@ const StockMovementsTable = ({ productId, refreshKey = 0 }) => {
 		};
 	}, [productId, page, refreshKey]);
 
-	const totalPages = pagination?.totalPages ?? pagination?.pages ?? 1;
+	const totalPages = pagination?.totalPages || 1;
 
 	return (
 		<div>

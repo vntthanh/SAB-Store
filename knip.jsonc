@@ -14,21 +14,29 @@
 	"ignoreIssues": {
 		// knip does not follow CommonJS consumers that reach an export through a
 		// namespace or static member (`stockQueue.sweepOnce()`, `Settings.NOTICE_FIELDS`,
-		// `vi.spyOn(minio, 'getFile')`, `ledger.CRITICAL_AFTER_ATTEMPTS`), so
+		// `vi.spyOn(minio, 'getFile')`, `ledger.CRITICAL_AFTER_ATTEMPTS`, `postgres.truncateAll()`), so
 		// these files report exports that are in fact used.
 		"backend/queues/stock-queue.js": ["exports"],
 		"backend/models/Settings.js": ["exports"],
 		"backend/models/StockMovement.js": ["exports"],
 		"backend/lib/minio.js": ["exports"],
 		"backend/services/stock-ledger.js": ["exports"],
-		"backend/utils/public-code.js": ["exports"]
+		// The repositories are reached through the `data` index (`stockLedger.claimForApply()`).
+		"backend/data/mongo/*.js": ["exports"],
+		"backend/data/postgres/*.js": ["exports"],
+		"backend/utils/public-code.js": ["exports"],
+		"backend/tests/helpers/postgres.js": ["exports"],
+		"backend/lib/prisma.js": ["exports"]
 	},
 	"workspaces": {
 		".": {},
 		"backend": {
 			// Operational scripts are run by hand (`node scripts/x.js`), never imported.
 			"entry": ["scripts/*.js"],
-			"project": ["**/*.js", "!uploads/**"]
+			"project": ["**/*.{js,prisma}", "!uploads/**"],
+			// The generated Prisma client (generated/prisma) requires it at runtime;
+			// the generated code is not part of the analysed project.
+			"ignoreDependencies": ["@prisma/client-runtime-utils"]
 		},
 		"frontend": {
 			"project": ["src/**/*.{js,jsx,css}", "scripts/**/*.mjs"]

@@ -1,12 +1,8 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeAdminSession, makeProduct, makeCombo } = require('../helpers/factories');
-const Product = require('../../models/Product');
-const Combo = require('../../models/Combo');
-const Order = require('../../models/Order');
-const User = require('../../models/User');
-const Account = require('../../models/Account');
-const StockMovement = require('../../models/StockMovement');
+const { makeAdminSession, makeProduct, makeCombo, makeOrder } = require('../helpers/factories');
+const { findOrderByCode, findProduct, findProductByName, movementsFor, countRows, deleteAllRows } = require('../helpers/db');
+const { normalizeRecordId } = require('../../data/ids');
 
 function attachImport(app, cookies, payload) {
 	const buffer = Buffer.from(JSON.stringify(payload));
@@ -50,14 +46,14 @@ describe('POST /api/admin/database/import', () => {
 		expect(res.status).toBe(200);
 		expect(res.body.results.orders.imported).toBe(1);
 
-		const stored = await Order.findOne({ orderCode: 'ORD0001' });
+		const stored = await findOrderByCode('ORD0001');
 		expect(stored.totalAmount).toBe(100000);
 	});
 
 	it('never creates a user or account from an import file, and reports why', async () => {
 		const { cookies } = await makeAdminSession(app);
-		const usersBefore = await User.countDocuments({});
-		const accountsBefore = await Account.countDocuments({});
+		const usersBefore = await countRows('user');
+		const accountsBefore = await countRows('account');
 
 		const payload = {
 			data: {
@@ -71,9 +67,9 @@ describe('POST /api/admin/database/import', () => {
 		expect(res.status).toBe(200);
 		expect(res.body.rejected.users).toEqual({ count: 1, reason: expect.any(String) });
 		expect(res.body.rejected.accounts).toEqual({ count: 1, reason: expect.any(String) });
-		expect(await User.countDocuments({})).toBe(usersBefore);
-		expect(await Account.countDocuments({})).toBe(accountsBefore);
-		expect(await User.findOne({ email: 'evil@test.local' })).toBeNull();
+		expect(await countRows('user')).toBe(usersBefore);
+		expect(await countRows('account')).toBe(accountsBefore);
+		expect(await countRows('user', { email: 'evil@test.local' })).toBe(0);
 	});
 
 	it('rejects a structurally malformed file before writing anything, even alongside a well-formed section', async () => {
@@ -89,8 +85,8 @@ describe('POST /api/admin/database/import', () => {
 		const res = await attachImport(app, cookies, payload);
 
 		expect(res.status).toBe(400);
-		expect(await Order.countDocuments({})).toBe(0);
-		expect(await Product.countDocuments({})).toBe(0);
+		expect(await countRows('order')).toBe(0);
+		expect(await countRows('product')).toBe(0);
 	});
 
 	// F10 — this router had no multer error handler, unlike routes/upload.js.
@@ -138,9 +134,9 @@ describe('POST /api/admin/database/import', () => {
 		expect(res.status).toBe(200);
 		expect(res.body.results.products.imported).toBe(1);
 
-		const stored = await Product.findOne({ name: 'Imported Product' });
+		const stored = await findProductByName('Imported Product');
 		expect(stored).not.toBeNull();
-		expect(stored._id.toString()).not.toBe(forgedId);
+		expect(stored._id).not.toBe(forgedId);
 	});
 
 	it('per-record error output carries no stack trace or raw source record', async () => {
@@ -183,7 +179,7 @@ describe('POST /api/admin/database/import', () => {
 		expect(second.status).toBe(200);
 		expect(second.body.results.orders.imported).toBe(0);
 		expect(second.body.results.orders.skipped).toBe(1);
-		expect(await Order.countDocuments({ orderCode: 'ORDDUP1' })).toBe(1);
+		expect(await countRows('order', { orderCode: 'ORDDUP1' })).toBe(1);
 	});
 
 	it('records an imported product\'s stock as an applied opening movement', async () => {
@@ -195,8 +191,8 @@ describe('POST /api/admin/database/import', () => {
 
 		expect(res.status).toBe(200);
 		expect(res.body.results.products.imported).toBe(1);
-		const product = await Product.findOne({ name: 'Imported Strap' });
-		const movements = await StockMovement.find({ productId: product._id }).lean();
+		const product = await findProductByName('Imported Strap');
+		const movements = await movementsFor(product._id);
 		expect(product.stockQuantity).toBe(7);
 		expect(movements).toEqual([expect.objectContaining({ type: 'opening', delta: 7, status: 'applied', stockAfter: 7 })]);
 	});
@@ -223,7 +219,7 @@ describe('POST /api/admin/database/import', () => {
 		});
 		const product = await makeProduct({ category: 'combo-roundtrip', price: 100000 });
 
-		await Order.create({
+		await makeOrder({
 			orderCode: 'ORDCMB1',
 			phoneNumber: '0900000001',
 			studentId: 'SV555',
@@ -231,6 +227,8 @@ describe('POST /api/admin/database/import', () => {
 			email: 'combo@test.com',
 			isDirectSale: false,
 			status: 'confirmed',
+			stockDeducted: false,
+			statusHistory: [],
 			items: [{
 				productId: product._id,
 				productName: product.name,
@@ -256,9 +254,7 @@ describe('POST /api/admin/database/import', () => {
 		// Simulate a disaster-recovery restore into an empty database. Leaves
 		// the admin session's own user/account/session rows untouched — only
 		// the business-data collections that /export and /import cover.
-		await Order.deleteMany({});
-		await Product.deleteMany({});
-		await Combo.deleteMany({});
+		await deleteAllRows('order', 'product', 'combo');
 
 		const buffer = Buffer.from(JSON.stringify(exportRes.body));
 		const importRes = await request(app)
@@ -271,21 +267,21 @@ describe('POST /api/admin/database/import', () => {
 		expect(importRes.body.results.combos.imported).toBe(1);
 		expect(importRes.body.results.orders.imported).toBe(1);
 
-		const restoredProduct = await Product.findOne({ name: product.name });
+		const restoredProduct = await findProductByName(product.name);
 		expect(restoredProduct).not.toBeNull();
 		// F2: the product keeps its original _id instead of getting a fresh one.
-		expect(restoredProduct._id.toString()).toBe(product._id.toString());
+		expect(restoredProduct._id).toBe(product._id.toString());
 
-		const restoredOrder = await Order.findOne({ orderCode: 'ORDCMB1' });
+		const restoredOrder = await findOrderByCode('ORDCMB1');
 		// F1: total is the original combo-discounted amount, not Σ(price×qty).
 		expect(restoredOrder.totalAmount).toBe(150000);
 		expect(restoredOrder.comboInfo.finalTotal).toBe(150000);
 		expect(restoredOrder.comboInfo.savings).toBe(50000);
 
 		// F2: items[].productId still resolves to a real product after restore.
-		const populated = await Order.findOne({ orderCode: 'ORDCMB1' }).populate('items.productId', 'name');
-		expect(populated.items[0].productId).not.toBeNull();
-		expect(populated.items[0].productId.name).toBe(product.name);
+		const itemProduct = await findProduct(restoredOrder.items[0].productId);
+		expect(itemProduct).not.toBeNull();
+		expect(itemProduct.name).toBe(product.name);
 	});
 
 	it('honors a well-formed file-supplied product _id so order items keep resolving (F2)', async () => {
@@ -303,9 +299,10 @@ describe('POST /api/admin/database/import', () => {
 		expect(res.status).toBe(200);
 		expect(res.body.results.products.imported).toBe(1);
 
-		const stored = await Product.findOne({ name: 'Preserved Id Product' });
+		const stored = await findProductByName('Preserved Id Product');
 		expect(stored).not.toBeNull();
-		expect(stored._id.toString()).toBe(realId);
+		// A legacy hex id is stored under its uuid on Postgres.
+		expect(stored._id).toBe(normalizeRecordId(realId));
 	});
 
 	it('still recomputes a non-combo order\'s total from items, ignoring the file-supplied value, when comboInfo is absent', async () => {
@@ -329,7 +326,7 @@ describe('POST /api/admin/database/import', () => {
 		expect(res.status).toBe(200);
 		expect(res.body.results.orders.imported).toBe(1);
 
-		const stored = await Order.findOne({ orderCode: 'ORDNC001' });
+		const stored = await findOrderByCode('ORDNC001');
 		expect(stored.totalAmount).toBe(60000);
 	});
 });

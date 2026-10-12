@@ -1,23 +1,20 @@
 /**
  * Queue layer against a real Redis (see helpers/redis.js). Redis is only the
- * dispatcher, so every outcome is asserted on the MongoDB documents.
+ * dispatcher, so every outcome is asserted on the stored rows.
  */
-const Product = require('../../models/Product');
-const StockMovement = require('../../models/StockMovement');
 const { recordMovement, enqueueMovements } = require('../../services/stock-ledger');
 const stockQueue = require('../../queues/stock-queue');
 const { makeProduct } = require('../helpers/factories');
+const { findMovement, countRows, patchMovement, stockOf } = require('../helpers/db');
 const { startRedis, waitFor, START_TIMEOUT_MS } = require('../helpers/redis');
 
 let redis;
 let keySeq = 0;
 const adjust = (productId, delta, extra = {}) =>
 	recordMovement({ productId, type: 'adjust', delta, idempotencyKey: `queue-key-${++keySeq}`, ...extra });
-const stockOf = async (id) => (await Product.findById(id)).stockQuantity;
-const isApplied = (id) => async () => (await StockMovement.findById(id)).status === 'applied';
+const isApplied = (id) => async () => (await findMovement(id)).status === 'applied';
 
 beforeAll(async () => {
-	await StockMovement.init();
 	redis = await startRedis();
 	process.env.REDIS_URL = redis.url;
 }, START_TIMEOUT_MS);
@@ -59,10 +56,10 @@ describe('stock queue', () => {
 		}
 
 		await enqueueMovements(ids);
-		await waitFor(async () => (await StockMovement.countDocuments({ status: 'pending' })) === 0, { timeoutMs: 30_000, message: 'all applied' });
+		await waitFor(async () => (await countRows('movement', { status: 'pending' })) === 0, { timeoutMs: 30_000, message: 'all applied' });
 
 		for (const product of products) expect(await stockOf(product._id)).toBe(expected.get(String(product._id)));
-		expect(await StockMovement.countDocuments({ status: 'applied' })).toBe(50);
+		expect(await countRows('movement', { status: 'applied' })).toBe(50);
 	});
 
 	it('defers a younger movement until the older one of the same product is applied', async () => {
@@ -81,7 +78,7 @@ describe('stock queue', () => {
 		await waitFor(isApplied(younger._id), { message: 'younger applied after older' });
 
 		expect(await stockOf(product._id)).toBe(2);
-		expect((await StockMovement.findById(target._id)).delta).toBe(-7);
+		expect((await findMovement(target._id)).delta).toBe(-7);
 	});
 
 	it('counts a movement once when the same job is enqueued repeatedly', async () => {
@@ -102,18 +99,15 @@ describe('stock queue', () => {
 		const product = await makeProduct({ stockQuantity: 0 });
 		const movement = await adjust(product._id, 6);
 		// What a crashed worker leaves behind: claimed, attempted, still pending, no job in Redis.
-		// Native driver: mongoose treats createdAt as immutable and would drop the backdating.
-		await StockMovement.collection.updateOne(
-			{ _id: movement._id },
-			{ $set: { claimedAt: new Date(Date.now() - 120_000), attempts: 1, createdAt: new Date(Date.now() - 120_000) } }
-		);
+		// patchMovement skips the model, which treats createdAt as immutable and would drop the backdating.
+		await patchMovement(movement._id, { claimedAt: new Date(Date.now() - 120_000), attempts: 1, createdAt: new Date(Date.now() - 120_000) });
 
 		startWorker({ sweepIntervalMs: 100, sweepMinAgeMs: 60_000 });
 
 		await waitFor(isApplied(movement._id), { message: 'swept and applied' });
 		await new Promise((resolve) => setTimeout(resolve, 400));
 		expect(await stockOf(product._id)).toBe(6);
-		expect(await StockMovement.countDocuments({ status: 'applied' })).toBe(1);
+		expect(await countRows('movement', { status: 'applied' })).toBe(1);
 	});
 
 	it('does not sweep a movement younger than the minimum age', async () => {
@@ -134,12 +128,12 @@ describe('stock queue', () => {
 		await redis.stop();
 		const during = await adjust(product._id, 2);
 		await expect(enqueueMovements([during])).resolves.toBeUndefined();
-		expect((await StockMovement.findById(during._id)).status).toBe('pending');
+		expect((await findMovement(during._id)).status).toBe('pending');
 
 		await redis.restart();
 		await waitFor(async () => {
 			await stockQueue.sweepOnce({ olderThanMs: 0 }).catch(() => 0);
-			return (await StockMovement.findById(during._id)).status === 'applied';
+			return (await findMovement(during._id)).status === 'applied';
 		}, { timeoutMs: 30_000, intervalMs: 500, message: 'applied after Redis returned' });
 
 		expect(await stockOf(product._id)).toBe(3);

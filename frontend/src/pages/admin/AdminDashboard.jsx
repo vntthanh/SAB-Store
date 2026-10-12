@@ -8,6 +8,7 @@ import ChangePassword from '../../components/ChangePassword';
 import OrderNotesPanel from '../../components/admin/OrderNotesPanel';
 import OrderItemsEditor from '../../components/admin/OrderItemsEditor';
 import { isFinalOrderStatus } from '../../utils/order-status';
+import { describePage } from '../../utils/pagination';
 
 const AdminDashboard = () => {
 	const [stats, setStats] = useState(null);
@@ -25,6 +26,7 @@ const AdminDashboard = () => {
 		limit: 10
 	});
 	const [pagination, setPagination] = useState(null);
+	const pageRange = pagination && describePage(pagination);
 
 	// Handle ESC key to close modal
 	useEffect(() => {
@@ -68,8 +70,8 @@ const AdminDashboard = () => {
 				const response = await adminService.getOrders(filters);
 
 				if (response.success) {
-					setOrders(response.data.orders);
-					setPagination(response.data.pagination);
+					setOrders(response.data);
+					setPagination(response.meta);
 				}
 			} catch (error) {
 				console.error('Error fetching orders:', error);
@@ -240,8 +242,8 @@ const AdminDashboard = () => {
 				// Refresh orders list
 				const ordersResponse = await adminService.getOrders(filters);
 				if (ordersResponse.success) {
-					setOrders(ordersResponse.data.orders);
-					setPagination(ordersResponse.data.pagination);
+					setOrders(ordersResponse.data);
+					setPagination(ordersResponse.meta);
 				}
 			}
 		} catch (error) {
@@ -252,8 +254,8 @@ const AdminDashboard = () => {
 			try {
 				const ordersResponse = await adminService.getOrders(filters);
 				if (ordersResponse.success) {
-					setOrders(ordersResponse.data.orders);
-					setPagination(ordersResponse.data.pagination);
+					setOrders(ordersResponse.data);
+					setPagination(ordersResponse.meta);
 				}
 			} catch (refreshError) {
 				console.error('Error refreshing orders:', refreshError);
@@ -407,8 +409,8 @@ const AdminDashboard = () => {
 				}
 
 				if (ordersResponse.success) {
-					setOrders(ordersResponse.data.orders);
-					setPagination(ordersResponse.data.pagination);
+					setOrders(ordersResponse.data);
+					setPagination(ordersResponse.meta);
 				}
 
 				// Reset filters
@@ -745,27 +747,25 @@ const AdminDashboard = () => {
 					<div className="bg-gray-50 px-6 py-3 border-t border-gray-200">
 						<div className="flex items-center justify-between">
 							<div className="text-sm text-gray-700">
-								Hiển thị {((pagination.currentPage - 1) * pagination.itemsPerPage) + 1} đến{' '}
-								{Math.min(pagination.currentPage * pagination.itemsPerPage, pagination.totalItems)} trong{' '}
-								{pagination.totalItems} đơn hàng
+								Hiển thị {pageRange.from} đến {pageRange.to} trong {pagination.total} đơn hàng
 							</div>
 
 							<div className="flex space-x-2">
 								<button
-									onClick={() => handlePageChange(pagination.currentPage - 1)}
-									disabled={!pagination.hasPrev}
+									onClick={() => handlePageChange(pagination.page - 1)}
+									disabled={!pageRange.hasPrev}
 									className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									<i className="fas fa-chevron-left"></i>
 								</button>
 
 								<span className="px-3 py-2 text-sm text-gray-700">
-									Trang {pagination.currentPage} / {pagination.totalPages}
+									Trang {pagination.page} / {pagination.totalPages}
 								</span>
 
 								<button
-									onClick={() => handlePageChange(pagination.currentPage + 1)}
-									disabled={!pagination.hasNext}
+									onClick={() => handlePageChange(pagination.page + 1)}
+									disabled={!pageRange.hasNext}
 									className="btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
 								>
 									<i className="fas fa-chevron-right"></i>

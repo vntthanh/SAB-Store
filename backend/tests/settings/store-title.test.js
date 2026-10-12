@@ -1,7 +1,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeAdminSession } = require('../helpers/factories');
-const Settings = require('../../models/Settings');
+const { makeAdminSession, makeSettings } = require('../helpers/factories');
+const { insertRawSettings, countRows } = require('../helpers/db');
 
 const PAYMENT_FIELDS = { bankNameId: 'MB', bankAccountId: '0123456789', prefixMessage: 'SAB' };
 
@@ -21,7 +21,7 @@ describe('store title setting', () => {
 		});
 
 		it('returns the default title for a document saved before the field existed', async () => {
-			await Settings.collection.insertOne({ key: 'payment_config', ...PAYMENT_FIELDS });
+			await insertRawSettings({ key: 'payment_config', ...PAYMENT_FIELDS });
 
 			const res = await request(app).get('/api/settings');
 
@@ -29,7 +29,7 @@ describe('store title setting', () => {
 		});
 
 		it('exposes only storefront fields, never payment details', async () => {
-			await Settings.create({ ...PAYMENT_FIELDS, storeTitle: 'Shop' });
+			await makeSettings({ ...PAYMENT_FIELDS, storeTitle: 'Shop' });
 
 			const res = await request(app).get('/api/settings');
 
@@ -43,7 +43,7 @@ describe('store title setting', () => {
 	describe('GET /api/admin/settings', () => {
 		it('reports the default title for a document saved before the field existed', async () => {
 			const { cookies } = await makeAdminSession(app);
-			await Settings.collection.insertOne({ key: 'payment_config', ...PAYMENT_FIELDS });
+			await insertRawSettings({ key: 'payment_config', ...PAYMENT_FIELDS });
 
 			const res = await request(app).get('/api/admin/settings').set('Cookie', cookies);
 
@@ -78,7 +78,7 @@ describe('store title setting', () => {
 
 		it('keeps the current title when the field is omitted', async () => {
 			const { cookies } = await makeAdminSession(app);
-			await Settings.create({ ...PAYMENT_FIELDS, storeTitle: 'Kept' });
+			await makeSettings({ ...PAYMENT_FIELDS, storeTitle: 'Kept' });
 
 			const put = await request(app)
 				.put('/api/admin/settings')
@@ -102,7 +102,7 @@ describe('store title setting', () => {
 				.send({ ...PAYMENT_FIELDS, storeTitle });
 
 			expect(res.status).toBe(400);
-			expect(await Settings.countDocuments()).toBe(0);
+			expect(await countRows('settings')).toBe(0);
 		});
 	});
 });

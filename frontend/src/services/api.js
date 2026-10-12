@@ -240,9 +240,10 @@ export const adminService = {
 	},
 
 	// Product management
-	getProducts: async () => {
+	// One page of `{ success, data, meta }`; page and limit are optional.
+	getProducts: async (params = {}) => {
 		try {
-			const response = await api.get('/admin/products');
+			const response = await api.get('/admin/products', { params });
 			return response.data;
 		} catch (error) {
 			throw new Error(error.response?.data?.message || 'Lỗi khi lấy danh sách sản phẩm');

@@ -3,8 +3,6 @@ const request = require('supertest');
 const sharp = require('sharp');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo } = require('../helpers/factories');
-const Product = require('../../models/Product');
-const Combo = require('../../models/Combo');
 const minio = require('../../lib/minio');
 const { ogVersion, findPublicProductByCode, findPublicComboByCode } = require('../../services/public-catalog');
 
@@ -34,7 +32,6 @@ const expectCompositedJpeg = async (res) => {
 describe('GET /api/share/image/:type/:code.jpg', () => {
 	let app;
 
-	beforeAll(() => Promise.all([Product.init(), Combo.init()]));
 	beforeEach(() => {
 		app = buildTestApp();
 		vi.spyOn(console, 'warn').mockImplementation(() => {});

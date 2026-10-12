@@ -1,28 +1,9 @@
 #!/usr/bin/env node
 
 const { spawn } = require('child_process');
-const { connectDB } = require('./lib/database');
+const { waitForDatabase } = require('./lib/wait-for-database');
+const ErrorLogger = require('./utils/errorLogger');
 const { initializeBucket } = require('./lib/minio');
-
-async function waitForMongoDB() {
-	console.log('Waiting for MongoDB to be ready...');
-	const maxRetries = 30;
-	let retries = 0;
-
-	while (retries < maxRetries) {
-		try {
-			await connectDB();
-			console.log('[OK] MongoDB is ready');
-			return true;
-		} catch (error) {
-			retries++;
-			console.log(`MongoDB not ready, retrying... (${retries}/${maxRetries})`);
-			await new Promise(resolve => setTimeout(resolve, 2000));
-		}
-	}
-
-	throw new Error('MongoDB failed to become ready within timeout');
-}
 
 async function initializeDatabase() {
 	console.log('Initializing database...');
@@ -46,7 +27,7 @@ async function initializeDatabase() {
 		});
 
 		initProcess.on('error', (error) => {
-			console.error('[ERROR] Database initialization error:', error);
+			ErrorLogger.logCritical('Database initialization error', error, { stage: 'init-database' });
 			reject(error);
 		});
 	});
@@ -93,18 +74,16 @@ async function startServer() {
 			NODE_ENV: process.env.NODE_ENV,
 			CORS_ORIGIN: process.env.CORS_ORIGIN,
 			PORT: process.env.PORT,
+			DATABASE_URL: process.env.DATABASE_URL,
 			MONGODB_URI: process.env.MONGODB_URI,
 			JWT_SECRET: process.env.JWT_SECRET,
 			BASE_URL: process.env.BASE_URL,
-			ADMIN_USERNAME: process.env.ADMIN_USERNAME,
-			ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
-			ADMIN_EMAIL: process.env.ADMIN_EMAIL,
 			APPSCRIPT_URL: process.env.APPSCRIPT_URL
 		}
 	});
 
 	serverProcess.on('error', (error) => {
-		console.error('❌ Server start error:', error);
+		ErrorLogger.logCritical('Server start error', error, { stage: 'server-start' });
 		process.exit(1);
 	});
 
@@ -128,18 +107,14 @@ async function startServer() {
 }
 
 // Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-	console.error('[CRITICAL] Uncaught Exception:', error);
-	console.error('Stack:', error.stack);
-	console.error('Process will exit...');
+process.on('uncaughtException', (error, origin) => {
+	ErrorLogger.logUncaughtException(error, origin);
 	process.exit(1);
 });
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-	console.error('[CRITICAL] Unhandled Rejection at:', promise);
-	console.error('Reason:', reason);
-	console.error('Process will exit...');
+	ErrorLogger.logUnhandledRejection(reason, promise);
 	process.exit(1);
 });
 
@@ -154,13 +129,14 @@ process.on('warning', (warning) => {
 
 async function main() {
 	try {
-		await waitForMongoDB();
+		await waitForDatabase();
 		await initializeDatabase();
 		await startServer();
-		ensureStorageInBackground().catch((error) => console.error('[ERROR] Storage initialisation crashed:', error));
+		ensureStorageInBackground().catch((error) => ErrorLogger.logCritical('Storage initialisation crashed', error, { stage: 'storage' }));
 	} catch (error) {
-		console.error('[ERROR] Startup failed:', error);
-		console.error('Stack:', error.stack);
+		// Through the logger, not console.error(error): driver errors can quote the
+		// connection string, and the logger removes its credentials.
+		ErrorLogger.logCritical('Startup failed', error, { stage: 'startup' });
 		process.exit(1);
 	}
 }

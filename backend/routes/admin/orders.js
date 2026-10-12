@@ -1,18 +1,21 @@
 const express = require('express');
 const { ORDER_STATUSES } = require('@sab/shared');
-const Order = require('../../models/Order');
+const { orders } = require('../../data');
+const { InvalidIdError, RecordValidationError } = require('../../data/errors');
 const { ERROR_CODES, ERROR_MESSAGES } = require('../../constants/errorCodes');
 const { validateOrderUpdate, validateOrderNotes, validateOrderItemsEdit, trimText, trimStatusText } = require('../../middleware/validation');
 const { editOrderItems } = require('../../services/order-edit');
 const { PricingError, pricingErrorBody } = require('../../services/pricing');
-const { getPaginationInfo } = require('../../utils/helpers');
 const { sendOrderToAppScript } = require('../../utils/appscript');
 const { transitionOrderWithStock } = require('../../services/stock');
 const { enqueueMovements } = require('../../services/stock-ledger');
-const { asEnum, asSort, safeSearch, asPageLimit } = require('../../utils/query-guard');
+const { gated } = require('../../services/write-gate');
+const { asEnum, asSort, asPageLimit } = require('../../utils/query-guard');
+const ErrorLogger = require('../../utils/errorLogger');
 const router = express.Router();
 
 const ORDER_SORTABLE_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode'];
+const SEARCH_FIELDS = ['orderCode', 'studentId', 'fullName', 'email'];
 
 /**
  * @route   GET /api/admin/orders
@@ -23,47 +26,19 @@ router.get('/', async (req, res) => {
 	try {
 		const { page, limit, search, status, sortBy, sortOrder } = req.query;
 
-		const statusFilter = asEnum(status, ORDER_STATUSES);
-		const searchMatch = safeSearch(search);
-
-		const query = {
-			...(statusFilter && { status: statusFilter }),
-			...(searchMatch && {
-				$or: [
-					{ orderCode: searchMatch },
-					{ studentId: searchMatch },
-					{ fullName: searchMatch },
-					{ email: searchMatch }
-				]
-			})
-		};
-
-		const { page: pageNum, limit: limitNum } = asPageLimit(page, limit);
-		const skip = (pageNum - 1) * limitNum;
-		const sortOptions = asSort(sortBy, sortOrder, ORDER_SORTABLE_FIELDS);
-
-		const [orders, total] = await Promise.all([
-			Order.find(query)
-				.sort(sortOptions)
-				.skip(skip)
-				.limit(limitNum)
-				.select('-itemsHistory')
-				.lean(),
-			Order.countDocuments(query)
-		]);
-
-		const pagination = getPaginationInfo(pageNum, limitNum, total);
-
-		res.json({
-			success: true,
-			data: {
-				orders,
-				pagination
-			}
+		const { data, meta } = await orders.listPage({
+			...asPageLimit(page, limit),
+			sort: asSort(sortBy, sortOrder, ORDER_SORTABLE_FIELDS),
+			status: asEnum(status, ORDER_STATUSES),
+			search,
+			searchFields: SEARCH_FIELDS,
+			omit: ['itemsHistory']
 		});
 
+		res.json({ success: true, data, meta });
+
 	} catch (error) {
-		console.error('Error fetching orders:', error);
+		ErrorLogger.log(error, { route: 'GET /admin/orders' });
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi lấy danh sách đơn hàng'
@@ -78,7 +53,7 @@ router.get('/', async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
 	try {
-		const order = await Order.findById(req.params.id);
+		const order = await orders.findDetail(req.params.id, { complete: true });
 
 		if (!order) {
 			return res.status(404).json({
@@ -93,9 +68,9 @@ router.get('/:id', async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('Error fetching order:', error);
+		ErrorLogger.log(error, { route: 'GET /admin/orders/:id' });
 
-		if (error.name === 'CastError') {
+		if (error instanceof InvalidIdError) {
 			return res.status(400).json({
 				success: false,
 				message: 'ID đơn hàng không hợp lệ'
@@ -122,7 +97,7 @@ router.get('/:id', async (req, res) => {
  * the stock side effect, so a cancel can never restore stock twice.
  * Cancelled and delivered orders are final and refuse any status change.
  */
-router.put('/:id', validateOrderUpdate, async (req, res) => {
+router.put('/:id', validateOrderUpdate, gated(async (req, res) => {
 	const { id } = req.params;
 	try {
 		const { status } = req.body;
@@ -217,20 +192,19 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('Error updating order:', error);
+		ErrorLogger.log(error, { route: 'PUT /admin/orders/:id' });
 
-		if (error.name === 'CastError') {
+		if (error instanceof InvalidIdError) {
 			return res.status(400).json({
 				success: false,
 				message: 'ID đơn hàng không hợp lệ'
 			});
 		}
 
-		if (error.name === 'ValidationError') {
-			const errorMessages = Object.values(error.errors).map(err => err.message);
+		if (error instanceof RecordValidationError) {
 			return res.status(400).json({
 				success: false,
-				message: errorMessages.join(', ')
+				message: error.message
 			});
 		}
 
@@ -239,7 +213,7 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
 			message: 'Lỗi server khi cập nhật đơn hàng'
 		});
 	}
-});
+}));
 
 /**
  * @route   PUT /api/admin/orders/:id/items
@@ -251,7 +225,7 @@ router.put('/:id', validateOrderUpdate, async (req, res) => {
  * keyed by order code and this repo cannot tell whether a resend would overwrite
  * the row or append another, so `itemsHistory` is the record of the change.
  */
-router.put('/:id/items', validateOrderItemsEdit, async (req, res) => {
+router.put('/:id/items', validateOrderItemsEdit, gated(async (req, res) => {
 	try {
 		const { items } = req.body;
 
@@ -305,13 +279,16 @@ router.put('/:id/items', validateOrderItemsEdit, async (req, res) => {
 		if (error instanceof PricingError) {
 			return res.status(error.httpStatus).json(pricingErrorBody(error));
 		}
-		console.error('Error editing order items:', error);
+		if (error instanceof InvalidIdError) {
+			return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ' });
+		}
+		ErrorLogger.log(error, { route: 'PUT /admin/orders/:id/items' });
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi sửa sản phẩm trong đơn hàng'
 		});
 	}
-});
+}));
 
 /**
  * @route   PATCH /api/admin/orders/:id/notes
@@ -321,22 +298,16 @@ router.put('/:id/items', validateOrderItemsEdit, async (req, res) => {
  * Allowed in every status, final ones included: notes touch neither status nor
  * stock, so one conditional-free update is enough and nothing goes to App Script.
  */
-router.patch('/:id/notes', validateOrderNotes, async (req, res) => {
+router.patch('/:id/notes', validateOrderNotes, gated(async (req, res) => {
 	try {
 		const additionalNote = trimText(req.body.additionalNote);
 		const note = trimText(req.body.note);
 
-		const update = {};
-		if (additionalNote !== undefined) update.$set = { additionalNote };
-		if (note !== undefined) {
-			update.$push = { internalNotes: { note, by: req.admin.username, at: new Date() } };
-		}
-
-		const order = await Order.findOneAndUpdate(
-			{ _id: req.params.id },
-			update,
-			{ new: true, runValidators: true }
-		);
+		const order = await orders.updateNotes({
+			orderId: req.params.id,
+			additionalNote,
+			...(note !== undefined && { internalNote: { note, by: req.admin.username, at: new Date() } })
+		});
 
 		if (!order) {
 			return res.status(404).json({
@@ -352,13 +323,16 @@ router.patch('/:id/notes', validateOrderNotes, async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('Error updating order notes:', error);
+		ErrorLogger.log(error, { route: 'PATCH /admin/orders/:id/notes' });
 
-		if (error.name === 'ValidationError') {
-			const errorMessages = Object.values(error.errors).map(err => err.message);
+		if (error instanceof InvalidIdError) {
+			return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ' });
+		}
+
+		if (error instanceof RecordValidationError) {
 			return res.status(400).json({
 				success: false,
-				message: errorMessages.join(', ')
+				message: error.message
 			});
 		}
 
@@ -367,14 +341,14 @@ router.patch('/:id/notes', validateOrderNotes, async (req, res) => {
 			message: 'Lỗi server khi cập nhật ghi chú đơn hàng'
 		});
 	}
-});
+}));
 
 /**
  * @route   DELETE /api/admin/orders
  * @desc    Delete all orders (DANGEROUS - Admin only)
  * @access  Private (Admin)
  */
-router.delete('/', async (req, res) => {
+router.delete('/', gated(async (req, res) => {
 	try {
 		console.log('🚨 DELETE ALL ORDERS Request:', {
 			admin: req.admin.username,
@@ -383,7 +357,7 @@ router.delete('/', async (req, res) => {
 		});
 
 		// Count total orders before deletion for reporting
-		const totalCount = await Order.countDocuments();
+		const totalCount = await orders.count();
 
 		if (totalCount === 0) {
 			return res.json({
@@ -399,11 +373,10 @@ router.delete('/', async (req, res) => {
 		console.log(`📊 Found ${totalCount} orders to delete`);
 
 		// Perform bulk deletion
-		const result = await Order.deleteMany({});
+		const result = await orders.deleteAll();
 
 		console.log('✅ Bulk deletion completed:', {
 			deletedCount: result.deletedCount,
-			acknowledged: result.acknowledged,
 			admin: req.admin.username
 		});
 
@@ -427,13 +400,11 @@ router.delete('/', async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('💥 Error deleting all orders:', error);
-
-		// Log the failed dangerous operation
-		console.error('🔥 CRITICAL OPERATION FAILED - DELETE ALL ORDERS:', {
-			error: error.message,
-			admin: req.admin.username,
-			timestamp: new Date().toISOString()
+		// A failed destructive operation is logged with who ran it.
+		ErrorLogger.log(error, {
+			route: 'DELETE /admin/orders',
+			operation: 'delete-all-orders',
+			admin: req.admin.username
 		});
 
 		res.status(500).json({
@@ -442,6 +413,6 @@ router.delete('/', async (req, res) => {
 			error: process.env.NODE_ENV === 'development' ? error.message : undefined
 		});
 	}
-});
+}));
 
 module.exports = router;

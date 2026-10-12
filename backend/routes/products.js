@@ -1,24 +1,19 @@
 const express = require('express');
-const Product = require('../models/Product');
-const { asString, safeSearch } = require('../utils/query-guard');
+const { products: productRepo } = require('../data');
+const { isRecordId } = require('../data/ids');
+const { asString } = require('../utils/query-guard');
 const { authenticateSeller } = require('../middleware/better-auth');
 const { findPublicProductByCode, toPublicProduct } = require('../services/public-catalog');
 const { ErrorResponse } = require('../utils/errorResponse');
 const ErrorLogger = require('../utils/errorLogger');
 const router = express.Router();
 
-const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
 
 // One body for every "not public" reason (missing, stopped, counter-only,
 // malformed): a caller must not be able to tell a hidden product from an absent one.
 const sendProductNotFound = (req, res) => res
 	.status(404)
 	.json(ErrorResponse.formatErrorResponse(ErrorResponse.notFoundError('Sản phẩm'), req));
-
-// Online customers never learn stock levels: out of stock never blocks an
-// order, so the number would only mislead. SKU and the retired isActive flag
-// are internal too.
-const PUBLIC_PRODUCT_HIDDEN_FIELDS = '-stockQuantity -sku -isActive';
 
 /**
  * @route   GET /api/products
@@ -29,20 +24,16 @@ router.get('/', async (req, res) => {
 	try {
 		const { category, search, available } = req.query;
 		const safeCategory = category !== 'all' ? asString(category, 100) : undefined;
-		const searchMatch = safeSearch(search);
 
 		// The public storefront is the online channel; no query parameter
 		// widens it (a stopped product must never be listed publicly).
-		const filter = {
-			...(safeCategory && { category: safeCategory }),
-			...(searchMatch && { $or: [{ name: searchMatch }, { description: searchMatch }] })
-		};
-
-		// Get products with sorting
-		const products = await Product.findSellable('online', filter)
-			.select(PUBLIC_PRODUCT_HIDDEN_FIELDS)
-			.sort({ category: 1, name: 1 })
-			.lean();
+		const products = await productRepo.listSellable('online', {
+			category: safeCategory,
+			search: asString(search, 100),
+			// Online customers never learn stock levels: out of stock never blocks
+			// an order, so the number would only mislead.
+			forCustomers: true
+		});
 
 		// Group products by category
 		const categories = [...new Set(products.map(p => p.category))];
@@ -81,17 +72,11 @@ router.get('/direct-sales', authenticateSeller, async (req, res) => {
 	try {
 		const { category, search } = req.query;
 		const safeCategory = category !== 'all' ? asString(category, 100) : undefined;
-		const searchMatch = safeSearch(search);
 
-		const filter = {
-			...(safeCategory && { category: safeCategory }),
-			...(searchMatch && { $or: [{ name: searchMatch }, { description: searchMatch }] })
-		};
-
-		// Get products with sorting
-		const products = await Product.findSellable('offline', filter)
-			.sort({ category: 1, name: 1 })
-			.lean();
+		const products = await productRepo.listSellable('offline', {
+			category: safeCategory,
+			search: asString(search, 100)
+		});
 
 		// Group products by category
 		const categories = [...new Set(products.map(p => p.category))];
@@ -147,11 +132,9 @@ router.get('/by-code/:code', async (req, res) => {
  */
 router.get('/:id', async (req, res) => {
 	try {
-		if (!OBJECT_ID_PATTERN.test(req.params.id)) return sendProductNotFound(req, res);
+		if (!isRecordId(req.params.id)) return sendProductNotFound(req, res);
 
-		const [product] = await Product.findSellable('online', { _id: req.params.id })
-			.limit(1)
-			.lean();
+		const [product] = await productRepo.findSellable('online', { id: req.params.id });
 		if (!product) return sendProductNotFound(req, res);
 
 		res.json({ success: true, data: toPublicProduct(product) });
@@ -171,7 +154,7 @@ router.get('/:id', async (req, res) => {
  */
 router.get('/categories/list', async (req, res) => {
 	try {
-		const categories = await Product.distinct('category');
+		const categories = await productRepo.listCategories();
 
 		res.json({
 			success: true,

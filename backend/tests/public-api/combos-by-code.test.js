@@ -1,13 +1,10 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
-const Product = require('../../models/Product');
-const Combo = require('../../models/Combo');
 
 describe('GET /api/combos/by-code/:code', () => {
 	let app;
 
-	beforeAll(() => Promise.all([Product.init(), Combo.init()]));
 	beforeEach(() => {
 		app = buildTestApp();
 	});

@@ -1,12 +1,10 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeAdminSession } = require('../helpers/factories');
-const Product = require('../../models/Product');
 
 describe('Express routing contract', () => {
 	let app;
 
-	beforeAll(() => Product.init());
 	beforeEach(() => {
 		app = buildTestApp();
 	});

@@ -5,9 +5,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
-const Product = require('../../models/Product');
-const Order = require('../../models/Order');
-const Combo = require('../../models/Combo');
+const { countRows, findOrderByCode, patchProduct, patchCombo, stockOf } = require('../helpers/db');
 
 const line = (product, quantity = 1) => ({ productId: product._id.toString(), quantity });
 const customer = {
@@ -20,9 +18,11 @@ const customer = {
 async function comboShop() {
 	const string = await makeProduct({ category: 'string', price: 30000, stockQuantity: 20 });
 	const tag = await makeProduct({ category: 'tag', price: 20000, stockQuantity: 20 });
-	await makeCombo({ price: 45000, categoryRequirements: [{ category: 'string', quantity: 1 }, { category: 'tag', quantity: 1 }] });
-	await makeCombo({ price: 35000, categoryRequirements: [{ category: 'tag', quantity: 3 }] });
-	return { string, tag, items: [line(string, 2), line(tag, 4)] };
+	const combos = [
+		await makeCombo({ price: 45000, categoryRequirements: [{ category: 'string', quantity: 1 }, { category: 'tag', quantity: 1 }] }),
+		await makeCombo({ price: 35000, categoryRequirements: [{ category: 'tag', quantity: 3 }] })
+	];
+	return { string, tag, combos, items: [line(string, 2), line(tag, 4)] };
 }
 
 describe('preview total equals the charged total', () => {
@@ -43,7 +43,7 @@ describe('preview total equals the charged total', () => {
 		expect(preview.body.data.totalAmount).toBe(110000);
 		expect(res.status).toBe(201);
 		expect(res.body.data.totalAmount).toBe(preview.body.data.totalAmount);
-		const saved = await Order.findOne({ orderCode: res.body.data.orderCode });
+		const saved = await findOrderByCode(res.body.data.orderCode);
 		expect(saved.totalAmount).toBe(110000);
 		expect(saved.comboInfo.combos).toHaveLength(2);
 	});
@@ -66,21 +66,21 @@ describe('preview total equals the charged total', () => {
 		const { string, items } = await comboShop();
 		const preview = await request(app).post('/api/combos/pricing').send({ items });
 
-		await Product.updateOne({ _id: string._id }, { price: 31000 });
+		await patchProduct(String(string._id), { price: 31000 });
 		const res = await request(app).post('/api/orders').send({ ...customer, items, expectedTotal: preview.body.data.totalAmount });
 
 		expect(res.status).toBe(409);
 		expect(res.body.code).toBe('PRICE_CHANGED');
 		expect(res.body.details.expectedTotal).toBe(110000);
 		expect(res.body.details.totalAmount).toBe(111000);
-		expect(await Order.countDocuments({})).toBe(0);
+		expect(await countRows('order')).toBe(0);
 	});
 
 	it('counter: a price change between preview and order is refused with 409, no order, stock untouched', async () => {
 		const { string, tag, items } = await comboShop();
 		const preview = await request(app).post('/api/combos/pricing').send({ items, channel: 'offline' });
 
-		await Product.updateOne({ _id: string._id }, { price: 31000 });
+		await patchProduct(String(string._id), { price: 31000 });
 		const res = await request(app)
 			.post('/api/seller/orders/direct')
 			.set('Cookie', cookies)
@@ -88,16 +88,17 @@ describe('preview total equals the charged total', () => {
 
 		expect(res.status).toBe(409);
 		expect(res.body.code).toBe('PRICE_CHANGED');
-		expect(await Order.countDocuments({})).toBe(0);
-		expect((await Product.findById(string._id)).stockQuantity).toBe(20);
-		expect((await Product.findById(tag._id)).stockQuantity).toBe(20);
+		expect(await countRows('order')).toBe(0);
+		expect(await stockOf(String(string._id))).toBe(20);
+		expect(await stockOf(String(tag._id))).toBe(20);
 	});
 
 	it('a combo switched off between preview and order also refuses with 409', async () => {
-		const { items } = await comboShop();
+		const { items, combos } = await comboShop();
 		const preview = await request(app).post('/api/combos/pricing').send({ items });
 
-		await Combo.updateMany({}, { isActive: false });
+		expect(await countRows('combo')).toBe(combos.length);
+		for (const combo of combos) await patchCombo(String(combo._id), { isActive: false });
 		const res = await request(app).post('/api/orders').send({ ...customer, items, expectedTotal: preview.body.data.totalAmount });
 
 		expect(res.status).toBe(409);
@@ -119,8 +120,8 @@ describe('preview total equals the charged total', () => {
 
 		expect(online.status).toBe(400);
 		expect(counter.status).toBe(400);
-		expect(await Order.countDocuments({})).toBe(0);
-		expect((await Product.findById(product._id)).stockQuantity).toBe(5);
+		expect(await countRows('order')).toBe(0);
+		expect(await stockOf(String(product._id))).toBe(5);
 	});
 
 	it('refuses an over-cap cart on both order routes', async () => {
@@ -133,7 +134,7 @@ describe('preview total equals the charged total', () => {
 		expect(online.status).toBe(400);
 		expect(online.body.code).toBe('CART_TOO_MANY_UNITS');
 		expect(counter.status).toBe(400);
-		expect(await Order.countDocuments({})).toBe(0);
+		expect(await countRows('order')).toBe(0);
 	});
 
 	it('an online-only combo does not discount a counter order, and preview and order agree', async () => {

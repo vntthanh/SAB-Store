@@ -7,8 +7,13 @@ export default defineConfig({
 		// Forks, not threads: mongodb, sharp and ioredis are native/handle-heavy and
 		// each worker needs its own process.env (per-worker database name).
 		pool: 'forks',
-		// One in-memory replica set for the whole run, started in the main process.
-		// Its teardown is the function global-setup.js returns.
+		// Set in every worker before the setup files, so data/index.js and the test
+		// helpers pick the same backend a deployment would. The Mongo configs
+		// (vitest.mongo.config.mjs, vitest.contract-mongo.config.mjs) override it.
+		env: { DATA_BACKEND: 'postgres' },
+		// One embedded PostgreSQL for the whole run (plus an in-memory replica set when
+		// the backend is mongo), started in the main process. Their teardown is the
+		// function global-setup.js returns.
 		globalSetup: ['./tests/global-setup.js'],
 		// env.js must run before modules load: lib/auth.js validates secrets at require time.
 		// Vitest runs setupFiles in order, before each test file.

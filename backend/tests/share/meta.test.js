@@ -1,9 +1,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeProduct, makeCombo } = require('../helpers/factories');
-const Product = require('../../models/Product');
-const Combo = require('../../models/Combo');
-const Settings = require('../../models/Settings');
+const { makeProduct, makeCombo, makeSettings } = require('../helpers/factories');
+const { failProductCatalogReads } = require('../helpers/db');
 const { ogVersion, toPublicProduct } = require('../../services/public-catalog');
 
 const BASE = process.env.BASE_URL;
@@ -20,7 +18,6 @@ const meta = (app, type, code) => request(app).get('/api/share/meta').query({ ty
 describe('GET /api/share/meta', () => {
 	let app;
 
-	beforeAll(() => Promise.all([Product.init(), Combo.init()]));
 	beforeEach(() => {
 		app = buildTestApp();
 	});
@@ -99,15 +96,14 @@ describe('GET /api/share/meta', () => {
 	});
 
 	it('answers an empty 500, not the JSON error body, when the database fails', async () => {
-		vi.spyOn(Product, 'findSellable').mockImplementation(() => {
-			throw new Error('db down');
-		});
+		const fault = failProductCatalogReads('db down');
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const res = await meta(app, 'p', 'ABCDEFGH');
 
 		expect(res.status).toBe(500);
 		expect(res.text).toBe('');
+		expect(fault.fired()).toBe(true);
 	});
 
 	it('uses Settings.storeTitle for the site name and title suffix, falling back to SAB Store', async () => {
@@ -117,7 +113,7 @@ describe('GET /api/share/meta', () => {
 		expect(fallback.text).toContain('<title>Bút — SAB Store</title>');
 		expect(fallback.text).toContain('property="og:site_name" content="SAB Store"');
 
-		await Settings.create({ key: Settings.SETTINGS_KEY, bankNameId: 'x', bankAccountId: 'y', storeTitle: 'Cửa hàng X' });
+		await makeSettings({ bankNameId: 'x', bankAccountId: 'y', storeTitle: 'Cửa hàng X' });
 		const custom = await meta(app, 'p', product.publicCode);
 		expect(custom.text).toContain('<title>Bút — Cửa hàng X</title>');
 		expect(custom.text).toContain('property="og:site_name" content="Cửa hàng X"');

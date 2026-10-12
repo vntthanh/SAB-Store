@@ -139,19 +139,23 @@ esac
 Single ingress: `store.sabies.vn` → NPM → `frontend` container (nginx, built from
 `frontend/Dockerfile`) → `/api/*` proxied to `backend:5000`, `/uploads/*` proxied directly to
 `sabstore-seaweedfs:9000` (internal Docker network, never the public internet). There is no separate
-`nginx` service and no `api.store.sabies.vn` route — see `prod.compose.yml` (4 services:
-`mongodb`, `sabstore-seaweedfs`, `backend`, `frontend`). `backend/server.js:48` sets
+`nginx` service and no `api.store.sabies.vn` route — see `prod.compose.yml` (services
+`sabstore-postgres`, the one-shot `sabstore-release`, `mongodb`, `sabstore-redis`,
+`sabstore-seaweedfs`, `backend`, `frontend`; the backend is pinned to MongoDB until the
+PostgreSQL cutover). `backend/server.js:48` sets
 `trust proxy` to `2` (NPM → frontend nginx → backend).
 
 ## 0. Prerequisites — read before touching the server
 
 1. **`.env` must be complete before `up -d`.** Every secret in `prod.compose.yml` uses
-   `${VAR:?message}` (`PUBLIC_URL`, `JWT_SECRET`, `MONGODB_URI`, `MONGO_INITDB_ROOT_USERNAME`,
-   `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `ADMIN_EMAIL`,
-   `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `APPSCRIPT_URL`). A missing one means the container
+   `${VAR:?message}` (`PUBLIC_URL`, `JWT_SECRET`, `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB`,
+   `MONGODB_URI`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_USER`,
+   `MINIO_ROOT_PASSWORD`, `REDIS_PASSWORD`, `APPSCRIPT_URL`; `ADMIN_*` are optional, read only to
+   create the first admin). A missing one means the container
    **will not boot** — this is by design (fail-fast), not a bug to work around. Same is true
    inside the backend process itself: `backend/lib/auth.js` throws at `require()` time if
-   `JWT_SECRET`/`MONGODB_URI` are missing or `JWT_SECRET` is short/placeholder-looking.
+   `JWT_SECRET` or the store's connection string (`DATABASE_URL`, or `MONGODB_URI` with
+   `DATA_BACKEND=mongo`) are missing or `JWT_SECRET` is short/placeholder-looking.
    Preflight check: `docker compose -f prod.compose.yml exec -T backend node check-env.js`
    (reports each required var as set/MISSING, never prints values, fails loudly on a
    placeholder-looking `JWT_SECRET`).
@@ -231,7 +235,7 @@ Frontend **must** be rebuilt (`build frontend`, not skipped) — it is a static 
 build time; restarting the container without rebuilding serves the old JS/CSS.
 
 Points that matter:
-- Always `-f prod.compose.yml`. The bare `compose.yml` is the dev stack (bind mounts, Mongo
+- Always `-f prod.compose.yml`. The bare `compose.yml` is the dev stack (bind mounts, PostgreSQL
   published to the host).
 - `up -d` with **no service name suffix** — naming one narrows the scope and `restart: true`
   on the un-named services doesn't get evaluated, so e.g. frontend can keep its old backend
@@ -316,8 +320,8 @@ confirmed: set `RATE_LIMIT_ENABLED=true` in `.env`, redeploy backend (step 5, ba
 
 ## Operator scripts
 
-Neither of these ran as part of this hardening pass. Both live in `backend/scripts/` and are
-invoked manually, on the server, by whoever decides to run them.
+Operator scripts live in `backend/scripts/` and are invoked manually, on the server, by whoever
+decides to run them.
 
 ### `backend/scripts/audit-combo-pricing.js` — read-only
 
@@ -327,38 +331,11 @@ instead of a real zero). Issues no writes, prints order codes only, never names 
 IDs.
 
 ```sh
-docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
+# Against the MongoDB this runbook deploys; the backend defaults to PostgreSQL
+# (DATABASE_URL) unless DATA_BACKEND=mongo is set.
+docker exec -e DATA_BACKEND=mongo -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
   node scripts/audit-combo-pricing.js
 ```
-
-### `backend/scripts/backfill-stock-deducted.js` — dry-run by default
-
-Backfills the new `Order.stockDeducted` field on orders created before this field existed,
-using the rule `stockDeducted = (order.isDirectSale === true)` (derivation in the script's
-own header comment). Idempotent — only touches documents missing the field.
-
-```sh
-# Dry run (default, no writes, prints counts only):
-docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
-  node scripts/backfill-stock-deducted.js
-# Apply, only after reviewing the dry-run counts:
-docker exec -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
-  node scripts/backfill-stock-deducted.js --apply
-```
-
-### `backend/scripts/backfill-stock-opening.js` — dry-run by default
-
-Records each product's current `stockQuantity` as an applied `opening` stock movement, so the
-ledger sum equals the cached stock from then on. Run once after the first deploy of the stock
-ledger; re-running records nothing. Same `docker exec … [--apply]` pattern as above.
-
-### `backend/scripts/backfill-public-codes.js` — dry-run by default
-
-Gives every product and combo created before public codes existed an 8-character
-`publicCode` and a `slug`, which the share links `/p/<CODE>/<slug>` and `/c/<CODE>/<slug>`
-need. Until it runs, those items have no detail page and the admin "Sao chép link" button is
-disabled. It builds the unique index first and only touches documents without a code, so
-re-running is a no-op. Same `docker exec … [--apply]` pattern as above.
 
 ### Checking a share preview
 
@@ -387,10 +364,10 @@ probes (`/.env`, `*.php`, …) get an unlogged 404 straight from nginx.
 
 - **Admin's DB export no longer contains `users`/`accounts`**
   (`GET /api/admin/database/export`, `backend/routes/admin/database.js`) — no password
-  hashes, session tokens, or account records leave the system through that endpoint. It
-  covers `products`/`combos`/`orders` only. For a full-system backup including
-  credentials/sessions, use `mongodump` against the `mongodb` container directly; there is no
-  HTTP path for that anymore, by design.
+  hashes, session tokens, or account records leave the system through that endpoint. The
+  file covers products, combos, orders, stock movements and settings, and can be loaded back
+  from the admin page "Quản lý Database" (Khôi phục replaces the store's data; Nhập gộp
+  without overwriting). Accounts are never part of it.
 - **Storage is SeaweedFS, not MinIO.** The upstream `minio/minio` repository was archived
   2026-04-25 and stopped shipping free images, so it no longer receives fixes. The compose
   files pin `chrislusf/seaweedfs` by digest; updating it means choosing a new tag and digest

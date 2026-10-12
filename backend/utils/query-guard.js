@@ -11,6 +11,8 @@
  *   const filter = { ...(status && { status }) };
  */
 
+const { paginationQuery } = require('@sab/shared');
+
 /** Return `v` as a string capped at `max` characters, or undefined if it is not a string. */
 const asString = (v, max = 100) => (typeof v === 'string' ? v.slice(0, max) : undefined);
 
@@ -27,11 +29,13 @@ const asSort = (field, dir, allowed, fallback = 'createdAt') => ({
 	[allowed.includes(field) ? field : fallback]: dir === 'asc' ? 1 : -1,
 });
 
-/** Clamp pagination input to sane bounds; non-numeric input falls back to page 1, limit 20. */
-const asPageLimit = (p, l, maxLimit = 100) => ({
-	page: Math.max(1, parseInt(p, 10) || 1),
-	limit: Math.min(maxLimit, Math.max(1, parseInt(l, 10) || 20)),
-});
+/**
+ * Clamp pagination input to sane bounds; unusable input falls back to page 1,
+ * limit 20. Delegates to the shared schema so every list endpoint, whatever its
+ * response shape, reads `page`/`limit` the same way. It clamps instead of
+ * rejecting so existing clients never start receiving 400s.
+ */
+const asPageLimit = (p, l) => paginationQuery.parse({ page: p, limit: l });
 
 /** Return a valid Date, or undefined for anything unparseable. */
 const asDate = (v) => {

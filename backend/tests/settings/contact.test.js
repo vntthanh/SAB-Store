@@ -1,10 +1,19 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeAdminSession } = require('../helpers/factories');
-const Settings = require('../../models/Settings');
+const { makeAdminSession, makeSettings } = require('../helpers/factories');
+const { insertRawSettings, countRows, settingsDefaults } = require('../helpers/db');
 
-const { SETTINGS_KEY, DEFAULT_CONTACT } = Settings;
+const DEFAULT_CONTACT = settingsDefaults.contact;
 const PAYMENT_FIELDS = { bankNameId: 'MB', bankAccountId: '0123456789', prefixMessage: 'SAB' };
+
+describe('contact defaults, pinned', () => {
+	it('keeps the default footer contact details', () => {
+		expect(DEFAULT_CONTACT).toEqual({
+			contactEmail: 'sab@fit.hcmus.edu.vn',
+			contactFacebookUrl: 'https://t.sab.edu.vn/'
+		});
+	});
+});
 
 describe('contact settings', () => {
 	let app;
@@ -14,7 +23,7 @@ describe('contact settings', () => {
 	});
 
 	it('serves the default contact for a document saved before the fields existed', async () => {
-		await Settings.collection.insertOne({ key: SETTINGS_KEY, ...PAYMENT_FIELDS });
+		await insertRawSettings(PAYMENT_FIELDS);
 
 		const res = await request(app).get('/api/settings');
 
@@ -23,7 +32,7 @@ describe('contact settings', () => {
 
 	it('reports the default contact to the admin for a document saved before the fields existed', async () => {
 		const { cookies } = await makeAdminSession(app);
-		await Settings.collection.insertOne({ key: SETTINGS_KEY, ...PAYMENT_FIELDS });
+		await insertRawSettings(PAYMENT_FIELDS);
 
 		const res = await request(app).get('/api/admin/settings').set('Cookie', cookies);
 
@@ -58,7 +67,7 @@ describe('contact settings', () => {
 
 	it('keeps the stored contact when the fields are omitted', async () => {
 		const { cookies } = await makeAdminSession(app);
-		await Settings.create({ ...PAYMENT_FIELDS, contactEmail: 'kept@example.com' });
+		await makeSettings({ ...PAYMENT_FIELDS, contactEmail: 'kept@example.com' });
 
 		const put = await request(app)
 			.put('/api/admin/settings')
@@ -84,6 +93,6 @@ describe('contact settings', () => {
 			.send({ ...PAYMENT_FIELDS, ...body });
 
 		expect(res.status).toBe(400);
-		expect(await Settings.countDocuments()).toBe(0);
+		expect(await countRows('settings')).toBe(0);
 	});
 });

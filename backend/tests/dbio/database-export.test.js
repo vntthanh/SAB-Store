@@ -1,7 +1,6 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeAdminSession, makeProduct, makeCombo } = require('../helpers/factories');
-const Order = require('../../models/Order');
+const { makeAdminSession, makeProduct, makeCombo, makeOrder } = require('../helpers/factories');
 
 // Q7 (plan.md, "Quyết định Phần B đã chốt"): the export endpoint is a bulk
 // PII/credential egress path, so users and accounts must never appear in its
@@ -19,7 +18,7 @@ describe('GET /api/admin/database/export', () => {
 		const { cookies } = await makeAdminSession(app);
 		await makeProduct();
 		await makeCombo();
-		await Order.create({
+		await makeOrder({
 			orderCode: 'ORDEXP1',
 			phoneNumber: '0911111111',
 			studentId: 'SV002',
@@ -27,7 +26,9 @@ describe('GET /api/admin/database/export', () => {
 			email: 'b@test.com',
 			items: [],
 			totalAmount: 0,
-			status: 'confirmed'
+			status: 'confirmed',
+			stockDeducted: false,
+			statusHistory: []
 		});
 
 		const res = await request(app)

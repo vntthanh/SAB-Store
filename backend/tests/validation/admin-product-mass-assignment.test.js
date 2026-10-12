@@ -1,6 +1,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeAdminSession } = require('../helpers/factories');
+const { stockOf, findProduct } = require('../helpers/db');
 
 // admin/products.js must never write stockQuantity: every stock change is a
 // StockMovement applied by the ledger worker (adjustments go through
@@ -25,13 +26,13 @@ describe('Admin product routes never write stockQuantity directly', () => {
 
 		expect(res.status).toBe(200);
 		expect(res.body.data.product.name).toBe('Renamed Via PUT');
-		const Product = require('../../models/Product');
-		expect((await Product.findById(product._id).lean()).stockQuantity).toBe(5);
+		expect(await stockOf(product._id)).toBe(5);
 	});
 
 	it('PUT /api/admin/products/:id ignores createdAt and sku in the body', async () => {
 		const { cookies } = await makeAdminSession(app);
 		const product = await makeProduct();
+		const before = await findProduct(product._id);
 		const forgedDate = new Date('2000-01-01').toISOString();
 
 		const res = await request(app)
@@ -42,6 +43,12 @@ describe('Admin product routes never write stockQuantity directly', () => {
 		expect(res.status).toBe(200);
 		expect(new Date(res.body.data.product.createdAt).toISOString()).not.toBe(forgedDate);
 		expect(res.body.data.product.sku).not.toBe('forged-sku');
+
+		// What the response says is not what is stored: read the row back.
+		const stored = await findProduct(product._id);
+		expect(new Date(stored.createdAt).toISOString()).toBe(new Date(before.createdAt).toISOString());
+		expect(stored.sku).toBe(before.sku);
+		expect(stored.sku).not.toBe('forged-sku');
 	});
 
 	it('POST /api/admin/products stores the initial stockQuantity', async () => {

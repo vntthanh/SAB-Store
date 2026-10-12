@@ -1,19 +1,14 @@
 const request = require('supertest');
-const mongoose = require('mongoose');
 const publicCode = require('../../utils/public-code');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
-const Product = require('../../models/Product');
-const Combo = require('../../models/Combo');
-const StockMovement = require('../../models/StockMovement');
+const { findProduct, findCombo, countRows, failNextProductInsertAsRetryable } = require('../helpers/db');
 
 const COLLIDING = 'AAAAAAAA';
 
 describe('admin create routes assign public codes', () => {
 	let app;
 	let cookies;
-
-	beforeAll(() => Promise.all([Product.init(), Combo.init(), StockMovement.init()]));
 
 	beforeEach(async () => {
 		app = buildTestApp();
@@ -51,9 +46,9 @@ describe('admin create routes assign public codes', () => {
 
 		expect(res.status).toBe(201);
 		expect(res.body.data.product.publicCode).not.toBe(COLLIDING);
-		expect(await Product.countDocuments({})).toBe(2);
+		expect(await countRows('product')).toBe(2);
 		// The aborted attempt left no opening movement behind.
-		expect(await StockMovement.countDocuments({ type: 'opening' })).toBe(1);
+		expect(await countRows('movement', { type: 'opening' })).toBe(1);
 	});
 
 	it('POST product gives up after 5 collisions and leaves nothing half-written', async () => {
@@ -65,8 +60,8 @@ describe('admin create routes assign public codes', () => {
 
 		expect(res.status).toBe(400);
 		expect(spy).toHaveBeenCalledTimes(5);
-		expect(await Product.countDocuments({})).toBe(1);
-		expect(await StockMovement.countDocuments({})).toBe(0);
+		expect(await countRows('product')).toBe(1);
+		expect(await countRows('movement')).toBe(0);
 	});
 
 	it('POST product draws a fresh code when the driver reruns the transaction callback', async () => {
@@ -79,22 +74,17 @@ describe('admin create routes assign public codes', () => {
 		});
 		// The first attempt completes its write, then fails the way a transient
 		// transaction error does, so the driver reruns the callback.
-		const realSave = Product.prototype.save;
-		vi.spyOn(Product.prototype, 'save').mockImplementationOnce(async function (...args) {
-			await realSave.apply(this, args);
-			const error = new mongoose.mongo.MongoServerError({ message: 'transient' });
-			error.addErrorLabel('TransientTransactionError');
-			throw error;
-		});
+		const retryable = failNextProductInsertAsRetryable();
 
 		const res = await createProduct();
 
 		expect(res.status).toBe(201);
+		expect(retryable.fired()).toBe(true);
 		expect(draws).toHaveLength(2);
 		expect(draws[0]).not.toBe(draws[1]);
 		expect(res.body.data.product.publicCode).toBe(draws[1]);
-		expect(await Product.countDocuments({})).toBe(1);
-		expect(await StockMovement.countDocuments({ type: 'opening' })).toBe(1);
+		expect(await countRows('product')).toBe(1);
+		expect(await countRows('movement', { type: 'opening' })).toBe(1);
 	});
 
 	it('PUT product keeps its code even when the body carries another', async () => {
@@ -106,7 +96,7 @@ describe('admin create routes assign public codes', () => {
 			.send({ publicCode: 'ZZZZZZZZ', name: 'Tên mới' });
 
 		expect(res.status).toBe(200);
-		const stored = await Product.findById(product._id).lean();
+		const stored = await findProduct(product._id);
 		expect(stored.publicCode).toBe(product.publicCode);
 		expect(stored.slug).toBe('ten-moi');
 	});
@@ -137,7 +127,7 @@ describe('admin create routes assign public codes', () => {
 			.send({ name: 'Combo mới' });
 
 		expect(res.status).toBe(200);
-		const stored = await Combo.findById(combo._id).lean();
+		const stored = await findCombo(combo._id);
 		expect(stored.slug).toBe('combo-moi');
 		expect(stored.publicCode).toBe(combo.publicCode);
 	});

@@ -1,7 +1,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession, makeSellerSession, createAccount } = require('../helpers/factories');
-const User = require('../../models/User');
+const { findUser, countRows } = require('../helpers/db');
 
 describe('role escalation guard', () => {
 	let app;
@@ -27,7 +27,7 @@ describe('role escalation guard', () => {
 			expect(res.status).toBe(400);
 			expect(res.body.code).toBe('EMAIL_PASSWORD_SIGN_UP_DISABLED');
 		}
-		expect(await User.countDocuments({})).toBe(0);
+		expect(await countRows('user', {})).toBe(0);
 	});
 
 	// `role` is `input: false`: a self-service body naming it is rejected outright.
@@ -38,14 +38,14 @@ describe('role escalation guard', () => {
 
 		expect(res.status).toBe(400);
 		expect(res.body.code).toBe('FIELD_NOT_ALLOWED');
-		const stored = await User.findOne({ email: seller.email });
+		const stored = await findUser({ email: seller.email });
 		expect(stored.role).toBe('seller');
 		expect(stored.name).not.toBe('x');
 	});
 
 	it('gives an account created without a role the default user role', async () => {
 		const account = await createAccount();
-		expect((await User.findOne({ email: account.email })).role).toBe('user');
+		expect((await findUser({ email: account.email })).role).toBe('user');
 	});
 
 	it('does not let a seller session create an admin', async () => {
@@ -58,7 +58,7 @@ describe('role escalation guard', () => {
 			data: { username: 'seller_made_admin' },
 		});
 		expect(res.status).toBe(403);
-		expect(await User.findOne({ email: 'seller-made-admin@example.com' })).toBeNull();
+		expect(await findUser({ email: 'seller-made-admin@example.com' })).toBeNull();
 	});
 
 	it('lets an admin session create a user with an explicit role', async () => {
@@ -71,6 +71,6 @@ describe('role escalation guard', () => {
 			data: { username: 'admin_made_seller' },
 		});
 		expect(res.status).toBe(200);
-		expect((await User.findOne({ email: 'admin-made-seller@example.com' })).role).toBe('seller');
+		expect((await findUser({ email: 'admin-made-seller@example.com' })).role).toBe('seller');
 	});
 });

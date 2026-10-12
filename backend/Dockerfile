@@ -20,6 +20,37 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 COPY packages/shared ./packages/shared
 RUN pnpm --filter @sab/shared build
 
+# ── gen: Prisma client generated from the schema, plus the CLI for `release` ──
+# Starts from shared-build so the workspace links @sab/shared. The client is
+# generated into backend/generated, OUTSIDE node_modules, so the runner copies
+# it as plain files and never needs the Prisma CLI: there is no
+# generate-after-deploy step. This stage installs dev dependencies (the CLI),
+# hence `--prod=false`, explicit because the deploy platform injects NODE_ENV
+# into every stage.
+FROM shared-build AS gen
+COPY backend/package.json ./backend/
+RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
+	pnpm install --frozen-lockfile --prod=false --filter minipreorder-backend...
+# Two COPYs on purpose: `COPY a b dir/` would flatten the contents of `a`.
+COPY backend/prisma ./backend/prisma
+COPY backend/prisma.config.cjs ./backend/
+# The config falls back to an unresolvable database URL, so no database is
+# needed to generate.
+RUN cd backend && pnpm exec prisma generate
+
+# ── release: one-shot backup + migrate (never serves traffic) ────────────────
+# Kept ahead of `runner` on purpose: a build without --target builds the LAST
+# stage, and that must stay the runtime image.
+# Runs as root: it writes to a host bind mount whose ownership the host decides,
+# and unlike the runner it is a short-lived job with no network listener.
+FROM gen AS release
+# The client major must match the server's (compose pins postgres:17); pg_dump
+# refuses to dump a newer server. Re-check the package name when that bumps.
+RUN apk add --no-cache postgresql17-client
+WORKDIR /app/backend
+COPY backend/scripts/release.sh ./scripts/release.sh
+ENTRYPOINT ["/bin/sh", "/app/backend/scripts/release.sh"]
+
 # ── deploy: production dependencies of the backend package only ─────────────
 # Starts from shared-build so `pnpm deploy` finds the compiled package in the
 # workspace and copies it into the backend's node_modules.
@@ -51,6 +82,8 @@ ENV NODE_ENV=production
 
 COPY --from=deploy --chown=node:node /out/backend/node_modules ./node_modules
 COPY --chown=node:node backend ./
+# The client is generated in `gen`; a host copy is excluded by the ignore lists.
+COPY --from=gen --chown=node:node /app/backend/generated ./generated
 
 # The uploads mount point must be writable by the non-root user below; a bind
 # mount on the host keeps whatever ownership the host gives it.

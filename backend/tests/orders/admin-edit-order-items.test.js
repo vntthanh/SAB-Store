@@ -1,17 +1,19 @@
 /**
  * PUT /api/admin/orders/:id/items — an admin swaps the products of an existing
  * order, and the order's stored total never changes. Every assertion re-reads
- * MongoDB instead of trusting the response or a mock.
+ * the database instead of trusting the response or a mock.
  */
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeAdminSession, makeSellerSession } = require('../helpers/factories');
 const { applyPendingMovements } = require('../helpers/stock');
 const { expectedTotalFor } = require('../helpers/pricing');
-const Order = require('../../models/Order');
-const Product = require('../../models/Product');
-const StockMovement = require('../../models/StockMovement');
 const { reconcile } = require('../../services/stock-ledger');
+const {
+	findOrder, findOrderByCode, movements, countRows, patchProduct, patchOrder, unsetOrderField, failNextMovementInsert,
+	stockOf: cachedStock,
+} = require('../helpers/db');
+const { POSTGRES } = require('../helpers/backend');
 
 const customer = {
 	studentId: '24120001',
@@ -25,8 +27,7 @@ const PRICE = 100000;
 let app;
 let admin;
 
-beforeAll(async () => {
-	await Promise.all([Order.init(), StockMovement.init()]);
+beforeAll(() => {
 	app = buildTestApp();
 });
 
@@ -49,7 +50,7 @@ async function placeOrder(lines) {
 		.post('/api/orders')
 		.send({ ...customer, items, expectedTotal: await expectedTotalFor(items) });
 	expect(res.status).toBe(201);
-	const order = await Order.findOne({ orderCode: res.body.data.orderCode }).lean();
+	const order = await findOrderByCode(res.body.data.orderCode);
 	await applyPendingMovements();
 	return order;
 }
@@ -61,9 +62,9 @@ const edit = (id, body, cookies = admin.cookies) =>
 		...body
 	});
 
-const reload = (order) => Order.findById(order._id).lean();
-const stockOf = async (p) => (await Product.findById(p._id).lean()).stockQuantity;
-const editMovements = (filter = {}) => StockMovement.find({ type: 'order_edit', ...filter }).lean();
+const reload = (order) => findOrder(order._id);
+const stockOf = (p) => cachedStock(p._id);
+const editMovements = (filter = {}) => movements({ type: 'order_edit', ...filter });
 
 async function makeSellerCookies() {
 	return (await makeSellerSession(app)).cookies;
@@ -103,7 +104,7 @@ describe('PUT /api/admin/orders/:id/items', () => {
 		const pricey = await product({ price: 150000 });
 		const order = await placeOrder([line(a)]);
 		const before = await reload(order);
-		const movementsBefore = await StockMovement.countDocuments();
+		const movementsBefore = await countRows('movement');
 
 		const res = await edit(order._id, { items: [line(pricey)] });
 
@@ -113,7 +114,7 @@ describe('PUT /api/admin/orders/:id/items', () => {
 			details: { expected: PRICE, actual: 150000 }
 		});
 		expect(await reload(order)).toEqual(before);
-		expect(await StockMovement.countDocuments()).toBe(movementsBefore);
+		expect(await countRows('movement')).toBe(movementsBefore);
 	});
 
 	it('stores a comboInfo that matches the new items when a combo makes the total equal', async () => {
@@ -196,21 +197,21 @@ describe('PUT /api/admin/orders/:id/items', () => {
 	it('records no movement for an order that never held stock', async () => {
 		const [a, b] = [await product(), await product()];
 		const order = await placeOrder([line(a)]);
-		await Order.updateOne({ _id: order._id }, { $set: { stockDeducted: false } });
-		const movementsBefore = await StockMovement.countDocuments();
+		await patchOrder(order._id, { stockDeducted: false });
+		const movementsBefore = await countRows('movement');
 
 		const res = await edit(order._id, { items: [line(b)] });
 
 		expect(res.status).toBe(200);
-		expect((await reload(order)).items[0].productId.toString()).toBe(String(b._id));
-		expect(await StockMovement.countDocuments()).toBe(movementsBefore);
+		expect((await reload(order)).items[0].productId).toBe(String(b._id));
+		expect(await countRows('movement')).toBe(movementsBefore);
 	});
 
 	it('answers unchanged and writes nothing when only the line order differs', async () => {
 		const [a, b] = [await product(), await product()];
 		const order = await placeOrder([line(a), line(b)]);
 		const before = await reload(order);
-		const movementsBefore = await StockMovement.countDocuments();
+		const movementsBefore = await countRows('movement');
 
 		const res = await edit(order._id, { items: [line(b), line(a)] });
 
@@ -220,7 +221,7 @@ describe('PUT /api/admin/orders/:id/items', () => {
 		expect(after).toEqual(before);
 		expect(after.itemsRevision).toBe(0);
 		expect(after.itemsHistory).toHaveLength(0);
-		expect(await StockMovement.countDocuments()).toBe(movementsBefore);
+		expect(await countRows('movement')).toBe(movementsBefore);
 	});
 
 	it('forwards the engine error for a product of the wrong channel or one not on sale', async () => {
@@ -244,15 +245,16 @@ describe('PUT /api/admin/orders/:id/items', () => {
 		const [a, b] = [await product(), await product()];
 		const order = await placeOrder([line(a)]);
 		const before = await reload(order);
-		const movementsBefore = await StockMovement.countDocuments();
-		vi.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('ledger down'));
+		const movementsBefore = await countRows('movement');
+		const fault = failNextMovementInsert('ledger down');
 		vi.spyOn(console, 'error').mockImplementation(() => {});
 
 		const res = await edit(order._id, { items: [line(b)] });
 
 		expect(res.status).toBe(500);
+		expect(fault.fired()).toBe(true);
 		expect(await reload(order)).toEqual(before);
-		expect(await StockMovement.countDocuments()).toBe(movementsBefore);
+		expect(await countRows('movement')).toBe(movementsBefore);
 	});
 
 	it('refuses a seller with 403 and an anonymous caller with 401', async () => {
@@ -298,10 +300,11 @@ describe('PUT /api/admin/orders/:id/items', () => {
 		expect(await reload(order)).toEqual(before);
 	});
 
-	it('edits an order stored without itemsRevision and keeps counting from there', async () => {
+	// Skipped on Postgres: unsets a stored field; a Postgres column cannot be missing (itemsRevision is NOT NULL DEFAULT 0).
+	it.skipIf(POSTGRES)('edits an order stored without itemsRevision and keeps counting from there', async () => {
 		const [a, b, c] = [await product(), await product(), await product()];
 		const order = await placeOrder([line(a)]);
-		await Order.collection.updateOne({ _id: order._id }, { $unset: { itemsRevision: '' } });
+		await unsetOrderField(order._id, 'itemsRevision');
 		expect((await reload(order)).itemsRevision).toBeUndefined();
 
 		const first = await edit(order._id, { items: [line(b)], expectedRevision: 0 });
@@ -359,7 +362,7 @@ describe('PUT /api/admin/orders/:id/items', () => {
 			.send({ status: 'cancelled', cancelReason: 'x' });
 		expect(cancel.status).toBe(200);
 
-		const refunds = await StockMovement.find({ type: 'order_cancel' }).lean();
+		const refunds = await movements({ type: 'order_cancel' });
 		expect(refunds.map((m) => [String(m.productId), m.delta])).toEqual([[String(b._id), 1]]);
 		await applyPendingMovements();
 		expect(await stockOf(a)).toBe(0);
@@ -370,7 +373,7 @@ describe('PUT /api/admin/orders/:id/items', () => {
 	it('succeeds when the product removed from the order has since been withdrawn', async () => {
 		const [a, b] = [await product(), await product()];
 		const order = await placeOrder([line(a), line(b)]);
-		await Product.updateOne({ _id: b._id }, { $set: { available: false } });
+		await patchProduct(b._id, { available: false });
 
 		const res = await edit(order._id, { items: [line(a, 2)] });
 
@@ -436,11 +439,11 @@ describe('itemsHistory visibility', () => {
 			.send({ status: 'paid' });
 
 		expect(list.status).toBe(200);
-		expect(list.body.data.orders).toHaveLength(1);
-		expect(list.body.data.orders[0]).not.toHaveProperty('itemsHistory');
+		expect(list.body.data).toHaveLength(1);
+		expect(list.body.data[0]).not.toHaveProperty('itemsHistory');
 		expect(detail.body.data.itemsHistory).toHaveLength(1);
 		expect(sellerList.status).toBe(200);
-		expect(sellerList.body.data.orders[0]).not.toHaveProperty('itemsHistory');
+		expect(sellerList.body.data[0]).not.toHaveProperty('itemsHistory');
 		expect(sellerDetail.status).toBe(200);
 		expect(sellerDetail.body.data.order).not.toHaveProperty('itemsHistory');
 		expect(sellerStatus.status).toBe(200);

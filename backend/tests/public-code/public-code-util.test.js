@@ -1,6 +1,7 @@
 const publicCode = require('../../utils/public-code');
 const Product = require('../../models/Product');
 const { makeProduct } = require('../helpers/factories');
+const { POSTGRES } = require('../helpers/backend');
 
 const {
 	PUBLIC_CODE_PATTERN,
@@ -11,7 +12,8 @@ const {
 	createWithPublicCodeRetry
 } = publicCode;
 
-beforeAll(() => Product.init());
+// The model builds its indexes through a Mongo connection, which only a mongo run opens.
+beforeAll(() => (POSTGRES ? undefined : Product.init()));
 afterEach(() => vi.restoreAllMocks());
 
 describe('generatePublicCode', () => {
@@ -55,7 +57,8 @@ describe('makeSlug', () => {
 	});
 });
 
-describe('createWithPublicCodeRetry', () => {
+// Skipped on Postgres: takes a Mongoose model; the Postgres retry lives in data/postgres/public-code.js and is covered by contract/catalog.contract.test.js.
+describe.skipIf(POSTGRES)('createWithPublicCodeRetry', () => {
 	const COLLIDING = 'AAAAAAAA';
 
 	it('draws a new code when the first one collides', async () => {

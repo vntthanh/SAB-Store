@@ -10,7 +10,8 @@ const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession } = require('../helpers/factories');
 const { auth } = require('../../lib/auth');
-const User = require('../../models/User');
+const { POSTGRES } = require('../helpers/backend');
+const { findUser, countRows } = require('../helpers/db');
 
 const PASSWORD = 'Str0ngPassw0rd!';
 
@@ -58,7 +59,7 @@ describe('admin user management through the auth handler', () => {
 		const { body, user } = await createSeller();
 
 		expect(user.role).toBe('seller');
-		const stored = await User.findOne({ email: body.email });
+		const stored = await findUser({ email: body.email });
 		expect(stored.role).toBe('seller');
 		// Usernames are stored lower-cased, which is also how sign-in looks them up.
 		expect(stored.username).toBe(body.data.username.toLowerCase());
@@ -76,7 +77,7 @@ describe('admin user management through the auth handler', () => {
 		);
 		expect(res.status).toBe(400);
 		expect(res.body.code).toBe('USERNAME_IS_ALREADY_TAKEN');
-		expect(await User.countDocuments({ username: first.body.data.username.toLowerCase() })).toBe(1);
+		expect(await countRows('user', { username: first.body.data.username.toLowerCase() })).toBe(1);
 	});
 
 	it('rejects an anonymous caller', async () => {
@@ -87,7 +88,7 @@ describe('admin user management through the auth handler', () => {
 	it('rejects a seller session, with or without a role in the body', async () => {
 		const { body } = await createSeller();
 		const cookies = await sellerSession(body.email);
-		const usersBefore = await User.countDocuments({});
+		const usersBefore = await countRows('user', {});
 
 		const escalate = await request(app)
 			.post('/api/auth/admin/create-user')
@@ -103,7 +104,7 @@ describe('admin user management through the auth handler', () => {
 
 		const list = await request(app).get('/api/auth/admin/list-users').set('Cookie', cookies);
 		expect(list.status).toBe(403);
-		expect(await User.countDocuments({})).toBe(usersBefore);
+		expect(await countRows('user', {})).toBe(usersBefore);
 	});
 
 	it('does not let data override the role, email or name sent at the top level', async () => {
@@ -115,11 +116,11 @@ describe('admin user management through the auth handler', () => {
 		});
 
 		expect(res.status).toBe(200);
-		const stored = await User.findOne({ email: body.email });
+		const stored = await findUser({ email: body.email });
 		expect(stored).not.toBeNull();
 		expect(stored.role).toBe('seller');
 		expect(stored.name).toBe(body.name);
-		expect(await User.findOne({ email: evilEmail })).toBeNull();
+		expect(await findUser({ email: evilEmail })).toBeNull();
 	});
 
 	it('lists only sellers when the page filters by role', async () => {
@@ -171,7 +172,55 @@ describe('admin user management through the auth handler', () => {
 		const res = await asAdmin(request(app).post('/api/auth/admin/remove-user')).send({ userId: user.id });
 
 		expect(res.status).toBe(200);
-		expect(await User.findOne({ email: body.email })).toBeNull();
+		expect(await findUser({ email: body.email })).toBeNull();
+	});
+
+	describe('a user id that names nobody', () => {
+		const ABSENT_UUID = '0191c8a0-0000-7000-8000-000000000000';
+		const LEGACY_HEX_ID = 'aaaaaaaaaaaaaaaaaaaaaaaa';
+		const BY_BODY = [
+			['set-user-password', (userId) => ({ userId, newPassword: 'Zq9xK2mW4vB-new' })],
+			['ban-user', (userId) => ({ userId })],
+			['set-role', (userId) => ({ userId, role: 'seller' })],
+			['impersonate-user', (userId) => ({ userId })],
+			['remove-user', (userId) => ({ userId })],
+		];
+
+		const postAs = (name, body) => asAdmin(request(app).post(`/api/auth/admin/${name}`)).send(body);
+		const getUser = (id) => asAdmin(request(app).get('/api/auth/admin/get-user')).query({ id });
+
+		// Postgres refuses a malformed id up front; Mongo has no id type, so it looks the
+		// id up and finds nobody. Either way the caller gets a 4xx, never a store error.
+		const MALFORMED_STATUS = POSTGRES ? 400 : 404;
+
+		it.each(BY_BODY)('%s: a valid uuid that matches no user is a 404', async (name, body) => {
+			const res = await postAs(name, body(ABSENT_UUID));
+			expect(res.status).toBe(404);
+			expect(res.body.code).toBe('USER_NOT_FOUND');
+		});
+
+		it.each(BY_BODY)('%s: a malformed id is a client error with no store detail', async (name, body) => {
+			for (const id of ['abc', LEGACY_HEX_ID]) {
+				const res = await postAs(name, body(id));
+				expect(res.status, `${name} ${id}`).toBe(MALFORMED_STATUS);
+				expect(JSON.stringify(res.body)).not.toMatch(/prisma|22P02|invalid input|uuid/i);
+			}
+		});
+
+		it('get-user: absent uuid is a 404, a malformed id a client error', async () => {
+			expect((await getUser(ABSENT_UUID)).status).toBe(404);
+			for (const id of ['abc', LEGACY_HEX_ID]) {
+				const res = await getUser(id);
+				expect(res.status, id).toBe(MALFORMED_STATUS);
+				expect(JSON.stringify(res.body)).not.toMatch(/prisma|22P02|invalid input|uuid/i);
+			}
+		});
+
+		it('a malformed id changes nothing', async () => {
+			const before = await countRows('user', {});
+			await postAs('remove-user', { userId: 'abc' });
+			expect(await countRows('user', {})).toBe(before);
+		});
 	});
 
 	it('seeds the first admin the way init-database does, with no session', async () => {
@@ -188,7 +237,7 @@ describe('admin user management through the auth handler', () => {
 			},
 		});
 
-		const stored = await User.findOne({ email });
+		const stored = await findUser({ email });
 		expect(stored.role).toBe('admin');
 		expect(stored.username).toBe(`seed_${id}`);
 		expect(stored.displayUsername).toBe('Admin');

@@ -70,7 +70,6 @@ const LoginPage = () => {
 						}
 					}
 
-					console.log('Session user role:', userRole);
 					const redirectPath = ROLE_REDIRECTS[userRole];
 
 					if (redirectPath) {
@@ -148,15 +147,11 @@ const LoginPage = () => {
 				password: formData.password,
 			});
 
-			console.log('Sign in response data:', data);
-			console.log('Sign in response error:', error);
-
 			if (error) {
 				throw error;
 			}
 
 			if (data && data.user) {
-				console.log('User from sign in:', data.user);
 				let userRole = data.user.role;
 
 				// If role not available in data.user, get session with JWT
@@ -182,8 +177,6 @@ const LoginPage = () => {
 						console.error('Failed to get role from session/JWT:', jwtError);
 					}
 				}
-
-				console.log('User role from sign in:', userRole);
 
 				toast.success('Đăng nhập thành công!');
 

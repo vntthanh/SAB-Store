@@ -1,5 +1,4 @@
 const mongoose = require('mongoose');
-const mongoosePaginate = require('mongoose-paginate-v2');
 
 // A cancelled or delivered order never changes status again; only notes stay editable.
 const FINAL_ORDER_STATUSES = ['cancelled', 'delivered'];
@@ -260,7 +259,6 @@ orderSchema.pre('save', function (next) {
 	next();
 });
 
-orderSchema.plugin(mongoosePaginate);
 const Order = mongoose.model('Order', orderSchema);
 Order.FINAL_ORDER_STATUSES = FINAL_ORDER_STATUSES;
 

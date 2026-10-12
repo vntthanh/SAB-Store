@@ -4,27 +4,8 @@
  */
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeProduct, makeAdminSession } = require('../helpers/factories');
-const Order = require('../../models/Order');
-
-async function makeWebOrder(overrides = {}) {
-	const product = await makeProduct({ stockQuantity: 10 });
-	const n = Math.floor(Math.random() * 1e8); // 8 digits max: "W" + 8 digits = 9 chars, under the 10-char orderCode limit
-	return Order.create({
-		orderCode: `W${n}`,
-		studentId: `SV${n}`,
-		fullName: 'Web Buyer',
-		email: `buyer${n}@test.vn`, // TLD must be 2-3 chars per the schema's email regex
-		phoneNumber: '0912345678',
-		items: [{ productId: product._id, productName: product.name, price: product.price, quantity: 2 }],
-		totalAmount: product.price * 2,
-		status: 'confirmed',
-		isDirectSale: false,
-		stockDeducted: true,
-		statusHistory: [{ status: 'confirmed', updatedBy: 'system', updatedAt: new Date() }],
-		...overrides
-	});
-}
+const { makeOrder, makeAdminSession } = require('../helpers/factories');
+const { findOrder } = require('../helpers/db');
 
 describe('Admin PUT /api/admin/orders/:id', () => {
 	let app;
@@ -36,7 +17,7 @@ describe('Admin PUT /api/admin/orders/:id', () => {
 	});
 
 	it('writes exactly one statusHistory entry per transition (no duplicate from a pre-save hook)', async () => {
-		const order = await makeWebOrder();
+		const order = await makeOrder();
 		const historyBefore = order.statusHistory.length;
 
 		const res = await request(app)
@@ -45,7 +26,7 @@ describe('Admin PUT /api/admin/orders/:id', () => {
 			.send({ status: 'paid', transactionCode: 'TX1' });
 
 		expect(res.status).toBe(200);
-		const saved = await Order.findById(order._id);
+		const saved = await findOrder(order._id);
 		expect(saved.statusHistory.length).toBe(historyBefore + 1);
 	});
 
@@ -59,7 +40,7 @@ describe('Admin PUT /api/admin/orders/:id', () => {
 	});
 
 	it('answers 409 for a change to the status the order already has', async () => {
-		const order = await makeWebOrder({ status: 'paid' });
+		const order = await makeOrder({ status: 'paid' });
 
 		const res = await request(app)
 			.put(`/api/admin/orders/${order._id}`)
@@ -80,7 +61,7 @@ describe('Seller PUT /api/seller/orders/:id/status', () => {
 	});
 
 	it('returns the order with its products populated', async () => {
-		const order = await makeWebOrder();
+		const order = await makeOrder();
 
 		const res = await request(app)
 			.put(`/api/seller/orders/${order._id}/status`)
@@ -93,7 +74,7 @@ describe('Seller PUT /api/seller/orders/:id/status', () => {
 	});
 
 	it('rejects the legacy "pending" status', async () => {
-		const order = await makeWebOrder();
+		const order = await makeOrder();
 		const res = await request(app)
 			.put(`/api/seller/orders/${order._id}/status`)
 			.set('Cookie', cookies)
@@ -104,7 +85,7 @@ describe('Seller PUT /api/seller/orders/:id/status', () => {
 
 	// An over-length note is a 400, not a 500, and nothing of it is stored.
 	it('rejects a note over 500 characters instead of pushing it unbounded into statusHistory', async () => {
-		const order = await makeWebOrder();
+		const order = await makeOrder();
 		const res = await request(app)
 			.put(`/api/seller/orders/${order._id}/status`)
 			.set('Cookie', cookies)
@@ -112,7 +93,7 @@ describe('Seller PUT /api/seller/orders/:id/status', () => {
 
 		expect(res.status).toBe(400);
 
-		const saved = await Order.findById(order._id);
+		const saved = await findOrder(order._id);
 		expect(saved.status).toBe('confirmed'); // transition never committed
 		expect(saved.statusHistory.some((h) => h.note && h.note.length > 500)).toBe(false);
 	});

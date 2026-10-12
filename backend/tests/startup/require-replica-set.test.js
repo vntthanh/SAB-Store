@@ -1,4 +1,5 @@
 const { requireReplicaSet } = require('../../lib/require-replica-set');
+const { POSTGRES } = require('../helpers/backend');
 
 const connectionReplying = (reply) => {
 	const command = vi.fn().mockResolvedValue(reply);
@@ -22,7 +23,8 @@ describe('requireReplicaSet', () => {
 		await expect(requireReplicaSet(connection)).rejects.toThrow('boom');
 	});
 
-	it('passes against the harness replica set', async () => {
+	// Skipped on Postgres: needs the harness replica set and a connected Mongoose, which only a mongo run starts.
+	it.skipIf(POSTGRES)('passes against the harness replica set', async () => {
 		const mongoose = require('mongoose');
 		await expect(requireReplicaSet(mongoose.connection)).resolves.toEqual(expect.any(String));
 	});

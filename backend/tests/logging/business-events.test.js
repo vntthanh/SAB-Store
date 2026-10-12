@@ -1,16 +1,16 @@
 /**
- * Business events are asserted against real requests and real MongoDB state;
+ * Business events are asserted against real requests and real database state;
  * console.log is only spied on to capture the lines.
  */
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
+const { makeProduct, makeCombo, makeAdminSession, makeOrder } = require('../helpers/factories');
 const { expectedTotalFor } = require('../helpers/pricing');
-const Order = require('../../models/Order');
-const StockMovement = require('../../models/StockMovement');
+const {
+	countRows, findMovement, patchMovement, failNextMovementInsert, failNextTransactionStart, failNextPendingMovementScan,
+} = require('../helpers/db');
 const stockQueue = require('../../queues/stock-queue');
 const { recordMovement, applyMovement } = require('../../services/stock-ledger');
-const mongoose = require('mongoose');
 
 const customer = {
 	studentId: '24120001',
@@ -24,8 +24,7 @@ let app;
 let admin;
 let logSpy;
 
-beforeAll(async () => {
-	await Promise.all([Order.init(), StockMovement.init()]);
+beforeAll(() => {
 	app = buildTestApp();
 });
 
@@ -59,7 +58,7 @@ describe('order.created', () => {
 		expect(res.status).toBe(201);
 		await settle();
 
-		expect(await Order.countDocuments({ orderCode: res.body.data.orderCode })).toBe(1);
+		expect(await countRows('order', { orderCode: res.body.data.orderCode })).toBe(1);
 		const created = events('order.created');
 		expect(created).toHaveLength(1);
 		expect(created[0]).toEqual({
@@ -100,7 +99,7 @@ describe('order.created', () => {
 		const product = await makeProduct({ price: 100000, stockQuantity: 5 });
 		const items = [{ productId: String(product._id), quantity: 1 }];
 		vi.spyOn(console, 'error').mockImplementation(() => {});
-		vi.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('movement write failed'));
+		const fault = failNextMovementInsert('movement write failed');
 
 		const res = await request(app)
 			.post('/api/orders')
@@ -108,8 +107,9 @@ describe('order.created', () => {
 		expect(res.status).toBe(500);
 		await settle();
 
-		expect(await Order.countDocuments({ studentId: customer.studentId })).toBe(0);
-		expect(await StockMovement.countDocuments({})).toBe(0);
+		expect(fault.fired()).toBe(true);
+		expect(await countRows('order', { studentId: customer.studentId })).toBe(0);
+		expect(await countRows('movement')).toBe(0);
 		expect(events('order.created')).toHaveLength(0);
 	});
 });
@@ -117,9 +117,7 @@ describe('order.created', () => {
 describe('order.status', () => {
 	async function webOrder() {
 		const product = await makeProduct({ stockQuantity: 10 });
-		const n = Math.floor(Math.random() * 1e8);
-		return Order.create({
-			orderCode: `W${n}`,
+		return makeOrder({
 			studentId: customer.studentId,
 			fullName: customer.fullName,
 			email: customer.email,
@@ -158,7 +156,7 @@ describe('order.status', () => {
 describe('order.status from the seller route', () => {
 	it('is logged once per successful transition with from and to only', async () => {
 		const product = await makeProduct({ stockQuantity: 10 });
-		const order = await Order.create({
+		const order = await makeOrder({
 			orderCode: `S${Math.floor(Math.random() * 1e8)}`,
 			studentId: customer.studentId,
 			fullName: customer.fullName,
@@ -198,7 +196,7 @@ describe('stock movement events', () => {
 		expect(applied).toHaveLength(1);
 		expect(applied[0]).toMatchObject({ type: 'event', movementType: 'adjust' });
 		expect(Number.isInteger(applied[0].ms)).toBe(true);
-		expect((await StockMovement.findById(movement._id)).status).toBe('applied');
+		expect((await findMovement(movement._id)).status).toBe('applied');
 	});
 
 	it('does not log applied again for a movement that is already applied', async () => {
@@ -213,16 +211,17 @@ describe('stock movement events', () => {
 		const product = await makeProduct({ stockQuantity: 0 });
 		const movement = await adjust(product._id, 3);
 		vi.spyOn(console, 'error').mockImplementation(() => {});
-		vi.spyOn(mongoose, 'startSession').mockRejectedValueOnce(new Error('x'.repeat(500)));
+		const fault = failNextTransactionStart('x'.repeat(500));
 
 		await expect(applyMovement(movement._id)).rejects.toThrow();
+		expect(fault.fired()).toBe(true);
 
 		const failed = events('stock.movement.failed');
 		expect(failed).toHaveLength(1);
 		expect(failed[0]).toMatchObject({ type: 'event', movementType: 'adjust', attempts: 1 });
 		expect(failed[0].error).toHaveLength(200);
 		expect(events('stock.movement.applied')).toHaveLength(0);
-		expect((await StockMovement.findById(movement._id)).status).toBe('pending');
+		expect((await findMovement(movement._id)).status).toBe('pending');
 	});
 });
 
@@ -232,7 +231,7 @@ describe('stock.sweeper', () => {
 		const movement = await recordMovement({
 			productId: product._id, type: 'adjust', delta: 1, idempotencyKey: `sweeper-${product._id}`
 		});
-		await StockMovement.collection.updateOne({ _id: movement._id }, { $set: { createdAt: new Date(Date.now() - 90_000) } });
+		await patchMovement(movement._id, { createdAt: new Date(Date.now() - 90_000) });
 
 		const backlog = await stockQueue.pendingBacklog();
 		expect(backlog.pending).toBeGreaterThanOrEqual(1);
@@ -249,9 +248,10 @@ describe('stock.sweeper', () => {
 	});
 
 	it('still reports the backlog when the re-enqueue step fails, and surfaces that failure', async () => {
-		vi.spyOn(StockMovement, 'find').mockImplementationOnce(() => { throw new Error('redis down'); });
+		const fault = failNextPendingMovementScan('redis down');
 
 		await expect(stockQueue.sweepAndReport({ olderThanMs: 60_000 })).rejects.toThrow('redis down');
+		expect(fault.fired()).toBe(true);
 
 		expect(events('stock.sweeper')).toHaveLength(1);
 	});

@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const slugify = require('slugify');
+const { isDuplicateKeyError, DuplicateKeyError } = require('../data/errors');
 
 // No 0/O/1/I/L: a code is read aloud and typed from a screenshot. Random on
 // purpose, never derived from the ObjectId (its counter part is sequential, so
@@ -36,9 +37,10 @@ function makeSlug(name, code) {
 	return slug || String(code).toLowerCase();
 }
 
-/** True for an E11000 raised by the unique index on `publicCode`. */
+/** True for a unique-constraint violation on `publicCode`, translated or the engine's own. */
 function isPublicCodeDuplicate(error) {
-	if (!error || error.code !== 11000) return false;
+	if (!isDuplicateKeyError(error)) return false;
+	if (error instanceof DuplicateKeyError) return error.fields.includes('publicCode');
 	if (error.keyPattern) return Object.prototype.hasOwnProperty.call(error.keyPattern, 'publicCode');
 	return /publicCode/.test(String(error.message));
 }

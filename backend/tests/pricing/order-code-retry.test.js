@@ -13,9 +13,9 @@ const generateOrderCode = vi.spyOn(helpers, 'generateOrderCode');
 
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
-const { makeProduct } = require('../helpers/factories');
-const Order = require('../../models/Order');
-const StockMovement = require('../../models/StockMovement');
+const { makeProduct, makeOrder } = require('../helpers/factories');
+const { ensureMovementStore, failNextOrderInsertAsDuplicateCode, failNextOrderInsertAsDuplicateOn, listOrders } = require('../helpers/db');
+const { makeAdminSession } = require('../helpers/factories');
 
 describe('POST /api/orders — orderCode collision retry', () => {
 	let app;
@@ -25,7 +25,7 @@ describe('POST /api/orders — orderCode collision retry', () => {
 		// The first insert into a collection that does not exist yet aborts the
 		// surrounding transaction with a retryable WriteConflict, and that retry
 		// would draw an extra order code the mocked sequence below does not cover.
-		await StockMovement.createCollection();
+		await ensureMovementStore();
 	});
 
 	afterEach(() => {
@@ -35,7 +35,7 @@ describe('POST /api/orders — orderCode collision retry', () => {
 	it('retries when the generated code already belongs to an existing order', async () => {
 		const product = await makeProduct({ price: 10000 });
 
-		await Order.create({
+		await makeOrder({
 			orderCode: 'AAAAA',
 			studentId: 'X',
 			fullName: 'X',
@@ -43,8 +43,7 @@ describe('POST /api/orders — orderCode collision retry', () => {
 			phoneNumber: '0900000000',
 			items: [{ productId: product._id, productName: product.name, price: product.price, quantity: 1 }],
 			totalAmount: product.price,
-			status: 'confirmed',
-			statusHistory: [{ status: 'confirmed', updatedBy: 'system' }]
+			stockDeducted: false
 		});
 
 		generateOrderCode.mockReturnValueOnce('AAAAA').mockReturnValueOnce('BBBBB');
@@ -70,17 +69,7 @@ describe('POST /api/orders — orderCode collision retry', () => {
 
 		generateOrderCode.mockReturnValueOnce('CCCCC').mockReturnValueOnce('DDDDD');
 
-		const originalSave = Order.prototype.save;
-		let callCount = 0;
-		const saveSpy = vi.spyOn(Order.prototype, 'save').mockImplementation(async function mockedSave() {
-			callCount += 1;
-			if (callCount === 1) {
-				const duplicateKeyError = new Error('E11000 duplicate key error collection: orders index: orderCode_1');
-				duplicateKeyError.code = 11000;
-				throw duplicateKeyError;
-			}
-			return originalSave.call(this);
-		});
+		const duplicateCode = failNextOrderInsertAsDuplicateCode();
 
 		try {
 			const res = await request(app)
@@ -96,9 +85,86 @@ describe('POST /api/orders — orderCode collision retry', () => {
 
 			expect(res.status).toBe(201);
 			expect(res.body.data.orderCode).toBe('DDDDD');
-			expect(callCount).toBe(2);
+			expect(duplicateCode.fired()).toBe(true);
+			expect(duplicateCode.calls()).toBe(2);
 		} finally {
-			saveSpy.mockRestore();
+			duplicateCode.remove();
+		}
+	});
+
+	it('does not retry a duplicate on another unique column', async () => {
+		const product = await makeProduct({ price: 5000 });
+		generateOrderCode.mockReturnValueOnce('EEEEE').mockReturnValueOnce('FFFFF');
+
+		const duplicate = failNextOrderInsertAsDuplicateOn('studentId');
+		try {
+			const res = await request(app)
+				.post('/api/orders')
+				.send({
+					studentId: '24120013',
+					fullName: 'Nguyen Van D',
+					email: 'd@example.com',
+					phoneNumber: '0987654323',
+					items: [{ productId: product._id.toString(), quantity: 1 }],
+					expectedTotal: 5000
+				});
+
+			expect(res.status).toBe(500);
+			expect(duplicate.fired()).toBe(true);
+			expect(generateOrderCode).toHaveBeenCalledTimes(1);
+			expect(await listOrders()).toEqual([]);
+		} finally {
+			duplicate.remove();
+		}
+	});
+});
+
+describe('POST /api/seller/orders/direct — order number collision retry', () => {
+	let app;
+	let cookies;
+
+	beforeAll(async () => {
+		app = buildTestApp();
+		await ensureMovementStore();
+	});
+
+	beforeEach(async () => {
+		({ cookies } = await makeAdminSession(app)); // admin role passes authenticateSeller too
+	});
+
+	const sell = (product) => request(app)
+		.post('/api/seller/orders/direct')
+		.set('Cookie', cookies)
+		.send({ items: [{ productId: String(product._id), quantity: 1 }], expectedTotal: product.price });
+
+	it.each(['orderNumber', 'orderCode'])('runs the sale again when the insert clashes on %s', async (column) => {
+		const product = await makeProduct({ price: 7000 });
+
+		const duplicate = failNextOrderInsertAsDuplicateOn(column);
+		try {
+			const res = await sell(product);
+
+			expect(res.status).toBe(201);
+			expect(duplicate.fired()).toBe(true);
+			expect(duplicate.calls()).toBe(2);
+			expect(await listOrders()).toHaveLength(1);
+		} finally {
+			duplicate.remove();
+		}
+	});
+
+	it('answers 500 without a second attempt when the clash is on another column', async () => {
+		const product = await makeProduct({ price: 7000 });
+
+		const duplicate = failNextOrderInsertAsDuplicateOn('fullName');
+		try {
+			const res = await sell(product);
+
+			expect(res.status).toBe(500);
+			expect(duplicate.calls()).toBe(1);
+			expect(await listOrders()).toEqual([]);
+		} finally {
+			duplicate.remove();
 		}
 	});
 });

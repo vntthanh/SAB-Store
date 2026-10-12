@@ -42,31 +42,8 @@ function formatDate(date) {
   }).format(new Date(date));
 }
 
-/**
- * Generate pagination info
- * @param {number} page 
- * @param {number} limit 
- * @param {number} total 
- * @returns {Object}
- */
-function getPaginationInfo(page, limit, total) {
-  const totalPages = Math.ceil(total / limit);
-  const hasNext = page < totalPages;
-  const hasPrev = page > 1;
-  
-  return {
-    currentPage: page,
-    totalPages,
-    totalItems: total,
-    itemsPerPage: limit,
-    hasNext,
-    hasPrev
-  };
-}
-
 module.exports = {
   generateOrderCode,
   formatCurrency,
-  formatDate,
-  getPaginationInfo
+  formatDate
 };

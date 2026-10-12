@@ -6,9 +6,9 @@
  * and the combo bug fix (a combo must not apply when only some of its
  * required categories are satisfied).
  */
-const mongoose = require('mongoose');
 const { computeOrderPricing, PricingError } = require('../../services/pricing');
 const { makeProduct, makeCombo } = require('../helpers/factories');
+const { newId, isRowId } = require('../helpers/db');
 
 // Channel-specific rules live in tests/channel; these tests pin the pricing
 // rules themselves on the online channel.
@@ -41,7 +41,7 @@ describe('computeOrderPricing', () => {
 		expect(result.orderItems[0].quantity).toBe(3);
 		// productId must be an ObjectId, not a string, so it writes to Order
 		// without re-casting.
-		expect(result.orderItems[0].productId).toBeInstanceOf(mongoose.Types.ObjectId);
+		expect(isRowId(result.orderItems[0].productId)).toBe(true);
 		expect(result.orderItems[0].productId.toString()).toBe(product._id.toString());
 		expect(result.comboInfo).toBeNull();
 	});
@@ -79,7 +79,7 @@ describe('computeOrderPricing', () => {
 	});
 
 	it('throws PRODUCT_UNAVAILABLE with the missing id when a product does not exist', async () => {
-		const missingId = new mongoose.Types.ObjectId().toString();
+		const missingId = newId();
 
 		await expect(computeOrderPricing([{ productId: missingId, quantity: 1 }], ONLINE)).rejects.toMatchObject({
 			code: 'PRODUCT_UNAVAILABLE',

@@ -7,15 +7,15 @@
  */
 const express = require('express');
 const { randomUUID } = require('crypto');
-const Product = require('../../models/Product');
-const StockMovement = require('../../models/StockMovement');
+const { products, stockLedger } = require('../../data');
+const { isRecordId } = require('../../data/ids');
 const { asPageLimit } = require('../../utils/query-guard');
 const { ERROR_CODES } = require('../../constants/errorCodes');
 const { recordMovement, enqueueMovements, reconcile } = require('../../services/stock-ledger');
+const { gated } = require('../../services/write-gate');
 
 const router = express.Router();
 
-const OBJECT_ID_PATTERN = /^[0-9a-f]{24}$/i;
 const MODES = ['delta', 'target'];
 const MAX_REASON_LENGTH = 200;
 // Far above any real stock count; only keeps sums well inside safe-integer range.
@@ -43,15 +43,15 @@ function parseAdjustment(body) {
  * @body    { mode: 'delta' | 'target', value: integer, reason: string }
  * @desc    Add/remove N units, or set the stock to X. 202: recorded, applied shortly.
  */
-router.post('/products/:id/stock-adjustments', async (req, res) => {
+router.post('/products/:id/stock-adjustments', gated(async (req, res) => {
 	try {
 		const { id } = req.params;
-		if (!OBJECT_ID_PATTERN.test(id)) return invalid(res, 'ID sản phẩm không hợp lệ');
+		if (!isRecordId(id)) return invalid(res, 'ID sản phẩm không hợp lệ');
 
 		const parsed = parseAdjustment(req.body);
 		if (parsed.error) return invalid(res, parsed.error);
 
-		const exists = await Product.exists({ _id: id });
+		const exists = await products.exists(id);
 		if (!exists) {
 			return res.status(404).json({ success: false, code: ERROR_CODES.NOT_FOUND, message: 'Không tìm thấy sản phẩm' });
 		}
@@ -74,7 +74,7 @@ router.post('/products/:id/stock-adjustments', async (req, res) => {
 		console.error('Stock adjustment error:', error);
 		res.status(500).json({ success: false, code: ERROR_CODES.INTERNAL_SERVER_ERROR, message: 'Lỗi server khi điều chỉnh tồn kho' });
 	}
-});
+}));
 
 /**
  * @route   GET /api/admin/products/:id/stock-movements?page&limit
@@ -83,29 +83,13 @@ router.post('/products/:id/stock-adjustments', async (req, res) => {
 router.get('/products/:id/stock-movements', async (req, res) => {
 	try {
 		const { id } = req.params;
-		if (!OBJECT_ID_PATTERN.test(id)) {
+		if (!isRecordId(id)) {
 			return res.status(400).json({ success: false, code: ERROR_CODES.VALIDATION_ERROR, message: 'ID sản phẩm không hợp lệ' });
 		}
 
-		const { page, limit } = asPageLimit(req.query.page, req.query.limit);
-		const filter = { productId: id };
-		const [items, total] = await Promise.all([
-			StockMovement.find(filter)
-				.sort({ createdAt: -1, _id: -1 })
-				.skip((page - 1) * limit)
-				.limit(limit)
-				.select('type delta target stockAfter status reason createdBy orderId createdAt appliedAt')
-				.lean(),
-			StockMovement.countDocuments(filter)
-		]);
+		const { data, meta } = await stockLedger.listMovementsOfProduct(id, asPageLimit(req.query.page, req.query.limit));
 
-		res.json({
-			success: true,
-			data: {
-				items,
-				pagination: { page, pages: Math.ceil(total / limit), total, limit }
-			}
-		});
+		res.json({ success: true, data, meta });
 	} catch (error) {
 		console.error('Stock movements error:', error);
 		res.status(500).json({ success: false, code: ERROR_CODES.INTERNAL_SERVER_ERROR, message: 'Lỗi server khi lấy lịch sử tồn kho' });

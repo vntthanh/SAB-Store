@@ -1,13 +1,15 @@
 const express = require('express');
 const ExcelJS = require('exceljs');
-const Order = require('../../models/Order');
+const { orders: orderRepo } = require('../../data');
 const { formatDate, formatCurrency } = require('../../utils/helpers');
-const { asEnum, safeSearch, asDate } = require('../../utils/query-guard');
+const { asEnum, asString, asDate } = require('../../utils/query-guard');
 const router = express.Router();
 
-// Sourced from the schema rather than hardcoded so this stays correct if
-// Phase 06 changes the enum (e.g. Q3's plan to drop 'pending').
-const ORDER_STATUS_VALUES = Order.schema.path('status').enumValues;
+// Taken from the store rather than hardcoded so the filter follows the status enum.
+const ORDER_STATUS_VALUES = orderRepo.STATUS_VALUES;
+
+// The columns a free-text search looks in.
+const SEARCH_FIELDS = ['orderCode', 'studentId', 'fullName', 'email'];
 
 /**
  * Helper function to get status text in Vietnamese
@@ -41,38 +43,21 @@ function sanitizeCell(value) {
  */
 router.get('/excel', async (req, res) => {
 	try {
-		// Untrusted query input — coerce through query-guard so a crafted
-		// value like status={"$ne":null} or an unescaped search regex can't
-		// reshape the query.
+		// Untrusted query input: coerced so a crafted value like
+		// status={"$ne":null} can't reshape the query; the repository escapes the
+		// search text.
 		const status = asEnum(req.query.status, [...ORDER_STATUS_VALUES, 'all']);
-		const search = safeSearch(req.query.search);
+		const search = asString(req.query.search);
 		const startDate = asDate(req.query.startDate);
 		const endDate = asDate(req.query.endDate);
 
-		// Build query
-		let query = {};
-
-		if (status && status !== 'all') {
-			query.status = status;
-		}
-
-		if (search) {
-			query.$or = [
-				{ orderCode: search },
-				{ studentId: search },
-				{ fullName: search },
-				{ email: search }
-			];
-		}
-
-		if (startDate || endDate) {
-			query.createdAt = {};
-			if (startDate) query.createdAt.$gte = startDate;
-			if (endDate) query.createdAt.$lte = endDate;
-		}
-
-		// Get orders
-		const orders = await Order.find(query).sort({ createdAt: -1 }).lean();
+		const orders = await orderRepo.listAll({
+			status: status === 'all' ? undefined : status,
+			search,
+			searchFields: SEARCH_FIELDS,
+			createdFrom: startDate,
+			createdTo: endDate
+		});
 
 		// Create workbook
 		const workbook = new ExcelJS.Workbook();

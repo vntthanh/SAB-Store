@@ -1,7 +1,81 @@
 const { ERROR_CODES } = require('../constants/errorCodes');
+const { backendName } = require('../data/backend-name');
 
 // Single segment after /api/orders only, so the collection itself keeps its path.
 const PUBLIC_ORDER_LOOKUP = /^\/api\/orders\/[^/]+\/?$/i;
+
+// scheme://user:password@host: Prisma, pg and MongoDB errors can quote the connection
+// string they were given. Greedy up to the last '@' of the token so a password that
+// contains a raw '@' or '/' is removed whole; the host stays for diagnosis.
+const CONNECTION_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s'"`]*@/gi;
+
+const REDACTED = '[redacted]';
+const CONNECTION_ENV_NAMES = ['DATABASE_URL', 'MONGODB_URI'];
+// A shorter password would blank out ordinary words in every log line.
+const MIN_SECRET_LENGTH = 4;
+
+// The password of the first `scheme://user:password@` in a connection string. The
+// authority runs to the last '@' before the path so a raw '@' in the password
+// stays inside it.
+function passwordOf(connectionString) {
+	const match = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)@/i.exec(connectionString);
+	if (!match) return null;
+	const colon = match[1].indexOf(':');
+	return colon === -1 ? null : match[1].slice(colon + 1);
+}
+
+function decoded(value) {
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		return value;
+	}
+}
+
+// The regex below stops at a quote or backtick, so a password holding one would
+// leak its tail. The configured passwords are known exactly: replace them as
+// written, percent-decoded, re-encoded and JSON-escaped (the logger prints JSON).
+function configuredSecrets() {
+	const secrets = new Set();
+	for (const name of CONNECTION_ENV_NAMES) {
+		const stored = process.env[name] ? passwordOf(process.env[name]) : null;
+		if (!stored) continue;
+		const plain = decoded(stored);
+		for (const form of [stored, plain, encodeURIComponent(plain)]) {
+			if (form.length < MIN_SECRET_LENGTH) continue;
+			secrets.add(form);
+			secrets.add(JSON.stringify(form).slice(1, -1));
+		}
+	}
+	// Longest first: a password that contains another one is replaced whole.
+	return [...secrets].sort((a, b) => b.length - a.length);
+}
+
+function redactCredentials(text) {
+	if (typeof text !== 'string') return text;
+	let safe = text;
+	for (const secret of configuredSecrets()) safe = safe.split(secret).join(REDACTED);
+	return safe.replace(CONNECTION_USERINFO, `$1${REDACTED}@`);
+}
+
+// Explicit fields only: util.inspect and String(error) include own properties,
+// and a Node TypeError from `new URL` carries the whole URL in `input`.
+function describeError(error) {
+	const isObject = error !== null && typeof error === 'object';
+	const message = typeof error === 'string' ? error : isObject && typeof error.message === 'string' ? error.message : 'Non-error value thrown';
+	const code = isObject && (typeof error.code === 'string' || typeof error.code === 'number') ? error.code : undefined;
+	return {
+		name: isObject && typeof error.name === 'string' ? error.name : undefined,
+		message: redactCredentials(message),
+		stack: isObject && typeof error.stack === 'string' ? redactCredentials(error.stack) : undefined,
+		code
+	};
+}
+
+// The context of a log call is free-form, so the printed text is redacted as a whole.
+function printJson(label, info) {
+	console.error(label, redactCredentials(JSON.stringify(info, null, 2)));
+}
 
 class ErrorLogger {
 	// An order code is the only credential of the public tracking lookup and the
@@ -13,11 +87,12 @@ class ErrorLogger {
 
 	static log(error, context = {}) {
 		const timestamp = new Date().toISOString();
+		const { message, stack } = describeError(error);
 		const errorInfo = {
 			timestamp,
 			errorCode: error.errorCode || ERROR_CODES.INTERNAL_SERVER_ERROR,
-			message: error.message,
-			stack: error.stack,
+			message,
+			stack,
 			context: {
 				...context,
 				userId: context.userId || 'anonymous',
@@ -27,9 +102,9 @@ class ErrorLogger {
 		};
 
 		if (error.isOperational) {
-			console.error('[OPERATIONAL ERROR]', JSON.stringify(errorInfo, null, 2));
+			printJson('[OPERATIONAL ERROR]', errorInfo);
 		} else {
-			console.error('[SYSTEM ERROR]', JSON.stringify(errorInfo, null, 2));
+			printJson('[SYSTEM ERROR]', errorInfo);
 		}
 
 		return errorInfo;
@@ -56,7 +131,7 @@ class ErrorLogger {
 	static logDatabase(operation, error, details = {}) {
 		const context = {
 			operation,
-			database: 'mongodb',
+			database: backendName === 'postgres' ? 'postgresql' : 'mongodb',
 			collection: details.collection,
 			query: details.query,
 			errorName: error.name,
@@ -142,12 +217,7 @@ class ErrorLogger {
 			timestamp: new Date().toISOString(),
 			level: 'CRITICAL',
 			message,
-			error: {
-				name: error.name,
-				message: error.message,
-				stack: error.stack,
-				code: error.code
-			},
+			error: describeError(error),
 			context: {
 				...context,
 				processUptime: process.uptime(),
@@ -158,7 +228,7 @@ class ErrorLogger {
 			}
 		};
 
-		console.error('[CRITICAL]', JSON.stringify(criticalInfo, null, 2));
+		printJson('[CRITICAL]', criticalInfo);
 
 		return criticalInfo;
 	}
@@ -168,12 +238,7 @@ class ErrorLogger {
 			timestamp: new Date().toISOString(),
 			level: 'CRITICAL',
 			type: origin,
-			error: {
-				name: error.name,
-				message: error.message,
-				stack: error.stack,
-				code: error.code
-			},
+			error: describeError(error),
 			process: {
 				uptime: process.uptime(),
 				memoryUsage: process.memoryUsage(),
@@ -189,7 +254,7 @@ class ErrorLogger {
 			}
 		};
 
-		console.error(`[${origin.toUpperCase()}]`, JSON.stringify(criticalInfo, null, 2));
+		printJson(`[${origin.toUpperCase()}]`, criticalInfo);
 
 		if (process.env.NODE_ENV === 'production') {
 			console.error('[ACTION] Application will restart to maintain stability');
@@ -199,19 +264,12 @@ class ErrorLogger {
 	}
 
 	static logUnhandledRejection(reason, promise) {
-		const error = reason instanceof Error ? reason : new Error(String(reason));
-
 		const rejectionInfo = {
 			timestamp: new Date().toISOString(),
 			level: 'CRITICAL',
 			type: 'unhandledRejection',
-			reason: String(reason),
-			error: {
-				name: error.name,
-				message: error.message,
-				stack: error.stack
-			},
-			promise: promise.toString(),
+			error: describeError(reason),
+			promise: Object.prototype.toString.call(promise),
 			process: {
 				uptime: process.uptime(),
 				memoryUsage: process.memoryUsage(),
@@ -220,7 +278,7 @@ class ErrorLogger {
 			}
 		};
 
-		console.error('[UNHANDLED REJECTION]', JSON.stringify(rejectionInfo, null, 2));
+		printJson('[UNHANDLED REJECTION]', rejectionInfo);
 
 		return rejectionInfo;
 	}

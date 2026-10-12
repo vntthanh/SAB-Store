@@ -1,7 +1,6 @@
 const express = require('express');
-const Settings = require('../models/Settings');
-
-const { SETTINGS_KEY, DEFAULT_STORE_TITLE, DEFAULT_NOTICES, NOTICE_FIELDS, DEFAULT_CONTACT, CONTACT_FIELDS } = Settings;
+const { settings: settingsRepo } = require('../data');
+const { DEFAULT_STORE_TITLE, DEFAULT_NOTICES, NOTICE_FIELDS, DEFAULT_CONTACT, CONTACT_FIELDS } = require('../constants/settings');
 // Free-text storefront fields: a missing one falls back to its default, an
 // admin-saved empty string means "hide it".
 const TEXT_DEFAULTS = { ...DEFAULT_NOTICES, ...DEFAULT_CONTACT };
@@ -16,13 +15,13 @@ const router = express.Router();
  */
 router.get('/', async (req, res) => {
 	try {
-		const settings = await Settings.findOne({ key: SETTINGS_KEY }).select(['storeTitle', ...TEXT_FIELDS]).lean();
+		const settings = await settingsRepo.findStorefront();
 
 		res.json({
 			success: true,
 			data: {
-				// A document saved before storeTitle existed has no such field, and
-				// lean() skips schema defaults.
+				// findStorefront returns stored values only; a row saved before
+				// storeTitle existed has none.
 				storeTitle: settings?.storeTitle || DEFAULT_STORE_TITLE,
 				// `??` rather than `||`: an admin-saved empty string means "hide it".
 				...Object.fromEntries(TEXT_FIELDS.map((field) => [

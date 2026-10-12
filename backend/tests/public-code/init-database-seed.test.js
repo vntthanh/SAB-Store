@@ -1,4 +1,4 @@
-const Product = require('../../models/Product');
+const { listProducts, countRows } = require('../helpers/db');
 const { PUBLIC_CODE_PATTERN } = require('../../utils/public-code');
 const { initDatabase } = require('../../init-database');
 
@@ -15,7 +15,6 @@ describe('initDatabase seed', () => {
 		process.env.ADMIN_PASSWORD = 'Seed-Admin-Pass-123';
 		delete process.env.INIT_EMPTY_DATABASE;
 		vi.spyOn(console, 'log').mockImplementation(() => {});
-		return Product.init();
 	});
 
 	afterEach(() => {
@@ -29,12 +28,24 @@ describe('initDatabase seed', () => {
 	it('gives every sample product, created by insertMany, a unique code and a slug', async () => {
 		await initDatabase();
 
-		const products = await Product.find({}).lean();
+		const products = await listProducts();
 		expect(products.length).toBeGreaterThan(0);
 		for (const product of products) {
 			expect(product.publicCode).toMatch(PUBLIC_CODE_PATTERN);
 			expect(product.slug).toBeTruthy();
 		}
 		expect(new Set(products.map((p) => p.publicCode)).size).toBe(products.length);
+	});
+
+	it('seeds a mixed-case admin once and leaves it alone on the next run', async () => {
+		// The second boot finds an admin and must not create another from the raw
+		// env values, whatever case the auth library stored them in.
+		process.env.ADMIN_EMAIL = 'Seed-Admin@Example.com';
+		process.env.ADMIN_USERNAME = 'SeedAdmin';
+
+		await initDatabase();
+		await expect(initDatabase()).resolves.not.toThrow();
+
+		expect(await countRows('user')).toBe(1);
 	});
 });

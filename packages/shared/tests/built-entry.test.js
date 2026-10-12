@@ -16,4 +16,33 @@ describe('built ESM entry', () => {
 		expect(newPassword.safeParse(5).error.issues[0].message).toBe('Mật khẩu là bắt buộc');
 		expect(newPassword.safeParse('abc').error.issues.map((i) => i.message)).toContain('Mật khẩu phải có từ 8-128 ký tự');
 	});
+
+	it('exports the phrase an admin types to confirm a restore', async () => {
+		const { RESTORE_CONFIRMATION } = await import('../dist/index.js');
+		const required = (await import('node:module')).createRequire(import.meta.url)('../dist/index.cjs');
+		expect(RESTORE_CONFIRMATION).toBe('KHOI PHUC');
+		expect(required.RESTORE_CONFIRMATION).toBe(RESTORE_CONFIRMATION);
+	});
+
+	it('exports the pagination helpers from the ESM and CJS builds', async () => {
+		const esm = await import('../dist/index.js');
+		const cjs = (await import('node:module')).createRequire(import.meta.url)('../dist/index.cjs');
+		for (const built of [esm, cjs]) {
+			expect(built.MAX_PAGE_LIMIT).toBe(100);
+			expect(built.paginationQuery.parse({ page: '-5', limit: '9999' })).toEqual({ page: 1, limit: 100 });
+			expect(built.toSkipTake(2, 10)).toEqual({ skip: 10, take: 10 });
+			expect(built.buildPaginationMeta(0, { page: 1, limit: 10 }).totalPages).toBe(0);
+		}
+	});
+
+	it('maps an ObjectId to the same UUIDv7 from the ESM and CJS builds', async () => {
+		const esm = await import('../dist/index.js');
+		const cjs = (await import('node:module')).createRequire(import.meta.url)('../dist/index.cjs');
+		const oid = '507f1f77bcf86cd799439011';
+		expect(esm.objectIdToUuidV7(oid)).toBe('013a7092-e8d8-7bcf-a1b3-5e650e404400');
+		expect(cjs.objectIdToUuidV7(oid)).toBe(esm.objectIdToUuidV7(oid));
+		expect(cjs.uuidV7ToObjectId(cjs.objectIdToUuidV7(oid))).toBe(oid);
+		expect(cjs.isRecordId(oid)).toBe(true);
+		expect(cjs.isUuid(oid)).toBe(false);
+	});
 });

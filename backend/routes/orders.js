@@ -1,5 +1,4 @@
 const express = require('express');
-const Order = require('../models/Order');
 const { validateOrder, trimText } = require('../middleware/validation');
 const { generateOrderCode } = require('../utils/helpers');
 const { sendOrderToAppScript } = require('../utils/appscript');
@@ -7,8 +6,11 @@ const { generateOrderPaymentQR, formatOrderPaymentDescription } = require('../ut
 const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError } = require('../services/pricing');
 const { recordOrderMovements } = require('../services/stock');
 const { enqueueMovements } = require('../services/stock-ledger');
-const { withTransaction } = require('../utils/transaction');
+const { orders, withTransaction } = require('../data');
+const { RecordValidationError, isDuplicateKeyOn } = require('../data/errors');
+const { gated } = require('../services/write-gate');
 const { logEvent, orderCreatedFields } = require('../utils/log-event');
+const ErrorLogger = require('../utils/errorLogger');
 const router = express.Router();
 
 const MAX_ORDER_CODE_ATTEMPTS = 10;
@@ -18,7 +20,7 @@ const MAX_ORDER_CODE_ATTEMPTS = 10;
  * @desc    Create a new order
  * @access  Public
  */
-router.post('/', validateOrder, async (req, res) => {
+router.post('/', validateOrder, gated(async (req, res) => {
 	try {
 		const { items, expectedTotal } = req.body;
 		// Validation checks the trimmed text but does not rewrite the request, so
@@ -36,20 +38,20 @@ router.post('/', validateOrder, async (req, res) => {
 		// an order for a product that has none is accepted.
 		//
 		// A duplicate orderCode (another order already has it, or two requests drew
-		// the same fresh code) is an E11000 that aborts the transaction, so the
-		// whole transaction runs again with a new code.
+		// the same fresh code) aborts the transaction, so the whole transaction
+		// runs again with a new code.
 		let created;
 		for (let attempt = 1; !created; attempt++) {
 			try {
-				created = await withTransaction(async (session) => {
+				created = await withTransaction(async (tx) => {
 					const pricing = await computeOrderPricing(items, {
 						channel: 'online',
-						session,
+						session: tx,
 						enforceQuantityLimits: true
 					});
 					assertExpectedTotal(expectedTotal, pricing.totalAmount);
 
-					const order = await new Order({
+					const order = await orders.create({
 						orderCode: generateOrderCode(),
 						studentId,
 						fullName,
@@ -70,7 +72,7 @@ router.post('/', validateOrder, async (req, res) => {
 								note: 'Đơn hàng được tạo từ hệ thống'
 							}
 						]
-					}).save({ session });
+					}, tx);
 
 					const movements = await recordOrderMovements({
 						orderId: order._id,
@@ -79,7 +81,7 @@ router.post('/', validateOrder, async (req, res) => {
 						keyTag: 'create',
 						createdBy: 'system',
 						reason: `Đơn hàng ${order.orderCode}`
-					}, { session });
+					}, { tx });
 
 					return { order, pricing, movements };
 				});
@@ -88,11 +90,12 @@ router.post('/', validateOrder, async (req, res) => {
 					console.error('❌ Pricing rejected order:', error.code, error.details);
 					return res.status(error.httpStatus).json(pricingErrorBody(error));
 				}
-				if (error.code === 11000 && attempt < MAX_ORDER_CODE_ATTEMPTS) {
+				const codeCollision = isDuplicateKeyOn(error, 'orderCode');
+				if (codeCollision && attempt < MAX_ORDER_CODE_ATTEMPTS) {
 					console.warn('⚠️ orderCode collision, retrying transaction');
 					continue;
 				}
-				if (error.code === 11000) {
+				if (codeCollision) {
 					console.error('❌ Failed to create order after', MAX_ORDER_CODE_ATTEMPTS, 'attempts (orderCode collisions)');
 					return res.status(500).json({
 						success: false,
@@ -152,24 +155,21 @@ router.post('/', validateOrder, async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('💥 Error creating order:', {
-			error: error.message,
-			stack: error.stack,
-			timestamp: new Date().toISOString()
-		});
+		// Not the request body: it holds the customer's note and contact details.
+		ErrorLogger.log(error, { route: 'POST /orders' });
 
 		// More specific error handling
-		if (error.name === 'ValidationError') {
-			console.error('❌ Validation error fields:', Object.keys(error.errors || {}));
+		if (error instanceof RecordValidationError) {
+			console.error('❌ Validation error fields:', error.fieldErrors.map(entry => entry.field));
 			return res.status(400).json({
 				success: false,
 				message: 'Dữ liệu đơn hàng không hợp lệ',
-				errors: Object.values(error.errors).map(err => err.message)
+				errors: error.fieldErrors.map(entry => entry.message)
 			});
 		}
 
 		if (error.name === 'MongoError' || error.name === 'MongoServerError') {
-			console.error('❌ Database error:', error.message);
+			console.error('Database error creating order (details logged above)');
 			return res.status(500).json({
 				success: false,
 				message: 'Lỗi cơ sở dữ liệu'
@@ -182,7 +182,7 @@ router.post('/', validateOrder, async (req, res) => {
 			...(process.env.NODE_ENV === 'development' && { debug: error.message })
 		});
 	}
-});
+}));
 
 /**
  * @route   GET /api/orders/:orderCode
@@ -193,9 +193,7 @@ router.get('/:orderCode', async (req, res) => {
 	try {
 		const { orderCode } = req.params;
 
-		const order = await Order.findOne({
-			orderCode: orderCode.toUpperCase()
-		}).populate('items.productId', 'name description');
+		const order = await orders.findByCode(orderCode.toUpperCase());
 
 		if (!order) {
 			return res.status(404).json({

@@ -1,7 +1,10 @@
 services:
   # SAB Store MongoDB Database
+  # Kept for the MongoDB to PostgreSQL migration only; starts with
+  # `docker compose --profile legacy up mongodb`.
   mongodb:
     image: mongo:6.0.28@sha256:8b6d8f5bbedb25cb73517b65cf99f13aeb75ad5b157a56c479287a840bbad3ac
+    profiles: ["legacy"]
     container_name: sabstore_mongodb
     restart: unless-stopped
     # Replica set (not standalone) so multi-document transactions work. The keyfile
@@ -164,7 +167,7 @@ services:
       - sabstore_network
 
   # SAB Store Redis: dispatcher for the stock-movement queue (BullMQ). It is NOT the
-  # source of truth - every stock movement is a pending document in MongoDB first, and
+  # source of truth - every stock movement is a pending record in the database first, and
   # a sweeper re-enqueues anything Redis lost - so losing this data only delays stock
   # updates. `noeviction` is deliberate: Redis must refuse writes when full rather than
   # silently drop queued jobs.
@@ -218,6 +221,78 @@ services:
     networks:
       - sabstore_network
 
+  # SAB Store PostgreSQL. Guard, tuning and healthcheck: see coolify.compose.yml.
+  sabstore-postgres:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    container_name: sabstore_postgres
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        fail() { echo "$$1" >&2; exit 1; }
+        case "$${POSTGRES_USER:-}" in
+          '' | *[!a-z0-9_]*) fail "SAB_PG_USER must be non-empty and use only a-z 0-9 _" ;;
+        esac
+        case "$${POSTGRES_DB:-}" in
+          '' | *[!a-z0-9_]*) fail "SAB_PG_DB must be non-empty and use only a-z 0-9 _" ;;
+        esac
+        pw="$${POSTGRES_PASSWORD:-}"
+        case "$$pw" in
+          '' | *[!0-9a-f]*) fail "SAB_PG_PASSWORD must be lowercase hex (openssl rand -hex 24)" ;;
+        esac
+        [ "$${#pw}" -ge 32 ] || fail "SAB_PG_PASSWORD must be at least 32 hex characters"
+        exec docker-entrypoint.sh postgres -c shared_buffers=64MB -c max_connections=30 -c work_mem=4MB -c effective_cache_size=192MB -c timezone=UTC -c log_min_duration_statement=500 -c log_parameter_max_length=0
+    mem_limit: 384m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      POSTGRES_USER: ${SAB_PG_USER:-sab}
+      # Dev-only password; never reuse it outside a local stack.
+      POSTGRES_PASSWORD: ${SAB_PG_PASSWORD:-0123456789abcdef0123456789abcdef}
+      POSTGRES_DB: ${SAB_PG_DB:-sabstore}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8 --locale=C.UTF-8
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    ports:
+      # Bound to loopback only, like mongodb above.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\"" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 2s
+    networks:
+      - sabstore_network
+
+  # One-shot job: backs the database up, then applies pending migrations
+  # (backend/scripts/release.sh). The backend starts only after it succeeds.
+  sabstore-release:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: release
+    restart: "no"
+    mem_limit: 256m
+    environment:
+      DATABASE_URL: postgresql://${SAB_PG_USER:-sab}:${SAB_PG_PASSWORD:-0123456789abcdef0123456789abcdef}@sabstore-postgres:5432/${SAB_PG_DB:-sabstore}
+      BACKUP_DIR: /backups
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - pg_backups:/backups
+    depends_on:
+      sabstore-postgres:
+        condition: service_healthy
+    networks:
+      - sabstore_network
+
   # SAB Store Backend API
   backend:
     build:
@@ -242,13 +317,14 @@ services:
       # shaped, and production mode refuses to initialise an empty database.
       NODE_ENV: development
       PORT: ${BACKEND_PORT:-5000}
-      # Single source for the public origin (AD-2): BASE_URL/CORS_ORIGIN
+      # Single source for the public origin: BASE_URL/CORS_ORIGIN
       # both derive from PUBLIC_URL instead of carrying their own values
       # that can drift apart. `:-` keeps this a soft default in dev only;
       # prod.compose.yml uses `:?` to fail fast instead.
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
       BASE_URL: ${PUBLIC_URL:-http://localhost}
-      MONGODB_URI: ${MONGODB_URI:-mongodb://admin:password123@mongodb:27017/minipreorder?authSource=admin&replicaSet=rs0}
+      DATA_BACKEND: postgres
+      DATABASE_URL: postgresql://${SAB_PG_USER:-sab}:${SAB_PG_PASSWORD:-0123456789abcdef0123456789abcdef}@sabstore-postgres:5432/${SAB_PG_DB:-sabstore}
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-here}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-sab@fit.hcmus.edu.vn}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
@@ -270,8 +346,9 @@ services:
     expose:
       - "5000"
     depends_on:
-      mongodb:
-        condition: service_healthy
+      # The backend refuses to boot while migrations are pending.
+      sabstore-release:
+        condition: service_completed_successfully
       sabstore-seaweedfs:
         condition: service_healthy
       sabstore-redis:
@@ -297,7 +374,7 @@ services:
   # SAB Store Frontend React App (with Nginx Reverse Proxy)
   frontend:
     # No VITE_API_URL build arg/env: the SPA calls the API via the relative
-    # path /api (AD-3), so nothing domain-specific is baked into the bundle.
+    # path /api, so nothing domain-specific is baked into the bundle.
     build:
       context: .
       dockerfile: frontend/Dockerfile
@@ -340,6 +417,8 @@ services:
 
 volumes:
   mongodb_data:
+  postgres_data:
+  pg_backups:
   seaweedfs_data:
   redis_data:
   backend_deps:

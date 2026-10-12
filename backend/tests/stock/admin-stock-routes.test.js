@@ -1,17 +1,12 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeAdminSession } = require('../helpers/factories');
-const Product = require('../../models/Product');
-const StockMovement = require('../../models/StockMovement');
+const { findProduct, findMovement, movements, countRows, patchProduct, patchMovement } = require('../helpers/db');
 const { recordMovement, applyMovement } = require('../../services/stock-ledger');
 
 describe('admin stock routes', () => {
 	let app;
 	let cookies;
-
-	beforeAll(async () => {
-		await StockMovement.init();
-	});
 
 	beforeEach(async () => {
 		app = buildTestApp();
@@ -40,10 +35,10 @@ describe('admin stock routes', () => {
 			expect(res.status).toBe(202);
 			expect(res.body.success).toBe(true);
 			expect(res.body.data).toMatchObject({ type: 'adjust', delta: -2, status: 'pending', reason: 'broken' });
-			const stored = await StockMovement.findById(res.body.data._id).lean();
+			const stored = await findMovement(res.body.data._id);
 			expect(stored).toMatchObject({ type: 'adjust', delta: -2, status: 'pending' });
 			expect(stored.createdBy).toMatch(/@test\.local$/);
-			expect((await Product.findById(product._id)).stockQuantity).toBe(5);
+			expect((await findProduct(product._id)).stockQuantity).toBe(5);
 		});
 
 		it('records target mode as set_target with the delta left for the worker', async () => {
@@ -52,7 +47,7 @@ describe('admin stock routes', () => {
 			const res = await post(product._id, { mode: 'target', value: 0, reason: 'recount' });
 
 			expect(res.status).toBe(202);
-			expect(await StockMovement.findById(res.body.data._id).lean()).toMatchObject({ type: 'set_target', target: 0, delta: null });
+			expect(await findMovement(res.body.data._id)).toMatchObject({ type: 'set_target', target: 0, delta: null });
 		});
 
 		it('records two identical requests as two adjustments', async () => {
@@ -60,7 +55,7 @@ describe('admin stock routes', () => {
 			await post(product._id, { mode: 'delta', value: 1, reason: 'a' });
 			await post(product._id, { mode: 'delta', value: 1, reason: 'a' });
 
-			expect(await StockMovement.countDocuments({ productId: product._id })).toBe(2);
+			expect(await countRows('movement', { productId: String(product._id) })).toBe(2);
 		});
 
 		it.each([
@@ -83,13 +78,13 @@ describe('admin stock routes', () => {
 
 			expect(res.status).toBe(400);
 			expect(res.body).toMatchObject({ success: false, code: 'STOCK_ADJUSTMENT_INVALID' });
-			expect(await StockMovement.countDocuments({})).toBe(0);
+			expect(await countRows('movement')).toBe(0);
 		});
 
 		it('answers 400 for a malformed product id and 404 for an unknown one', async () => {
 			expect((await post('not-an-id', { mode: 'delta', value: 1, reason: 'r' })).status).toBe(400);
 			expect((await post('507f1f77bcf86cd799439011', { mode: 'delta', value: 1, reason: 'r' })).status).toBe(404);
-			expect(await StockMovement.countDocuments({})).toBe(0);
+			expect(await countRows('movement')).toBe(0);
 		});
 	});
 
@@ -105,14 +100,24 @@ describe('admin stock routes', () => {
 			const res = await request(app).get(`/api/admin/products/${product._id}/stock-movements?page=1&limit=2`).set('Cookie', cookies);
 
 			expect(res.status).toBe(200);
-			expect(res.body.data.items.map((m) => m.delta)).toEqual([3, 2]);
-			expect(res.body.data.pagination).toEqual({ page: 1, pages: 2, total: 3, limit: 2 });
-			expect(Object.keys(res.body.data.items[0]).sort()).toEqual(
+			// Contract change: the shared { data, meta } envelope replaced { data: { items, pagination } }.
+			expect(res.body.data.map((m) => m.delta)).toEqual([3, 2]);
+			expect(res.body.meta).toEqual({ page: 1, limit: 2, total: 3, totalPages: 2 });
+			expect(Object.keys(res.body.data[0]).sort()).toEqual(
 				['_id', 'appliedAt', 'createdAt', 'createdBy', 'delta', 'orderId', 'reason', 'status', 'stockAfter', 'target', 'type'].sort()
 			);
 
 			const page2 = await request(app).get(`/api/admin/products/${product._id}/stock-movements?page=2&limit=2`).set('Cookie', cookies);
-			expect(page2.body.data.items.map((m) => m.delta)).toEqual([1]);
+			expect(page2.body.data.map((m) => m.delta)).toEqual([1]);
+		});
+
+		it('reports totalPages 0 for a product with no movements', async () => {
+			const product = await makeProduct();
+
+			const res = await request(app).get(`/api/admin/products/${product._id}/stock-movements`).set('Cookie', cookies);
+
+			expect(res.body.data).toEqual([]);
+			expect(res.body.meta).toEqual({ page: 1, limit: 20, total: 0, totalPages: 0 });
 		});
 
 		it('answers 400 for a malformed id and ignores operator-shaped paging input', async () => {
@@ -128,7 +133,7 @@ describe('admin stock routes', () => {
 			const product = await makeProduct({ stockQuantity: 0 });
 			const m = await recordMovement({ productId: product._id, type: 'adjust', delta: 4, idempotencyKey: 'rec-1' });
 			await applyMovement(m._id);
-			await Product.updateOne({ _id: product._id }, { $set: { stockQuantity: 9 } });
+			await patchProduct(product._id, { stockQuantity: 9 });
 
 			const res = await request(app).get('/api/admin/stock/reconcile').set('Cookie', cookies);
 
@@ -143,11 +148,11 @@ describe('admin stock routes', () => {
 			const quiet = await makeProduct({ stockQuantity: 0 });
 			await recordMovement({ productId: busy._id, type: 'adjust', delta: 1, idempotencyKey: 'p-1' });
 			const applied = await recordMovement({ productId: busy._id, type: 'adjust', delta: 1, idempotencyKey: 'p-2' });
-			await StockMovement.updateOne({ _id: applied._id }, { $set: { status: 'applied' } });
+			await patchMovement(applied._id, { status: 'applied' });
 
 			const res = await request(app).get('/api/admin/products').set('Cookie', cookies);
 
-			const byId = new Map(res.body.data.products.map((p) => [p._id, p]));
+			const byId = new Map(res.body.data.map((p) => [p._id, p]));
 			expect(byId.get(String(busy._id)).pendingMovements).toBe(1);
 			expect(byId.get(String(quiet._id)).pendingMovements).toBe(0);
 			expect(byId.get(String(busy._id)).name).toBe(busy.name);
@@ -161,8 +166,8 @@ describe('admin stock routes', () => {
 
 			expect(res.status).toBe(201);
 			const id = res.body.data.product._id;
-			expect((await Product.findById(id)).stockQuantity).toBe(12);
-			expect(await StockMovement.find({ productId: id }).lean()).toEqual([
+			expect((await findProduct(id)).stockQuantity).toBe(12);
+			expect(await movements({ productId: id })).toEqual([
 				expect.objectContaining({ type: 'opening', delta: 12, status: 'applied', stockAfter: 12 })
 			]);
 			const report = await request(app).get('/api/admin/stock/reconcile').set('Cookie', cookies);
@@ -174,7 +179,7 @@ describe('admin stock routes', () => {
 				.send({ name: 'Empty', price: 1000, category: 'general' });
 
 			expect(res.status).toBe(201);
-			expect(await StockMovement.countDocuments({})).toBe(0);
+			expect(await countRows('movement')).toBe(0);
 		});
 
 		it('a failed create leaves neither a product nor a movement', async () => {
@@ -182,8 +187,8 @@ describe('admin stock routes', () => {
 				.send({ name: 'x'.repeat(101), price: 1000, category: 'general', stockQuantity: 5 });
 
 			expect(res.status).toBe(400);
-			expect(await Product.countDocuments({})).toBe(0);
-			expect(await StockMovement.countDocuments({})).toBe(0);
+			expect(await countRows('product')).toBe(0);
+			expect(await countRows('movement')).toBe(0);
 		});
 
 		it('PUT ignores stockQuantity but still applies other fields', async () => {
@@ -193,10 +198,10 @@ describe('admin stock routes', () => {
 				.send({ name: 'After', stockQuantity: 999 });
 
 			expect(res.status).toBe(200);
-			const stored = await Product.findById(product._id);
+			const stored = await findProduct(product._id);
 			expect(stored.name).toBe('After');
 			expect(stored.stockQuantity).toBe(50);
-			expect(await StockMovement.countDocuments({})).toBe(0);
+			expect(await countRows('movement')).toBe(0);
 		});
 	});
 });

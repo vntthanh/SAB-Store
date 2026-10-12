@@ -2,7 +2,8 @@ import { z } from '../z.js';
 import { STUDENT_ID_HINT, studentId } from './student-id.js';
 import {
 	arrayElement,
-	mongoId,
+	isPlainObject,
+	recordId,
 	nullishAsEmpty,
 	onlyStrings,
 	optionalText,
@@ -18,7 +19,7 @@ const PHONE_PATTERN = /^0[0-9]{9}$/;
 export const ORDER_STATUSES = ['confirmed', 'paid', 'delivered', 'cancelled'];
 
 /** `:id` of an order route. */
-export const orderIdParams = z.object({ id: mongoId(ORDER_ID_INVALID) });
+export const orderIdParams = z.object({ id: recordId(ORDER_ID_INVALID) });
 
 // The total the client displayed. Mandatory so an order can never be placed
 // without the customer having seen a price; the route compares it with the
@@ -78,7 +79,7 @@ export const orderCreate = z.object({
 	items: z
 		.array(
 			arrayElement({
-				productId: mongoId(PRODUCT_ID_INVALID),
+				productId: recordId(PRODUCT_ID_INVALID),
 				quantity: wholeNumber({ min: 1, max: 100, message: 'Số lượng phải từ 1-100' }),
 			}),
 			{ error: ORDER_ITEMS_REQUIRED },
@@ -87,10 +88,22 @@ export const orderCreate = z.object({
 	expectedTotal,
 });
 
-// A counter sale. The items and the over-the-limit override are checked by the
-// route and the pricing engine, which answer with their own error shapes;
-// only the displayed total is validated here.
+// A counter sale. Only the product id of each line is checked here, as a record
+// id. The list itself, the quantities and the over-the-limit override are checked
+// by the route and the pricing engine, which answer with their own error shapes,
+// so a line that is not an object is left to them.
+const productIdField = recordId(PRODUCT_ID_INVALID);
+const directOrderItems = z.unknown().optional().superRefine((items, ctx) => {
+	if (!Array.isArray(items)) return;
+	items.forEach((item, index) => {
+		if (isPlainObject(item) && !productIdField.safeParse(item.productId).success) {
+			ctx.addIssue({ code: 'custom', message: PRODUCT_ID_INVALID, path: [index, 'productId'] });
+		}
+	});
+});
+
 export const directOrder = z.object({
+	items: directOrderItems,
 	expectedTotal,
 	allowOverMax: z.unknown().optional(),
 });
@@ -121,7 +134,7 @@ export const orderItemsEdit = z.object({
 	items: z
 		.array(
 			arrayElement({
-				productId: mongoId(PRODUCT_ID_INVALID),
+				productId: recordId(PRODUCT_ID_INVALID),
 				quantity: wholeNumber({ min: 1, message: 'Số lượng phải là số nguyên từ 1 trở lên' }),
 			}),
 			{ error: EDIT_ITEMS_RANGE },

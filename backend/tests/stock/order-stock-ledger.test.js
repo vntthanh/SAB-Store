@@ -1,19 +1,20 @@
 /**
  * Orders and the stock ledger: an order records its stock movements in the same
  * transaction that creates it, never checks stock, and the cache only changes
- * once the movements are applied. Every assertion re-reads MongoDB.
+ * once the movements are applied. Every assertion re-reads the database.
  */
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeAdminSession } = require('../helpers/factories');
 const { applyPendingMovements } = require('../helpers/stock');
-const Product = require('../../models/Product');
-const Order = require('../../models/Order');
-const StockMovement = require('../../models/StockMovement');
 const stockQueue = require('../../queues/stock-queue');
+const {
+	findOrder, findOrderByCode, listOrders, countRows, insertRawOrder, deleteProduct, failNextMovementInsert,
+	stockOf: cachedStock, movementsFor,
+} = require('../helpers/db');
 
-const stockOf = async (product) => (await Product.findById(product._id).lean()).stockQuantity;
-const movementsOf = (product) => StockMovement.find({ productId: product._id }).sort({ createdAt: 1, _id: 1 }).lean();
+const stockOf = (product) => cachedStock(product._id);
+const movementsOf = (product) => movementsFor(product._id);
 
 const customer = {
 	studentId: '24120001',
@@ -25,8 +26,7 @@ const customer = {
 let app;
 let admin;
 
-beforeAll(async () => {
-	await Promise.all([Order.init(), StockMovement.init()]);
+beforeAll(() => {
 	app = buildTestApp();
 });
 
@@ -53,7 +53,7 @@ describe('POST /api/orders — stock ledger', () => {
 		const res = await placeOnline([line(product, 3)], 30000);
 
 		expect(res.status).toBe(201);
-		const order = await Order.findOne({ orderCode: res.body.data.orderCode }).lean();
+		const order = await findOrderByCode(res.body.data.orderCode);
 		expect(order.stockDeducted).toBe(true);
 
 		const movements = await movementsOf(product);
@@ -89,7 +89,7 @@ describe('POST /api/orders — stock ledger', () => {
 		let ordersVisibleAtEnqueue = null;
 		let enqueued = null;
 		vi.spyOn(stockQueue, 'enqueueMovementJobs').mockImplementation(async (ids) => {
-			ordersVisibleAtEnqueue = await Order.countDocuments();
+			ordersVisibleAtEnqueue = await countRows('order');
 			enqueued = ids;
 		});
 
@@ -108,19 +108,20 @@ describe('POST /api/orders — stock ledger', () => {
 		const res = await placeOnline([line(product, 1)], 10000);
 
 		expect(res.status).toBe(201);
-		expect(await Order.countDocuments()).toBe(1);
+		expect(await countRows('order')).toBe(1);
 		expect(await movementsOf(product)).toHaveLength(1);
 	});
 
 	it('leaves no order and no movement when the transaction fails after the order was written', async () => {
 		const product = await makeProduct({ price: 10000 });
-		vi.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('disk full'));
+		const fault = failNextMovementInsert('disk full');
 
 		const res = await placeOnline([line(product, 1)], 10000);
 
 		expect(res.status).toBe(500);
-		expect(await Order.countDocuments()).toBe(0);
-		expect(await StockMovement.countDocuments()).toBe(0);
+		expect(fault.fired()).toBe(true);
+		expect(await countRows('order')).toBe(0);
+		expect(await countRows('movement')).toBe(0);
 	});
 
 	it('creates nothing when the displayed total is stale', async () => {
@@ -129,8 +130,8 @@ describe('POST /api/orders — stock ledger', () => {
 		const res = await placeOnline([line(product, 1)], 9999);
 
 		expect(res.status).toBe(409);
-		expect(await Order.countDocuments()).toBe(0);
-		expect(await StockMovement.countDocuments()).toBe(0);
+		expect(await countRows('order')).toBe(0);
+		expect(await countRows('movement')).toBe(0);
 	});
 
 	it('rejects a quantity below the product minimum', async () => {
@@ -140,8 +141,8 @@ describe('POST /api/orders — stock ledger', () => {
 
 		expect(res.status).toBe(400);
 		expect(res.body.code).toBe('QUANTITY_OUT_OF_RANGE');
-		expect(await Order.countDocuments()).toBe(0);
-		expect(await StockMovement.countDocuments()).toBe(0);
+		expect(await countRows('order')).toBe(0);
+		expect(await countRows('movement')).toBe(0);
 	});
 
 	it('rejects a quantity over the maximum even when the client sends allowOverMax', async () => {
@@ -151,7 +152,7 @@ describe('POST /api/orders — stock ledger', () => {
 
 		expect(res.status).toBe(400);
 		expect(res.body.code).toBe('QUANTITY_OUT_OF_RANGE');
-		expect(await Order.countDocuments()).toBe(0);
+		expect(await countRows('order')).toBe(0);
 	});
 
 	it('accepts two orders for the last unit and lands at -1 once applied', async () => {
@@ -177,7 +178,7 @@ describe('POST /api/seller/orders/direct — stock ledger', () => {
 		const res = await placeDirect([line(product, 2)], 40000);
 
 		expect(res.status).toBe(201);
-		const order = await Order.findById(res.body.data._id).lean();
+		const order = await findOrder(res.body.data._id);
 		expect(order).toMatchObject({ isDirectSale: true, stockDeducted: true });
 
 		const movements = await movementsOf(product);
@@ -195,7 +196,7 @@ describe('POST /api/seller/orders/direct — stock ledger', () => {
 		const responses = await Promise.all(Array.from({ length: 5 }, () => placeDirect([line(product, 1)], 20000)));
 
 		expect(responses.map((r) => r.status)).toEqual([201, 201, 201, 201, 201]);
-		const numbers = (await Order.find().lean()).map((o) => o.orderNumber);
+		const numbers = (await listOrders()).map((o) => o.orderNumber);
 		expect(new Set(numbers).size).toBe(5);
 
 		await applyPendingMovements();
@@ -204,13 +205,14 @@ describe('POST /api/seller/orders/direct — stock ledger', () => {
 
 	it('leaves no order and no movement when the transaction fails after the order was written', async () => {
 		const product = await makeProduct({ price: 20000 });
-		vi.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('disk full'));
+		const fault = failNextMovementInsert('disk full');
 
 		const res = await placeDirect([line(product, 1)], 20000);
 
 		expect(res.status).toBe(500);
-		expect(await Order.countDocuments()).toBe(0);
-		expect(await StockMovement.countDocuments()).toBe(0);
+		expect(fault.fired()).toBe(true);
+		expect(await countRows('order')).toBe(0);
+		expect(await countRows('movement')).toBe(0);
 	});
 
 	it('asks for confirmation over the maximum: 409 listing the lines, nothing created', async () => {
@@ -223,8 +225,8 @@ describe('POST /api/seller/orders/direct — stock ledger', () => {
 		expect(res.body.details.lines).toEqual([
 			{ productId: String(product._id), productName: 'Limited Mug', quantity: 5, max: 2 }
 		]);
-		expect(await Order.countDocuments()).toBe(0);
-		expect(await StockMovement.countDocuments()).toBe(0);
+		expect(await countRows('order')).toBe(0);
+		expect(await countRows('movement')).toBe(0);
 	});
 
 	it('sells over the maximum once confirmed and notes who confirmed it', async () => {
@@ -233,7 +235,7 @@ describe('POST /api/seller/orders/direct — stock ledger', () => {
 		const res = await placeDirect([line(product, 5)], 100000, { allowOverMax: true });
 
 		expect(res.status).toBe(201);
-		const order = await Order.findById(res.body.data._id).lean();
+		const order = await findOrder(res.body.data._id);
 		expect(order.statusHistory[0].note).toBe(`Bán vượt số lượng tối đa — xác nhận bởi ${admin.username}`);
 		expect((await movementsOf(product))[0].delta).toBe(-5);
 	});
@@ -244,7 +246,7 @@ describe('POST /api/seller/orders/direct — stock ledger', () => {
 		const res = await placeDirect([line(product, 1)], 20000, { allowOverMax: true });
 
 		expect(res.status).toBe(201);
-		const order = await Order.findById(res.body.data._id).lean();
+		const order = await findOrder(res.body.data._id);
 		expect(order.statusHistory[0].note).toBeUndefined();
 	});
 
@@ -255,7 +257,7 @@ describe('POST /api/seller/orders/direct — stock ledger', () => {
 
 		expect(res.status).toBe(400);
 		expect(res.body.code).toBe('CART_TOO_MANY_UNITS');
-		expect(await Order.countDocuments()).toBe(0);
+		expect(await countRows('order')).toBe(0);
 	});
 
 	it('keeps the minimum a hard limit even with the confirmation flag', async () => {
@@ -273,7 +275,7 @@ async function placeOrderWithStock(quantity = 2, price = 10000) {
 	const product = await makeProduct({ stockQuantity: 10, price });
 	const res = await placeOnline([line(product, quantity)], price * quantity);
 	expect(res.status).toBe(201);
-	const order = await Order.findOne({ orderCode: res.body.data.orderCode });
+	const order = await findOrderByCode(res.body.data.orderCode);
 	await applyPendingMovements();
 	return { order, product };
 }
@@ -282,7 +284,7 @@ async function placeOrderWithStock(quantity = 2, price = 10000) {
 async function insertLegacyOrder(status = 'confirmed') {
 	const product = await makeProduct({ stockQuantity: 10 });
 	const n = Math.floor(Math.random() * 1e8);
-	const { insertedId } = await Order.collection.insertOne({
+	const order = await insertRawOrder({
 		orderCode: `L${n}`,
 		studentId: `SV${n}`,
 		fullName: 'Legacy Buyer',
@@ -293,11 +295,9 @@ async function insertLegacyOrder(status = 'confirmed') {
 		status,
 		isDirectSale: false,
 		stockDeducted: false,
-		statusHistory: [{ status, updatedBy: 'system', updatedAt: new Date() }],
-		createdAt: new Date(),
-		updatedAt: new Date()
+		statusHistory: [{ status, updatedBy: 'system', updatedAt: new Date() }]
 	});
-	return { orderId: insertedId, product };
+	return { orderId: order._id, product };
 }
 
 describe.each([
@@ -312,7 +312,7 @@ describe.each([
 		const res = await change(order._id, { status: 'cancelled', cancelReason: 'test' });
 
 		expect(res.status).toBe(200);
-		const saved = await Order.findById(order._id).lean();
+		const saved = await findOrder(order._id);
 		expect(saved).toMatchObject({ status: 'cancelled', stockDeducted: false });
 
 		const cancel = (await movementsOf(product)).find((m) => m.type === 'order_cancel');
@@ -329,7 +329,7 @@ describe.each([
 		const res = await change(orderId, { status: 'cancelled', cancelReason: 'legacy' });
 
 		expect(res.status).toBe(200);
-		expect(await Order.findById(orderId).lean()).toMatchObject({ status: 'cancelled', stockDeducted: false });
+		expect(await findOrder(orderId)).toMatchObject({ status: 'cancelled', stockDeducted: false });
 		expect(await movementsOf(product)).toHaveLength(0);
 	});
 
@@ -341,18 +341,19 @@ describe.each([
 
 		expect(res.status).toBe(200);
 		expect(await movementsOf(product)).toHaveLength(before);
-		expect(await Order.findById(order._id).lean()).toMatchObject({ status: 'paid', stockDeducted: true });
+		expect(await findOrder(order._id)).toMatchObject({ status: 'paid', stockDeducted: true });
 	});
 
 	it('leaves status, flag and movements untouched when the transaction fails', async () => {
 		const { order, product } = await placeOrderWithStock(2);
 		const before = (await movementsOf(product)).length;
-		vi.spyOn(StockMovement, 'create').mockRejectedValueOnce(new Error('disk full'));
+		const fault = failNextMovementInsert('disk full');
 
 		const res = await change(order._id, { status: 'cancelled' });
 
 		expect(res.status).toBe(500);
-		expect(await Order.findById(order._id).lean()).toMatchObject({ status: 'confirmed', stockDeducted: true });
+		expect(fault.fired()).toBe(true);
+		expect(await findOrder(order._id)).toMatchObject({ status: 'confirmed', stockDeducted: true });
 		expect(await movementsOf(product)).toHaveLength(before);
 	});
 
@@ -373,13 +374,13 @@ describe.each([
 
 	it('still cancels an order whose product was deleted', async () => {
 		const { order, product } = await placeOrderWithStock(2);
-		await Product.deleteOne({ _id: product._id });
+		await deleteProduct(product._id);
 
 		const res = await change(order._id, { status: 'cancelled' });
 
 		expect(res.status).toBe(200);
 		await applyPendingMovements();
-		expect(await Order.findById(order._id).lean()).toMatchObject({ status: 'cancelled', stockDeducted: false });
+		expect(await findOrder(order._id)).toMatchObject({ status: 'cancelled', stockDeducted: false });
 		const cancel = (await movementsOf(product)).find((m) => m.type === 'order_cancel');
 		expect(cancel).toMatchObject({ status: 'applied', lastError: 'PRODUCT_NOT_FOUND' });
 	});
@@ -394,7 +395,7 @@ describe.each([
 		await applyPendingMovements();
 
 		expect([cancel.status, deliver.status].sort()).toEqual([200, 409]);
-		const saved = await Order.findById(order._id).lean();
+		const saved = await findOrder(order._id);
 		const cancelWon = cancel.status === 200;
 		expect(saved.status).toBe(cancelWon ? 'cancelled' : 'delivered');
 		expect(saved.stockDeducted).toBe(!cancelWon);
@@ -405,7 +406,7 @@ describe.each([
 		const { order, product } = await placeOrderWithStock(2);
 		let statusAtEnqueue = null;
 		vi.spyOn(stockQueue, 'enqueueMovementJobs').mockImplementation(async () => {
-			statusAtEnqueue = (await Order.findById(order._id).lean()).status;
+			statusAtEnqueue = (await findOrder(order._id)).status;
 		});
 
 		const res = await change(order._id, { status: 'cancelled' });

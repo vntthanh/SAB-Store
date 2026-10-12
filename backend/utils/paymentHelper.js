@@ -1,6 +1,4 @@
-const Settings = require('../models/Settings');
-
-const { SETTINGS_KEY } = Settings;
+const { settings: settingsRepo } = require('../data');
 
 /**
  * Convert Vietnamese text to ASCII
@@ -73,7 +71,7 @@ const generateShortName = (fullName) => {
  */
 const getPaymentSettings = async () => {
 	try {
-		const settings = await Settings.findOne({ key: SETTINGS_KEY });
+		const settings = await settingsRepo.findConfig();
 
 		if (!settings) {
 			throw new Error('Payment settings not configured');
