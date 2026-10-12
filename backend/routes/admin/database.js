@@ -579,12 +579,14 @@ router.post('/restore', upload.single('dataFile'), async (req, res) => {
 			throw gateError;
 		}
 		try {
+			// The whole store is rewritten in this one transaction, well past the
+			// default interactive-transaction limit; a backend without limits ignores it.
 			const restored = await withTransaction(async (tx) => {
 				const written = await dataSnapshot.replaceAll(file.data, tx);
 				const mismatches = await reconcile({ tx });
 				if (mismatches.length > 0) throw new StockMismatchError(mismatches);
 				return written;
-			});
+			}, { maxWait: 120000, timeout: 120000 });
 
 			// After the commit only: a queue call inside the transaction could be
 			// repeated by a retry, and could not be undone by a rollback.

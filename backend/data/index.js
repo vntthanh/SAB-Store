@@ -4,8 +4,9 @@
  * require time rather than falling back to another store. On `postgres`, ids are
  * UUID strings and a repository that has no implementation yet throws when used.
  *
- * Postgres status per repository: `stockLedger`, `products`, `combos` and `settings`
- * implemented; `orders`, `dataSnapshot`, `dashboard` and `bootstrap` not yet.
+ * Postgres status per repository: `stockLedger`, `products`, `combos`, `settings`,
+ * `orders`, `dashboard` and `dataSnapshot` implemented; `bootstrap` not yet (it
+ * reads the login tables and moves with auth).
  *
  * Record shape contract for repository functions:
  * - Records are plain objects, never store documents or query objects. The id is
@@ -40,9 +41,14 @@
  * - Single-record reads that feed a response (`findById`, `create`, `update`)
  *   return complete records with the schema defaults applied; list reads return
  *   the stored fields only.
- * - Orders: records keep the store's native ids nested in `items[]` (`_id`,
+ * - Orders: on mongo, records keep the store's native ids nested in `items[]` (`_id`,
  *   `productId`, `comboId`), `statusHistory[]` and `createdBy`; only the record's
- *   own `_id` and an attached product's `_id` are strings. `withProducts: [fields]`
+ *   own `_id` and an attached product's `_id` are strings. On postgres every id is
+ *   a uuid string, nested arrays come from child tables in `position` order, an
+ *   optional column that is NULL is an absent key and `comboInfo` is `null` when
+ *   the order has no combo. `orders.findById(id, tx)` on postgres also takes the
+ *   order's row lock, so a status change that read the order inside `tx` writes
+ *   against the status it read (see data/postgres/orders.js). `withProducts: [fields]`
  *   turns each `items[].productId` into `{ _id, ...fields }`, or `null` for a
  *   product that no longer exists. `orders.listPage` takes one `sort` entry and
  *   appends the id as tie-break. `complete: true` applies schema defaults to
@@ -57,12 +63,12 @@
  * - `dashboard.stats` returns the dashboard's figures; `topSelling[].productId` is a
  *   string. `topSelling` ranks every order line whatever the order's status, grouped
  *   by (productId, productName): one product sold under two names gives two rows,
- *   and another backend must group the same way. Today `byCategory`, `byChannel`
- *   and availability are tallied in code over all products; a database backend must
- *   compute them in the database (`groupBy`), since aggregates belong there.
+ *   and another backend must group the same way. Mongo tallies `byCategory`,
+ *   `byChannel` and availability in code over all products; postgres computes them
+ *   in the database (`groupBy`), as aggregates belong there.
  * - `orders.listAll` is the one unpaged list (the Excel export) and returns stored
- *   fields only. It sorts by `createdAt` alone and `topSelling` by quantity alone, so
- *   ties come back in no defined order; both gain an id tie-break when the store flips.
+ *   fields only. It sorts by `createdAt` and then id; `topSelling` by quantity, then
+ *   product id and name, so ties come back in the same order on every read.
  * - Also exported for the admin routes: `orders.STATUS_VALUES` (the status enum),
  *   `orders.existsByCode`, `products.SALES_CHANNELS`, `products.existsByName`,
  *   `combos.exists`, `combos.listNames`, and `dataSnapshot.countRows` (row counts
@@ -76,7 +82,16 @@
  *   the first-run seed (`databaseName`, `hasLoginUsers`, `loginUserExists`) and reads
  *   the auth library's login table directly; it moves with auth.
  * - `dataSnapshot` moves whole rows in the wire form of data/snapshot.js (ids as
- *   hex strings, dates as ISO strings, `__v` kept), unlike the other repositories.
+ *   strings, dates as ISO strings; mongo keeps `__v`, postgres has none), unlike the
+ *   other repositories. On postgres a restore maps every id of the file, legacy hex
+ *   ones included, to a uuid, in row ids, references, JSON and idempotency keys.
+ *   The reverse does not hold: an export from postgres (uuid ids) cannot be restored
+ *   onto the mongo backend, whose `ids.js` accepts only 24-hex ids.
+ * - Documented postgres differences: a restore reserves a block of the `stock_movements`
+ *   `seq` sequence (under a table lock) instead of resetting it to the maximum, so a
+ *   rolled-back restore leaves a gap, never a collision; order rows are locked with
+ *   `FOR NO KEY UPDATE`, not `FOR UPDATE`, so child-row inserts (which take a key
+ *   share lock) do not queue behind a status change.
  */
 const { backendName } = require('./backend-name');
 
@@ -99,12 +114,12 @@ const BACKENDS = {
 		const { notImplemented } = require('./postgres/not-implemented');
 		return {
 			stockLedger: require('./postgres/stock-ledger'),
-			orders: notImplemented('orders'),
+			orders: require('./postgres/orders'),
 			products: require('./postgres/products'),
 			combos: require('./postgres/combos'),
 			settings: require('./postgres/settings'),
-			dataSnapshot: notImplemented('dataSnapshot'),
-			dashboard: notImplemented('dashboard'),
+			dataSnapshot: require('./postgres/data-snapshot'),
+			dashboard: require('./postgres/dashboard'),
 			bootstrap: notImplemented('bootstrap'),
 			withTransaction: require('./postgres/tx').withTransaction,
 			translateWriteError: require('./postgres/errors').translateWriteError

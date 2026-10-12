@@ -36,7 +36,9 @@ const PRODUCT_CREATION_WRITERS = new Map([
 	// cache with the restored ledger (reconcile) inside the same transaction and rolls back on a mismatch.
 	// The backup file format lists the field to validate a product row of a restore file; it writes nothing.
 	['data/snapshot.js', { writes: 1, why: 'restore file format: field check of a product row, no write' }],
-	['data/mongo/data-snapshot.js', { writes: 0, why: 'restore: whole product rows, cache verified against the restored ledger before commit' }]
+	['data/mongo/data-snapshot.js', { writes: 0, why: 'restore: whole product rows, cache verified against the restored ledger before commit' }],
+	// Same on postgres: rows are built from the file's own keys and inserted as a unit, so the field is never named.
+	['data/postgres/data-snapshot.js', { writes: 0, why: 'restore: whole product rows, cache verified against the restored ledger before commit' }]
 ]);
 
 // Top-level backend directories that hold no application code. node_modules is

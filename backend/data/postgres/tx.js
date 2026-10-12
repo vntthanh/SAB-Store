@@ -31,16 +31,19 @@ function isRetryable(err) {
  * rolled back, and a re-run would repeat it. Do those after this resolves.
  *
  * Any other error `fn` throws aborts the transaction and is rethrown unchanged.
- * Wait and timeout limits are the client's `transactionOptions` (lib/prisma.js).
+ * Wait and timeout limits are the client's `transactionOptions` (lib/prisma.js)
+ * unless `options` (`{ maxWait, timeout }` in ms) overrides them, for the rare
+ * transaction that legitimately runs long.
  *
  * @template T
  * @param {(tx: object) => Promise<T>} fn
+ * @param {{maxWait?: number, timeout?: number}} [options]
  * @returns {Promise<T>}
  */
-async function withTransaction(fn) {
+async function runTransaction(fn, isolationLevel, options) {
 	for (let attempt = 1; ; attempt += 1) {
 		try {
-			return await prisma.$transaction(fn, { isolationLevel: 'ReadCommitted' });
+			return await prisma.$transaction(fn, { ...options, isolationLevel });
 		} catch (err) {
 			if (!isRetryable(err) || attempt >= MAX_ATTEMPTS) throw err;
 			logEvent('db.tx.retry', { attempt });
@@ -48,4 +51,14 @@ async function withTransaction(fn) {
 	}
 }
 
-module.exports = { withTransaction };
+const withTransaction = (fn, options) => runTransaction(fn, 'ReadCommitted', options);
+
+/**
+ * Like `withTransaction`, but every statement sees one point in time (Repeatable
+ * Read), for reads that must agree with each other, such as a whole-store export.
+ * Meant for read-only work: a write conflict here is a serialization failure and
+ * is retried like a deadlock, so `fn` must obey the same re-run contract.
+ */
+const withSnapshotTransaction = (fn, options) => runTransaction(fn, 'RepeatableRead', options);
+
+module.exports = { withTransaction, withSnapshotTransaction };

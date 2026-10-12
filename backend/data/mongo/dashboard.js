@@ -34,7 +34,7 @@ async function summarizeOrders({ todayFrom, weekFrom, monthFrom }) {
 					totalRevenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } }
 				}
 			},
-			{ $sort: { totalQuantity: -1 } },
+			{ $sort: { totalQuantity: -1, '_id.productId': 1, '_id.productName': 1 } },
 			{ $limit: TOP_SELLING_LIMIT }
 		])
 	]);
@@ -81,7 +81,7 @@ async function summarizeProducts() {
  *
  * `topSelling` covers order lines of every status and groups by product id and
  * name together, so a product sold under two names has two rows. It is ordered by
- * quantity only: lines with the same quantity come in no fixed order.
+ * quantity, then product id and name, so equal quantities keep one order.
  *
  * @param {{todayFrom: Date, weekFrom: Date, monthFrom: Date}} since start of today, this week and this month
  * @returns {Promise<{orders: {total: number, today: number, week: number, month: number}, revenue: number,

@@ -130,4 +130,4 @@ function upsertConfig(fields) {
 	});
 }
 
-module.exports = { findStorefront, findConfig, upsertConfig };
+module.exports = { toRecord, findStorefront, findConfig, upsertConfig };

@@ -3,10 +3,13 @@
  * storage engine: its format, the checks a file must pass before anything is
  * deleted, and the total rule of a stored order.
  *
- * Wire form: every record is a complete JSON document. Ids are 24-hex strings,
- * dates are ISO strings, nothing is renamed. An engine's repository
+ * Wire form: every record is a complete JSON document. Ids are record ids (24-hex
+ * strings from a Mongo store, uuid strings from a Postgres one), dates are ISO
+ * strings, nothing is renamed. An engine's repository
  * (`data/<engine>/data-snapshot.js`) turns its rows into this form and back; this
- * file never touches a database.
+ * file never touches a database. A file exported from Postgres (uuid ids) cannot
+ * be restored onto the Mongo backend, which accepts only 24-hex ids; the reverse
+ * works, since a Postgres restore maps hex ids to uuids.
  *
  * Fields outside a collection's list are rejected, not dropped: the restore
  * writes whole rows, so an unknown key must stop the file instead of being
@@ -41,7 +44,7 @@ const leaf = (test, hint) => (value, where, problems) => {
 	if (!test(value)) problems.push(`${where} ${hint}`);
 };
 
-const id = leaf((v) => typeof v === 'string' && isRecordId(v), 'phải là mã 24 ký tự hex');
+const id = leaf((v) => typeof v === 'string' && isRecordId(v), 'phải là mã bản ghi hợp lệ');
 const bool = leaf((v) => typeof v === 'boolean', 'phải là true/false');
 const date = leaf((v) => typeof v === 'string' && ISO_DATE.test(v) && !Number.isNaN(Date.parse(v)), 'phải là ngày giờ ISO');
 

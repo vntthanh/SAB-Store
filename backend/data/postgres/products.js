@@ -367,6 +367,7 @@ function remove(id) {
 }
 
 module.exports = {
+	toRecord,
 	SALES_CHANNELS,
 	assertSaleChannel,
 	findSellable,

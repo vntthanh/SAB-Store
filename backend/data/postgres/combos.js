@@ -225,4 +225,4 @@ function remove(id) {
 	return translating(async () => (await prisma.combo.deleteMany({ where: { id: recordId(id) } })).count === 1);
 }
 
-module.exports = { ...publicCodeBackfill(() => prisma.combo), findSellable, findSellableForPricing, list, listNames, listSellable, exists, findById, create, update, remove };
+module.exports = { ...publicCodeBackfill(() => prisma.combo), toRecord, findSellable, findSellableForPricing, list, listNames, listSellable, exists, findById, create, update, remove };

@@ -16,7 +16,8 @@ describe('data backend switch', () => {
 	});
 
 	it.skipIf(!POSTGRES)('throws a clear error when a postgres repository that is not written yet is used', () => {
-		for (const repository of ['orders', 'dataSnapshot', 'dashboard', 'bootstrap']) {
+		// bootstrap reads the login tables and moves with auth.
+		for (const repository of ['bootstrap']) {
 			expect(() => data[repository].anything, repository).toThrow(`${repository}.anything is not implemented in postgres yet`);
 		}
 	});

@@ -154,14 +154,14 @@ async function listPage({
 }
 
 /**
- * Every order that matches, newest first, as stored (no defaults applied). Not
+ * Every order that matches, newest first (ties by id), as stored (no defaults applied). Not
  * paged: the export wants them all. Filters work as in `listPage`.
  *
  * @param {{status?: string, search?: string, searchFields?: string[], createdFrom?: Date, createdTo?: Date}} [query]
  * @returns {Promise<object[]>}
  */
 async function listAll(query = {}) {
-	const rows = await Order.find(listFilter(query)).sort({ createdAt: -1 }).lean();
+	const rows = await Order.find(listFilter(query)).sort({ createdAt: -1, _id: -1 }).lean();
 	return rows.map(withStringId);
 }
 

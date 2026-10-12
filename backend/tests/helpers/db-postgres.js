@@ -7,8 +7,14 @@
  * the repositories or Prisma models under test. Only the fault seams touch the
  * code under test, and only at the boundary the header of db.js names for them.
  *
- * Helpers the stock-ledger contract does not need yet throw "not implemented
- * for postgres"; each phase that converts a repository fills in its own.
+ * Helpers no contract needs yet throw "not implemented for postgres"; each phase
+ * that converts a repository fills in its own. The auth-table helpers wait for
+ * the auth conversion; `unsetOrderField` can never apply (a column cannot be
+ * missing).
+ *
+ * Known gaps against db.js, all moving with auth: `countRows('user'|'account')`
+ * throws (db.js lists those kinds), as do `insertRawUser`, `findAuthRows` and
+ * `countAuthRows`; `unsetOrderField` throws for good.
  *
  * Fault seams: see db.js. Here `failNextStockWrite` wraps the transaction client
  * so the first write of a product row inside a transaction rejects after the
@@ -17,6 +23,7 @@
 const { Pool } = require('pg');
 const { v7: uuidv7 } = require('uuid');
 const data = require('../../data');
+const { DuplicateKeyError } = require('../../data/errors');
 const { POOL_OPTIONS } = require('./postgres');
 const { prisma } = require('../../lib/prisma');
 const { SETTINGS_KEY, DEFAULT_NOTICES, DEFAULT_CONTACT, NOTICE_MAX_LENGTH } = require('../../constants/settings');
@@ -112,6 +119,32 @@ const findComboByName = async (name) => withRequirements(await selectOne('combos
 const listCombos = async () => Promise.all((await select('combos')).map(withRequirements));
 /** The single settings row, or null when none exists. */
 const findSettings = () => selectOne('settings', {});
+
+// An optional order column that is NULL is an absent key in the API JSON.
+const ORDER_ABSENT_WHEN_NULL = new Set(['orderNumber', 'phoneNumber', 'studentId', 'fullName', 'email', 'additionalNote', 'transactionCode', 'cancelReason', 'createdBy']);
+const dropNulls = (row, keys) => Object.fromEntries(Object.entries(row).filter(([key, value]) => value !== null || !keys.has(key)));
+
+/** An order with its child rows nested the way the API JSON shows them, in position order. */
+async function withOrderChildren(order) {
+	if (!order) return null;
+	const children = async (table) => (await db().query(`SELECT * FROM ${table} WHERE order_id = $1::uuid ORDER BY position`, [order._id])).rows.map(toPlain);
+	const [items, history, notes, edits] = await Promise.all([
+		children('order_items'), children('order_status_history'), children('order_internal_notes'), children('order_items_edits')
+	]);
+	const strip = ({ orderId: _orderId, position: _position, ...rest }) => rest;
+	return {
+		...dropNulls(order, ORDER_ABSENT_WHEN_NULL),
+		items: items.map(strip),
+		statusHistory: history.map((entry) => dropNulls(strip(entry), new Set(['transactionCode', 'cancelReason', 'note']))),
+		internalNotes: notes.map(({ _id: _noteId, ...rest }) => strip(rest)),
+		itemsHistory: edits.map(({ _id: _editId, ...rest }) => strip(rest))
+	};
+}
+
+const findOrder = async (id) => withOrderChildren(await selectOne('orders', { _id: id }));
+const findOrderByCode = async (orderCode) => withOrderChildren(await selectOne('orders', { orderCode }));
+const listOrders = async () => Promise.all((await select('orders')).map(withOrderChildren));
+
 const findMovement = (id) => selectOne('stock_movements', { _id: id });
 const listProducts = () => select('products');
 
@@ -187,6 +220,43 @@ async function insertRawSettings(fields) {
 	return toPlain(rows[0]);
 }
 
+const json = (value) => JSON.stringify(value);
+
+/**
+ * Inserts an order exactly as given (no rules, no hooks) plus the two columns it
+ * cannot exist without, and one child row per `items`, `statusHistory`,
+ * `internalNotes` and `itemsHistory` entry, in array order. Returns the stored order.
+ */
+async function insertRawOrder({ items = [], statusHistory = [], internalNotes = [], itemsHistory = [], comboInfo, ...fields }) {
+	const row = { id: uuidv7(), orderCode: `W${Math.floor(Math.random() * 1e8)}`, totalAmount: 0, ...fields };
+	const columns = Object.keys(row).map(columnOf);
+	const values = Object.values(row);
+	if (comboInfo !== undefined && comboInfo !== null) {
+		columns.push('combo_info');
+		values.push(json(comboInfo));
+	}
+	await db().query(`INSERT INTO orders (${columns.map(quote).join(', ')}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')})`, values);
+
+	const insertChild = async (table, rows, shape) => {
+		// Written last position first, so a read without ORDER BY position comes back in the wrong order.
+		for (const [position, entry] of [...rows.entries()].reverse()) {
+			const child = { id: uuidv7(), orderId: row.id, position, ...shape(entry) };
+			const childColumns = Object.keys(child).filter((key) => child[key] !== undefined).map(columnOf);
+			await db().query(
+				`INSERT INTO ${table} (${childColumns.map(quote).join(', ')}) VALUES (${childColumns.map((_, i) => `$${i + 1}`).join(', ')})`,
+				Object.values(child).filter((value) => value !== undefined)
+			);
+		}
+	};
+	await insertChild('order_items', items, ({ _id, ...item }) => ({ ...(_id && { id: _id }), ...item }));
+	await insertChild('order_status_history', statusHistory, ({ _id, ...entry }) => ({ ...(_id && { id: _id }), ...entry }));
+	await insertChild('order_internal_notes', internalNotes, (note) => note);
+	await insertChild('order_items_edits', itemsHistory, (edit) => ({
+		...edit, previousItems: json(edit.previousItems ?? []), previousComboInfo: edit.previousComboInfo == null ? undefined : json(edit.previousComboInfo)
+	}));
+	return findOrder(row.id);
+}
+
 /**
  * Overwrites columns of an existing row without validation or hooks, to put a
  * row into a state the application's own write paths cannot reach.
@@ -198,6 +268,8 @@ const patch = (table) => async (id, fields) => {
 	if (rowCount !== 1) throw new Error(`no ${table} row with id ${id}`);
 };
 const patchProduct = patch('products');
+/** Scalar order columns only; the child tables are written by `insertRawOrder`. */
+const patchOrder = patch('orders');
 const patchCombo = patch('combos');
 const patchMovement = patch('stock_movements');
 
@@ -265,17 +337,50 @@ const PRODUCT_WRITES = new Set(['update', 'updateMany', 'upsert']);
  * `message`, after the statements before it ran, so the transaction has to roll
  * the earlier ones back.
  */
-function failNextStockWrite(message) {
+const failNextStockWrite = (message) => failFirstWriteOf('product', PRODUCT_WRITES, message);
+
+/**
+ * Makes the next order insert fail as a duplicate on `column`, then lets later
+ * inserts through. Raised at the repository boundary with the domain error the
+ * duplicate-key translation produces, so the callers' retry loops see what a real
+ * unique violation gives them.
+ */
+function failNextOrderInsertAsDuplicateOn(column) {
+	let thrown = false;
+	const spy = vi.spyOn(data.orders, 'create').mockImplementationOnce(async () => {
+		thrown = true;
+		throw new DuplicateKeyError([column]);
+	});
+	return handleOf(spy, () => thrown);
+}
+
+/** Makes the next product insert write its row and then fail with the retryable-transaction error, so the attempt is rerun from the start. */
+function failNextProductInsertAsRetryable() {
+	const realCreate = data.products.create;
+	let thrown = false;
+	const spy = vi.spyOn(data.products, 'create').mockImplementationOnce(async (...args) => {
+		await realCreate(...args);
+		thrown = true;
+		throw Object.assign(new Error('transient'), { code: 'P2034' });
+	});
+	return handleOf(spy, () => thrown);
+}
+
+/**
+ * Makes the first write of `model` (a Prisma delegate name) made inside a
+ * transaction reject with `message`, after the statements before it ran.
+ */
+function failFirstWriteOf(model, methods, message) {
 	const realTransaction = prisma.$transaction.bind(prisma);
 	let thrown = false;
 	const guarded = (tx) => new Proxy(tx, {
 		get(target, property) {
 			const value = Reflect.get(target, property);
-			if (property !== 'product') return typeof value === 'function' ? value.bind(target) : value;
+			if (property !== model) return typeof value === 'function' ? value.bind(target) : value;
 			return new Proxy(value, {
-				get(model, method) {
-					const original = Reflect.get(model, method);
-					if (!PRODUCT_WRITES.has(method) || thrown) return typeof original === 'function' ? original.bind(model) : original;
+				get(delegate, method) {
+					const original = Reflect.get(delegate, method);
+					if (!methods.has(method) || thrown) return typeof original === 'function' ? original.bind(delegate) : original;
 					return async () => {
 						thrown = true;
 						throw new Error(message);
@@ -289,6 +394,9 @@ function failNextStockWrite(message) {
 	return handleOf(spy, () => thrown);
 }
 
+/** Makes the next bulk write of orders fail with `message`, as a restore does after it has deleted the old rows and written products and combos. */
+const failNextOrderBulkInsert = (message) => failFirstWriteOf('order', new Set(['createMany']), message);
+
 /** Makes the repository read of sellable products throw `message` until `remove()` is called. */
 const failProductCatalogReads = (message) => handleOf(vi.spyOn(data.products, 'findSellable').mockImplementation(() => {
 	throw new Error(message);
@@ -300,19 +408,20 @@ module.exports = {
 	findProductByName,
 	findCombo,
 	findComboByName,
-	findOrder: notImplemented('findOrder'),
-	findOrderRaw: notImplemented('findOrderRaw'),
-	findOrderByCode: notImplemented('findOrderByCode'),
+	findOrder,
+	// Ids are uuid strings in every form, so the raw read is the plain one.
+	findOrderRaw: findOrder,
+	findOrderByCode,
 	findMovement,
 	findSettings,
 	listProducts,
 	listCombos,
-	listOrders: notImplemented('listOrders'),
+	listOrders,
 	movements,
 	movementsFor,
 	stockOf,
 	countRows,
-	insertRawOrder: notImplemented('insertRawOrder'),
+	insertRawOrder,
 	insertRawProduct,
 	insertRawCombo,
 	insertRawSettings,
@@ -321,7 +430,7 @@ module.exports = {
 	countAuthRows: notImplemented('countAuthRows'),
 	settingsDefaults,
 	patchProduct,
-	patchOrder: notImplemented('patchOrder'),
+	patchOrder,
 	patchCombo,
 	patchMovement,
 	unsetOrderField: notImplemented('unsetOrderField'),
@@ -333,12 +442,12 @@ module.exports = {
 	databaseName,
 	ensureMovementStore,
 	failNextMovementInsert,
-	failNextOrderBulkInsert: notImplemented('failNextOrderBulkInsert'),
+	failNextOrderBulkInsert,
 	failNextTransactionStart,
 	failNextPendingMovementScan,
 	failNextStockWrite,
-	failNextOrderInsertAsDuplicateCode: notImplemented('failNextOrderInsertAsDuplicateCode'),
-	failNextOrderInsertAsDuplicateOn: notImplemented('failNextOrderInsertAsDuplicateOn'),
-	failNextProductInsertAsRetryable: notImplemented('failNextProductInsertAsRetryable'),
+	failNextOrderInsertAsDuplicateCode: () => failNextOrderInsertAsDuplicateOn('orderCode'),
+	failNextOrderInsertAsDuplicateOn,
+	failNextProductInsertAsRetryable,
 	failProductCatalogReads,
 };
