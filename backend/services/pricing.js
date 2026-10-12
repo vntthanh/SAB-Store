@@ -211,8 +211,8 @@ function checkQuantityLimits(lines, { channel, allowOverMax }) {
  *   products: Map<string, object>
  * }>}
  *        `orderItems[].productId` and `comboId` (and `comboInfo.combos[].comboId`)
- *        are the store's native id: an ObjectId on MongoDB, a lowercase 24-hex
- *        string on another backend. Callers only `String()` them or compare the
+ *        are the store's native id: an ObjectId on MongoDB, a lowercase uuid
+ *        string on postgres. Callers only `String()` them or compare the
  *        normalised form; nothing here depends on it being an object. Combo lines keep the
  *        retail unit price; `totalAmount` is NOT their price x quantity.
  *        `comboInfo` covers the combo lines only: `originalTotal` is their retail
@@ -239,7 +239,7 @@ async function computeOrderPricing(items, opts = {}) {
 	}
 
 	// Merge duplicate productId lines and reduce every id to its canonical form
-	// (lowercase 24-hex): a differently cased id would match the store but fail
+	// (lowercase; a uuid on postgres): a differently cased id would match the store but fail
 	// the strict string comparisons below against the form the store returns.
 	// Anything that is not a record id is rejected as an unknown product.
 	const qtyByProductId = new Map();

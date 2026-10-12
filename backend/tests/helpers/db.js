@@ -48,8 +48,8 @@
  *   layer defines.
  * - `isRowId` is not trivial on SQL: it states that the pricing service
  *   returns an id normalised to the store's native representation. On SQL it
- *   returns true for a lowercase 24-hex string and false for anything else (an
- *   uppercase hex string or a number, for example).
+ *   returns true for a lowercase uuid string and false for anything else (an
+ *   uppercase uuid, a 24-hex string or a number, for example).
  * - `ensureMovementStore` exists only because Mongo creates a collection on
  *   first insert; it disappears on SQL.
  * - `settingsDefaults` is not data access: it hands tests the default notice

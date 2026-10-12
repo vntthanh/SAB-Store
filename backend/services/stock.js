@@ -13,7 +13,7 @@
  * cancels from returning them twice.
  */
 const { orders, withTransaction } = require('../data');
-const { recordMovement } = require('./stock-ledger');
+const { recordMovement, keyIdOf } = require('./stock-ledger');
 const { logEvent } = require('../utils/log-event');
 
 const { FINAL_ORDER_STATUSES } = orders;
@@ -56,7 +56,7 @@ async function recordOrderMovements({ orderId, items, type, keyTag, createdBy, r
 			orderId,
 			reason,
 			createdBy,
-			idempotencyKey: `order:${orderId}:${productId}:${keyTag}`
+			idempotencyKey: `order:${keyIdOf(orderId)}:${keyIdOf(productId)}:${keyTag}`
 		}, { tx }));
 	}
 	return recorded;

@@ -7,6 +7,9 @@ const SETTINGS_KEY = 'payment_config';
 // frontend/src/services/api.js repeats both store-title constants and
 // NOTICE_MAX_LENGTH for the header fallback and the admin form's limits; keep
 // them in sync.
+// Defaults for the two bookkeeping fields every backend fills on a first save.
+const DEFAULT_PREFIX_MESSAGE = 'SAB';
+const DEFAULT_UPDATED_BY = 'system';
 const DEFAULT_STORE_TITLE = 'SAB Store';
 const STORE_TITLE_MAX_LENGTH = 60;
 
@@ -49,6 +52,8 @@ module.exports = {
 	DEFAULT_NOTICES,
 	NOTICE_FIELDS,
 	DEFAULT_CONTACT,
+	DEFAULT_PREFIX_MESSAGE,
+	DEFAULT_UPDATED_BY,
 	CONTACT_FIELDS,
 	STOREFRONT_FIELDS
 };

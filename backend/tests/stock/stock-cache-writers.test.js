@@ -25,6 +25,9 @@ const PRODUCT_CREATION_WRITERS = new Map([
 	// The create route hands the opening balance to the repository, which sets the field on the new row;
 	// the route records the matching applied opening movement in the same transaction.
 	['data/mongo/products.js', { writes: 1, why: 'create product: opening balance, recorded as an applied opening movement' }],
+	// Same contract on postgres: the `create` data names the column once, as the opening balance. The
+	// catalogue reads only name the field as `true` (select, omit, aggregate), which is not a write.
+	['data/postgres/products.js', { writes: 1, why: 'create product: opening balance, recorded as an applied opening movement' }],
 	['routes/admin/database.js', { writes: 1, why: 'database import: field whitelist of imported products, each with its opening movement' }],
 	['init-database.js', { writes: 2, why: 'first-run seed products' }],
 	// A restore inserts whole product rows with the cache the file holds. The field is never

@@ -16,7 +16,7 @@
  */
 const { stockLedger: store } = require('../data');
 const { isDuplicateKeyError } = require('../data/errors');
-const { isRecordId } = require('../data/ids');
+const { isRecordId, normalizeRecordId } = require('../data/ids');
 const ErrorLogger = require('../utils/errorLogger');
 const { logEvent } = require('../utils/log-event');
 
@@ -51,6 +51,17 @@ const DELTA_RULES = {
 	order_edit: (d) => d !== 0,
 	adjust: (d) => d !== 0
 };
+
+/**
+ * An id as it appears inside an idempotency key. One row has one canonical id
+ * (on postgres a legacy hex id and its mapped uuid are the same product), so a
+ * key built from the raw input would differ between callers and record the same
+ * change twice. A value that is not an id is returned as text for
+ * `validateMovement` to refuse with its own error.
+ */
+function keyIdOf(id) {
+	return isRecordId(id) ? normalizeRecordId(id) : String(id);
+}
 
 function validateMovement({ productId, type, delta, target, idempotencyKey, reason, createdBy }) {
 	if (!isRecordId(productId)) throw new StockLedgerError('productId is not a valid id');
@@ -133,7 +144,7 @@ function buildDocument({ productId, type, delta, target, orderId, reason, create
  */
 async function recordAppliedOpening({ productId, quantity, stockAfter = quantity, createdBy, reason }, opts = {}) {
 	const tx = opts.tx || opts.session || null;
-	const idempotencyKey = `opening:${productId}`;
+	const idempotencyKey = `opening:${keyIdOf(productId)}`;
 	validateMovement({ productId, type: 'opening', delta: quantity, idempotencyKey, createdBy, reason });
 
 	const existing = await store.findMovementByKey(idempotencyKey, tx);
@@ -284,6 +295,7 @@ module.exports = {
 	recordAppliedOpening,
 	enqueueMovements,
 	applyMovement,
+	keyIdOf,
 	reconcile,
 	countPendingByProduct,
 	CRITICAL_AFTER_ATTEMPTS

@@ -74,11 +74,12 @@ function createMovement(record, tx) {
 	return translating(async () => {
 		const row = await clientOf(tx).stockMovement.create({
 			data: {
-				productId: record.productId,
+				// A legacy hex id from the API or an old job maps to the row's uuid.
+				productId: normalizeRecordId(record.productId),
 				type: record.type,
 				delta: record.delta ?? null,
 				target: record.target ?? null,
-				orderId: record.orderId ?? null,
+				orderId: record.orderId == null ? null : normalizeRecordId(record.orderId),
 				reason: record.reason,
 				createdBy: record.createdBy,
 				idempotencyKey: record.idempotencyKey,

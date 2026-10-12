@@ -6,7 +6,9 @@ const {
 	STORE_TITLE_MAX_LENGTH,
 	NOTICE_MAX_LENGTH,
 	DEFAULT_NOTICES,
-	DEFAULT_CONTACT
+	DEFAULT_CONTACT,
+	DEFAULT_PREFIX_MESSAGE,
+	DEFAULT_UPDATED_BY
 } = require('../constants/settings');
 
 const noticeField = (field, description) => ({
@@ -39,7 +41,7 @@ const settingsSchema = new mongoose.Schema({
 		type: String,
 		required: true,
 		trim: true,
-		default: 'SAB',
+		default: DEFAULT_PREFIX_MESSAGE,
 		description: 'Prefix for payment messages'
 	},
 	storeTitle: {
@@ -71,7 +73,7 @@ const settingsSchema = new mongoose.Schema({
 	},
 	updatedBy: {
 		type: String,
-		default: 'system'
+		default: DEFAULT_UPDATED_BY
 	}
 }, {
 	timestamps: true

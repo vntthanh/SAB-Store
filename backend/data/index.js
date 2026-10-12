@@ -4,8 +4,8 @@
  * require time rather than falling back to another store. On `postgres`, ids are
  * UUID strings and a repository that has no implementation yet throws when used.
  *
- * Postgres status per repository: `stockLedger` implemented; `orders`, `products`,
- * `combos`, `settings`, `dataSnapshot`, `dashboard` and `bootstrap` not yet.
+ * Postgres status per repository: `stockLedger`, `products`, `combos` and `settings`
+ * implemented; `orders`, `dataSnapshot`, `dashboard` and `bootstrap` not yet.
  *
  * Record shape contract for repository functions:
  * - Records are plain objects, never store documents or query objects. The id is
@@ -13,9 +13,9 @@
  * - `tx` is opaque: obtain it from `withTransaction` and pass it back unchanged.
  * - Exceptions, keeping the store's native `_id`: `products.findSellableForPricing`
  *   and `combos.findSellableForPricing`. This store returns its id object
- *   (ObjectId); another backend returns the id as a lowercase 24-hex string.
- *   Pricing copies those ids into order lines, and its callers only `String()`
- *   them or compare the normalised form.
+ *   (ObjectId); postgres returns the id as a lowercase uuid string. Pricing copies
+ *   those ids into order lines, and its callers only `String()` them or compare
+ *   the normalised form (`normalizeRecordId` maps a legacy hex id to its uuid).
  * - `translateWriteError(err)` turns this store's own write error into the domain
  *   error above, or returns it unchanged. Only code not yet behind a repository needs it.
  * - Lean records carry the store's `__v`; other backends will not. Callers must
@@ -30,11 +30,13 @@
  *   caller already clamped. `totalPages` is 0 for an empty result.
  *   Rows sort by their key and then by id, so a page boundary never repeats or
  *   drops a row.
- * - Computed fields: `combos.listSellable`, `combos.findById`, `combos.create` and
- *   `combos.update` return records that include the `totalRequiredQuantity`
- *   virtual (sum of the requirement quantities) and `id`; `products.findById`,
- *   `create`, `update` and `listPage` include `inStock` (`stockQuantity > 0`).
- *   Another backend must compute them. Lean list reads carry none.
+ * - Computed fields: none. The Mongoose virtuals (`inStock`, `totalRequiredQuantity`,
+ *   `currentPrice`, `onSale`, `id`) are not serialised by `toJSON`, so no record
+ *   carries them (measured) and no consumer reads them; a backend must not add them.
+ * - Absent optional fields: an optional field that was never set (a product's
+ *   description, sku, weight, dimensions, salePrice, sale dates; a combo's
+ *   description) is an absent key, not `null`. `maxOrderQuantity` is `null`.
+ * - `products.findSellable` returns oldest first (`createdAt`, then id).
  * - Single-record reads that feed a response (`findById`, `create`, `update`)
  *   return complete records with the schema defaults applied; list reads return
  *   the stored fields only.
@@ -98,9 +100,9 @@ const BACKENDS = {
 		return {
 			stockLedger: require('./postgres/stock-ledger'),
 			orders: notImplemented('orders'),
-			products: notImplemented('products'),
-			combos: notImplemented('combos'),
-			settings: notImplemented('settings'),
+			products: require('./postgres/products'),
+			combos: require('./postgres/combos'),
+			settings: require('./postgres/settings'),
 			dataSnapshot: notImplemented('dataSnapshot'),
 			dashboard: notImplemented('dashboard'),
 			bootstrap: notImplemented('bootstrap'),

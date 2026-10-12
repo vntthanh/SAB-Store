@@ -27,7 +27,7 @@ function searchClause(search) {
 }
 
 /**
- * Sellable products on `channel`, as plain records, optionally only the one
+ * Sellable products on `channel`, oldest first, as plain records, optionally only the one
  * with this `publicCode` or `id`. Records carry the store's `__v`; other backends will
  * not, so callers must not read it.
  *
@@ -44,7 +44,7 @@ function findSellable(channel, { publicCode, id } = {}) {
 		...(publicCode !== undefined && { publicCode }),
 		...(id !== undefined && { _id: id })
 	};
-	return Product.find(productSellableFilter(channel, filter)).lean().then((found) => found.map(withStringId));
+	return Product.find(productSellableFilter(channel, filter)).sort({ createdAt: 1, _id: 1 }).lean().then((found) => found.map(withStringId));
 }
 
 /**

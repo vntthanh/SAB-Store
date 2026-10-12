@@ -16,7 +16,7 @@
 const { orders, withTransaction } = require('../data');
 const { computeOrderPricing } = require('./pricing');
 const { unitsByProduct } = require('./stock');
-const { recordMovement } = require('./stock-ledger');
+const { recordMovement, keyIdOf } = require('./stock-ledger');
 
 const EDITABLE_ORDER_STATUSES = ['confirmed', 'paid'];
 
@@ -99,7 +99,7 @@ function editOrderItems({ orderId, items, expectedRevision, reason, actor }) {
 					// The admin's own reason lives in itemsHistory; the ledger caps text at 200 characters.
 					reason: `Sửa đơn ${order.orderCode}`,
 					createdBy: actor,
-					idempotencyKey: `order:${order._id}:${productId}:edit:${newRevision}`
+					idempotencyKey: `order:${keyIdOf(order._id)}:${keyIdOf(productId)}:edit:${newRevision}`
 				}, { tx }));
 			}
 		}

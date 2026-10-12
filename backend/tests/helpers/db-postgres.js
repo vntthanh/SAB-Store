@@ -19,7 +19,7 @@ const { v7: uuidv7 } = require('uuid');
 const data = require('../../data');
 const { POOL_OPTIONS } = require('./postgres');
 const { prisma } = require('../../lib/prisma');
-const { DEFAULT_NOTICES, DEFAULT_CONTACT, NOTICE_MAX_LENGTH } = require('../../constants/settings');
+const { SETTINGS_KEY, DEFAULT_NOTICES, DEFAULT_CONTACT, NOTICE_MAX_LENGTH } = require('../../constants/settings');
 
 const TABLES = { product: 'products', combo: 'combos', order: 'orders', movement: 'stock_movements', settings: 'settings' };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -100,6 +100,18 @@ const newId = () => uuidv7();
 
 const findProduct = (id) => selectOne('products', { _id: id });
 const findProductByName = (name) => selectOne('products', { name });
+
+/** A combo with its requirements, `{ _id, category, quantity }` each, in position order. */
+async function withRequirements(combo) {
+	if (!combo) return null;
+	const { rows } = await db().query('SELECT id, category, quantity FROM combo_category_requirements WHERE combo_id = $1::uuid ORDER BY position', [combo._id]);
+	return { ...combo, categoryRequirements: rows.map((row) => ({ _id: row.id, category: row.category, quantity: row.quantity })) };
+}
+const findCombo = async (id) => withRequirements(await selectOne('combos', { _id: id }));
+const findComboByName = async (name) => withRequirements(await selectOne('combos', { name }));
+const listCombos = async () => Promise.all((await select('combos')).map(withRequirements));
+/** The single settings row, or null when none exists. */
+const findSettings = () => selectOne('settings', {});
 const findMovement = (id) => selectOne('stock_movements', { _id: id });
 const listProducts = () => select('products');
 
@@ -137,6 +149,44 @@ async function insertRawProduct(fields) {
 	return toPlain(rows[0]);
 }
 
+const COMBO_DEFAULTS = () => ({ name: `Test Combo ${uuidv7()}`, price: 0, publicCode: uuidv7(), slug: 'test-combo' });
+
+/**
+ * Inserts a combo exactly as given plus defaults for the columns that must exist,
+ * and one requirements row per `categoryRequirements` entry.
+ */
+async function insertRawCombo({ categoryRequirements = [], ...fields }) {
+	const row = { id: uuidv7(), ...COMBO_DEFAULTS(), ...fields };
+	const columns = Object.keys(row).map(columnOf);
+	await db().query(
+		`INSERT INTO combos (${columns.map(quote).join(', ')}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')})`,
+		Object.values(row)
+	);
+	// Written last position first, so a read without ORDER BY position comes back in the wrong order.
+	for (const [position, requirement] of [...categoryRequirements.entries()].reverse()) {
+		await db().query(
+			'INSERT INTO combo_category_requirements (id, combo_id, position, category, quantity) VALUES ($1::uuid, $2::uuid, $3, $4, $5)',
+			[uuidv7(), row.id, position, requirement.category, requirement.quantity]
+		);
+	}
+	return findCombo(row.id);
+}
+
+/**
+ * Inserts the single settings row exactly as given: the key defaults to the one
+ * the application reads, a column left out is NULL (or its database default).
+ * The two bank columns are NOT NULL, so a caller names them.
+ */
+async function insertRawSettings(fields) {
+	const row = { id: uuidv7(), key: SETTINGS_KEY, ...fields };
+	const columns = Object.keys(row).map(columnOf);
+	const { rows } = await db().query(
+		`INSERT INTO settings (${columns.map(quote).join(', ')}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING *`,
+		Object.values(row)
+	);
+	return toPlain(rows[0]);
+}
+
 /**
  * Overwrites columns of an existing row without validation or hooks, to put a
  * row into a state the application's own write paths cannot reach.
@@ -148,10 +198,22 @@ const patch = (table) => async (id, fields) => {
 	if (rowCount !== 1) throw new Error(`no ${table} row with id ${id}`);
 };
 const patchProduct = patch('products');
+const patchCombo = patch('combos');
 const patchMovement = patch('stock_movements');
 
 async function deleteProduct(id) {
 	await db().query('DELETE FROM products WHERE id = $1::uuid', [id]);
+}
+
+// Never the ledger: emptying movements would leave cached stock that no row explains.
+const DELETABLE_KINDS = new Set(['product', 'combo', 'order', 'settings']);
+
+/** Empties every table of the given kinds (`'product'`, `'combo'`, `'order'`, `'settings'`); child rows go with their parent. */
+async function deleteAllRows(...kinds) {
+	for (const kind of kinds) {
+		if (!DELETABLE_KINDS.has(kind)) throw new Error(`deleteAllRows: ${kind} cannot be emptied`);
+	}
+	for (const kind of kinds) await db().query(`DELETE FROM ${quote(tableOf(kind))}`);
 }
 
 /**
@@ -236,15 +298,15 @@ module.exports = {
 	newId,
 	findProduct,
 	findProductByName,
-	findCombo: notImplemented('findCombo'),
-	findComboByName: notImplemented('findComboByName'),
+	findCombo,
+	findComboByName,
 	findOrder: notImplemented('findOrder'),
 	findOrderRaw: notImplemented('findOrderRaw'),
 	findOrderByCode: notImplemented('findOrderByCode'),
 	findMovement,
-	findSettings: notImplemented('findSettings'),
+	findSettings,
 	listProducts,
-	listCombos: notImplemented('listCombos'),
+	listCombos,
 	listOrders: notImplemented('listOrders'),
 	movements,
 	movementsFor,
@@ -252,19 +314,19 @@ module.exports = {
 	countRows,
 	insertRawOrder: notImplemented('insertRawOrder'),
 	insertRawProduct,
-	insertRawCombo: notImplemented('insertRawCombo'),
-	insertRawSettings: notImplemented('insertRawSettings'),
+	insertRawCombo,
+	insertRawSettings,
 	insertRawUser: notImplemented('insertRawUser'),
 	findAuthRows: notImplemented('findAuthRows'),
 	countAuthRows: notImplemented('countAuthRows'),
 	settingsDefaults,
 	patchProduct,
 	patchOrder: notImplemented('patchOrder'),
-	patchCombo: notImplemented('patchCombo'),
+	patchCombo,
 	patchMovement,
 	unsetOrderField: notImplemented('unsetOrderField'),
 	deleteProduct,
-	deleteAllRows: notImplemented('deleteAllRows'),
+	deleteAllRows,
 	withTransaction,
 	txOptions,
 	isRowId,
