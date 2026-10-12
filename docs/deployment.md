@@ -139,19 +139,23 @@ esac
 Single ingress: `store.sabies.vn` → NPM → `frontend` container (nginx, built from
 `frontend/Dockerfile`) → `/api/*` proxied to `backend:5000`, `/uploads/*` proxied directly to
 `sabstore-seaweedfs:9000` (internal Docker network, never the public internet). There is no separate
-`nginx` service and no `api.store.sabies.vn` route — see `prod.compose.yml` (4 services:
-`mongodb`, `sabstore-seaweedfs`, `backend`, `frontend`). `backend/server.js:48` sets
+`nginx` service and no `api.store.sabies.vn` route — see `prod.compose.yml` (services
+`sabstore-postgres`, the one-shot `sabstore-release`, `mongodb`, `sabstore-redis`,
+`sabstore-seaweedfs`, `backend`, `frontend`; the backend is pinned to MongoDB until the
+PostgreSQL cutover). `backend/server.js:48` sets
 `trust proxy` to `2` (NPM → frontend nginx → backend).
 
 ## 0. Prerequisites — read before touching the server
 
 1. **`.env` must be complete before `up -d`.** Every secret in `prod.compose.yml` uses
-   `${VAR:?message}` (`PUBLIC_URL`, `JWT_SECRET`, `MONGODB_URI`, `MONGO_INITDB_ROOT_USERNAME`,
-   `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `ADMIN_EMAIL`,
-   `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `APPSCRIPT_URL`). A missing one means the container
+   `${VAR:?message}` (`PUBLIC_URL`, `JWT_SECRET`, `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB`,
+   `MONGODB_URI`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_USER`,
+   `MINIO_ROOT_PASSWORD`, `REDIS_PASSWORD`, `APPSCRIPT_URL`; `ADMIN_*` are optional, read only to
+   create the first admin). A missing one means the container
    **will not boot** — this is by design (fail-fast), not a bug to work around. Same is true
    inside the backend process itself: `backend/lib/auth.js` throws at `require()` time if
-   `JWT_SECRET`/`MONGODB_URI` are missing or `JWT_SECRET` is short/placeholder-looking.
+   `JWT_SECRET` or the store's connection string (`DATABASE_URL`, or `MONGODB_URI` with
+   `DATA_BACKEND=mongo`) are missing or `JWT_SECRET` is short/placeholder-looking.
    Preflight check: `docker compose -f prod.compose.yml exec -T backend node check-env.js`
    (reports each required var as set/MISSING, never prints values, fails loudly on a
    placeholder-looking `JWT_SECRET`).
@@ -231,7 +235,7 @@ Frontend **must** be rebuilt (`build frontend`, not skipped) — it is a static 
 build time; restarting the container without rebuilding serves the old JS/CSS.
 
 Points that matter:
-- Always `-f prod.compose.yml`. The bare `compose.yml` is the dev stack (bind mounts, Mongo
+- Always `-f prod.compose.yml`. The bare `compose.yml` is the dev stack (bind mounts, PostgreSQL
   published to the host).
 - `up -d` with **no service name suffix** — naming one narrows the scope and `restart: true`
   on the un-named services doesn't get evaluated, so e.g. frontend can keep its old backend

@@ -161,7 +161,7 @@ services:
       - sabstore_network
 
   # SAB Store Redis: dispatcher for the stock-movement queue (BullMQ). It is NOT the
-  # source of truth - every stock movement is a pending document in MongoDB first, and
+  # source of truth - every stock movement is a pending record in the database first, and
   # a sweeper re-enqueues anything Redis lost - so losing this data only delays stock
   # updates. `noeviction` is deliberate: Redis must refuse writes when full rather than
   # silently drop queued jobs.
@@ -214,6 +214,82 @@ services:
     networks:
       - sabstore_network
 
+  # SAB Store PostgreSQL, the store the backend moves to from MongoDB. Until the
+  # cutover the backend stays pinned to MongoDB; only the release job connects.
+  # Guard, tuning and healthcheck: see coolify.compose.yml.
+  sabstore-postgres:
+    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        fail() { echo "$$1" >&2; exit 1; }
+        case "$${POSTGRES_USER:-}" in
+          '' | *[!a-z0-9_]*) fail "SAB_PG_USER must be non-empty and use only a-z 0-9 _" ;;
+        esac
+        case "$${POSTGRES_DB:-}" in
+          '' | *[!a-z0-9_]*) fail "SAB_PG_DB must be non-empty and use only a-z 0-9 _" ;;
+        esac
+        pw="$${POSTGRES_PASSWORD:-}"
+        case "$$pw" in
+          '' | *[!0-9a-f]*) fail "SAB_PG_PASSWORD must be lowercase hex (openssl rand -hex 24)" ;;
+        esac
+        [ "$${#pw}" -ge 32 ] || fail "SAB_PG_PASSWORD must be at least 32 hex characters"
+        exec docker-entrypoint.sh postgres -c shared_buffers=64MB -c max_connections=30 -c work_mem=4MB -c effective_cache_size=192MB -c timezone=UTC -c log_min_duration_statement=500 -c log_parameter_max_length=0
+    mem_limit: 384m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      POSTGRES_USER: ${SAB_PG_USER:?SAB_PG_USER is required}
+      POSTGRES_PASSWORD: ${SAB_PG_PASSWORD:?SAB_PG_PASSWORD is required}
+      POSTGRES_DB: ${SAB_PG_DB:?SAB_PG_DB is required}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8 --locale=C.UTF-8
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\"" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+      # Probe often only while starting; see coolify.compose.yml.
+      start_interval: 2s
+    networks:
+      - sabstore_network
+
+  # One-shot job: backs the database up, then applies pending migrations
+  # (backend/scripts/release.sh). It exits when done and never serves traffic.
+  sabstore-release:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: release
+    restart: "no"
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      DATABASE_URL: postgresql://${SAB_PG_USER:?SAB_PG_USER is required}:${SAB_PG_PASSWORD:?SAB_PG_PASSWORD is required}@sabstore-postgres:5432/${SAB_PG_DB:?SAB_PG_DB is required}
+      BACKUP_DIR: /backups
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
+    volumes:
+      - pg_backups:/backups
+    depends_on:
+      sabstore-postgres:
+        condition: service_healthy
+    networks:
+      - sabstore_network
+
   # SAB Store Backend API
   backend:
     build:
@@ -238,7 +314,7 @@ services:
       # to initialise an empty production DB otherwise (catches a wrong DB name).
       INIT_EMPTY_DATABASE: ${INIT_EMPTY_DATABASE:-}
       PORT: ${BACKEND_PORT:-5000}
-      # PUBLIC_URL is the single source for the public origin (AD-2):
+      # PUBLIC_URL is the single source for the public origin:
       # BASE_URL and CORS_ORIGIN both derive from it instead of carrying
       # their own copies that can drift apart.
       PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL is required}
@@ -247,9 +323,10 @@ services:
       DATA_BACKEND: mongo
       MONGODB_URI: ${MONGODB_URI:?MONGODB_URI is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:?ADMIN_USERNAME is required}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      # Optional: read only to create the first admin when the database has none.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       APPSCRIPT_URL: ${APPSCRIPT_URL:?APPSCRIPT_URL is required}
       CORS_ORIGIN: ${PUBLIC_URL}
       # The MINIO_* names are kept for the minio SDK; the server behind them is
@@ -301,7 +378,7 @@ services:
   # SAB Store Frontend React App (with Nginx Reverse Proxy)
   frontend:
     # No VITE_API_URL build arg/env: the SPA calls the API via the relative
-    # path /api (AD-3), so nothing domain-specific is baked into the bundle.
+    # path /api, so nothing domain-specific is baked into the bundle.
     build:
       context: .
       dockerfile: frontend/Dockerfile
@@ -343,6 +420,8 @@ volumes:
   seaweedfs_data:
   redis_data:
   backend_uploads:
+  postgres_data:
+  pg_backups:
 
 
 networks:
