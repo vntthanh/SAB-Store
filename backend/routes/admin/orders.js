@@ -11,6 +11,7 @@ const { transitionOrderWithStock } = require('../../services/stock');
 const { enqueueMovements } = require('../../services/stock-ledger');
 const { gated } = require('../../services/write-gate');
 const { asEnum, asSort, asPageLimit } = require('../../utils/query-guard');
+const ErrorLogger = require('../../utils/errorLogger');
 const router = express.Router();
 
 const ORDER_SORTABLE_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode'];
@@ -37,7 +38,7 @@ router.get('/', async (req, res) => {
 		res.json({ success: true, data, meta });
 
 	} catch (error) {
-		console.error('Error fetching orders:', error);
+		ErrorLogger.log(error, { route: 'GET /admin/orders' });
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi lấy danh sách đơn hàng'
@@ -67,7 +68,7 @@ router.get('/:id', async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('Error fetching order:', error);
+		ErrorLogger.log(error, { route: 'GET /admin/orders/:id' });
 
 		if (error instanceof InvalidIdError) {
 			return res.status(400).json({
@@ -191,7 +192,7 @@ router.put('/:id', validateOrderUpdate, gated(async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('Error updating order:', error);
+		ErrorLogger.log(error, { route: 'PUT /admin/orders/:id' });
 
 		if (error instanceof InvalidIdError) {
 			return res.status(400).json({
@@ -281,7 +282,7 @@ router.put('/:id/items', validateOrderItemsEdit, gated(async (req, res) => {
 		if (error instanceof InvalidIdError) {
 			return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ' });
 		}
-		console.error('Error editing order items:', error);
+		ErrorLogger.log(error, { route: 'PUT /admin/orders/:id/items' });
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi sửa sản phẩm trong đơn hàng'
@@ -322,7 +323,7 @@ router.patch('/:id/notes', validateOrderNotes, gated(async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('Error updating order notes:', error);
+		ErrorLogger.log(error, { route: 'PATCH /admin/orders/:id/notes' });
 
 		if (error instanceof InvalidIdError) {
 			return res.status(400).json({ success: false, message: 'ID đơn hàng không hợp lệ' });
@@ -399,13 +400,11 @@ router.delete('/', gated(async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('💥 Error deleting all orders:', error);
-
-		// Log the failed dangerous operation
-		console.error('🔥 CRITICAL OPERATION FAILED - DELETE ALL ORDERS:', {
-			error: error.message,
-			admin: req.admin.username,
-			timestamp: new Date().toISOString()
+		// A failed destructive operation is logged with who ran it.
+		ErrorLogger.log(error, {
+			route: 'DELETE /admin/orders',
+			operation: 'delete-all-orders',
+			admin: req.admin.username
 		});
 
 		res.status(500).json({

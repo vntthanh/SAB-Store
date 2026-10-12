@@ -10,6 +10,7 @@ const { orders, withTransaction } = require('../data');
 const { RecordValidationError, isDuplicateKeyOn } = require('../data/errors');
 const { gated } = require('../services/write-gate');
 const { logEvent, orderCreatedFields } = require('../utils/log-event');
+const ErrorLogger = require('../utils/errorLogger');
 const router = express.Router();
 
 const MAX_ORDER_CODE_ATTEMPTS = 10;
@@ -154,11 +155,8 @@ router.post('/', validateOrder, gated(async (req, res) => {
 		});
 
 	} catch (error) {
-		console.error('💥 Error creating order:', {
-			error: error.message,
-			stack: error.stack,
-			timestamp: new Date().toISOString()
-		});
+		// Not the request body: it holds the customer's note and contact details.
+		ErrorLogger.log(error, { route: 'POST /orders' });
 
 		// More specific error handling
 		if (error instanceof RecordValidationError) {
@@ -171,7 +169,7 @@ router.post('/', validateOrder, gated(async (req, res) => {
 		}
 
 		if (error.name === 'MongoError' || error.name === 'MongoServerError') {
-			console.error('❌ Database error:', error.message);
+			console.error('Database error creating order (details logged above)');
 			return res.status(500).json({
 				success: false,
 				message: 'Lỗi cơ sở dữ liệu'
