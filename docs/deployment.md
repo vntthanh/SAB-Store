@@ -67,7 +67,31 @@ covers `prod.compose.yml` on a host without Coolify and is kept as the fallback 
   live are NOT in the MinIO data; copy them across by hand (e.g. with `mc`/`weed`) before
   rolling back, or they are lost.
 
-### Copying the database under a new name
+### PostgreSQL (the production database since 2026-10-13)
+
+- **Services**: `sabstore-postgres` (data in the bind `/srv/appdata/vol/sab-store_postgres_data`)
+  and the one-shot `sabstore-release`. On every deploy the release job writes a `pg_dump -Fc` to
+  `/srv/appdata/vol/sab-store_pg_backups` (0600, newest 14 kept), then runs
+  `prisma migrate deploy`; the backend starts only after it exits 0. A failed dump stops it
+  before any migration, and the backend then stays down: read the job's log
+  (`docker logs` on the container with label `com.docker.compose.service=sabstore-release`).
+- **Credentials**: `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB` in the Coolify environment,
+  build-time off. The data directory is initialised once, so changing `SAB_PG_PASSWORD` alone
+  locks the backend out. Rotate in this order: inside the postgres container
+  `psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c '\password'` (the new value never touches argv),
+  then the Coolify variable, then deploy.
+- **Restore a release dump** (data loss or corruption only; everything written after that dump
+  is lost): stop the backend container, then
+  `docker exec -i <postgres> sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --no-privileges --single-transaction --exit-on-error' < <dump>`,
+  then start the backend. Day-to-day backups are the admin dashboard's export/import.
+- **MongoDB** still runs with no client, holding the data as it was at the cutover. Reverting the
+  cutover commit points the backend back at it and discards every write made on PostgreSQL since,
+  so it is only an option before the shop has taken any. After that, fix forward. The Mongo-only
+  sections below apply to `prod.compose.yml` and to that history.
+- **`JWT_SECRET` must not change**: the jwks signing key in the database is encrypted with it;
+  with another value every session check answers 500.
+
+### Copying the database under a new name (MongoDB)
 
 The production database is `sabstore` (it was `sablanyard` until 2026-09-29; that copy is kept
 read-only for a while as the rollback). To copy a database under a new name again, on the
@@ -141,8 +165,8 @@ Single ingress: `store.sabies.vn` → NPM → `frontend` container (nginx, built
 `sabstore-seaweedfs:9000` (internal Docker network, never the public internet). There is no separate
 `nginx` service and no `api.store.sabies.vn` route — see `prod.compose.yml` (services
 `sabstore-postgres`, the one-shot `sabstore-release`, `mongodb`, `sabstore-redis`,
-`sabstore-seaweedfs`, `backend`, `frontend`; the backend is pinned to MongoDB until the
-PostgreSQL cutover). `backend/server.js:48` sets
+`sabstore-seaweedfs`, `backend`, `frontend`; this fallback file still pins the backend to
+MongoDB, unlike `coolify.compose.yml`). `backend/server.js:48` sets
 `trust proxy` to `2` (NPM → frontend nginx → backend).
 
 ## 0. Prerequisites — read before touching the server
