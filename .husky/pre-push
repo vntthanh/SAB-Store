@@ -3,6 +3,8 @@
 # three plus the shared package tests when workspace plumbing (packages/*, root
 # manifest, lockfile, workspace file) changed.
 # knip (unused files, exports, dependencies) runs first, before any test or build.
+# The contract suite on Postgres (`pnpm test:contract:postgres`) runs next, ahead
+# of the full backend suite, when a pushed path is in touches_postgres_contract below.
 # Anything else (Markdown, hooks, compose files) runs nothing. Work runs under
 # the machine-wide heavy lock (lib/heavy-lock.sh).
 . "$(dirname "$0")/lib/require-bash.sh"
@@ -11,6 +13,29 @@
 set -Eeuo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
+
+# postgres-contract-paths:begin
+# Code the Postgres contract suite (backend/tests/contract on DATA_BACKEND=postgres)
+# loads or is built from: the data layer and what it requires (services, lib, models,
+# queues, constants, utils), the Prisma schema and migrations, the test harness and
+# helpers, the backend manifest and vitest configs, and workspace plumbing (the shared
+# package supplies id mapping and validation). Routes, middleware and scripts are not
+# in its require closure, so they do not trigger it. The same list is in pre-commit and
+# pre-push; backend/tests/architecture/hook-postgres-trigger.test.js keeps the two equal.
+touches_postgres_contract() {
+	case "$1" in
+		*.md) return 1 ;;
+		package.json | pnpm-lock.yaml | pnpm-workspace.yaml | .npmrc | packages/*) return 0 ;;
+		backend/package.json | backend/vitest*.mjs | backend/prisma.config.cjs | backend/prisma/* | \
+			backend/data/* | backend/lib/* | backend/models/* | backend/services/* | backend/queues/* | \
+			backend/constants/* | backend/utils/* | \
+			backend/tests/contract/* | backend/tests/helpers/* | \
+			backend/tests/env.js | backend/tests/setup.js | backend/tests/global-setup.js) return 0 ;;
+	esac
+	return 1
+}
+# postgres-contract-paths:end
+
 ZERO_SHA="0000000000000000000000000000000000000000"
 
 # heavy_lock_hook re-runs this script under the lock, and the ref list arrives
@@ -20,6 +45,7 @@ REFS="${CC_SAB_PUSH_REFS-$(cat)}"
 backend_changed=false
 frontend_changed=false
 shared_changed=false
+postgres_contract=false
 while read -r local_ref local_sha remote_ref remote_sha; do
 	[[ -z "${local_ref:-}" || "$local_sha" == "$ZERO_SHA" ]] && continue
 	if [[ "$remote_sha" == "$ZERO_SHA" ]]; then
@@ -35,9 +61,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 		backend_changed=true
 		frontend_changed=true
 		shared_changed=true
+		postgres_contract=true
 		continue
 	fi
 	while IFS= read -r f; do
+		if touches_postgres_contract "$f"; then postgres_contract=true; fi
 		case "$f" in
 			*.md) ;;
 			package.json | pnpm-lock.yaml | pnpm-workspace.yaml | .npmrc | packages/*)
@@ -60,6 +88,11 @@ CC_SAB_PUSH_REFS="$REFS" heavy_lock_hook SAB-Store pre-push "$0" "$@"
 # Before every test and build step: the cheapest whole-repo check goes first.
 echo "pre-push: knip (unused files, exports, dependencies)"
 (cd "$ROOT" && pnpm --silent knip)
+
+if [[ "$postgres_contract" == true ]]; then
+	echo "pre-push: data layer, schema or harness changed, running the contract suite on Postgres"
+	(cd "$ROOT/backend" && pnpm --silent test:contract:postgres)
+fi
 
 if [[ "$backend_changed" == true ]]; then
 	echo "pre-push: full backend suite"
