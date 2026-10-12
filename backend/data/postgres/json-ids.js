@@ -24,4 +24,4 @@ function mapJsonIds(value) {
 	return mapped;
 }
 
-module.exports = { mapJsonIds, HEX_ID };
+module.exports = { mapJsonIds, HEX_ID, ID_KEYS };

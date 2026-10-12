@@ -8,13 +8,16 @@ const BACKEND = path.resolve(__dirname, '../..');
 // that may touch the storage engine.
 const SCANNED = ['routes', 'services', 'utils', 'middleware', 'queues', 'scripts', 'lib', 'data', 'init-database.js'];
 
-// Connection and health check, the auth library's own adapter, and the Mongo
-// implementation of the repositories.
+// Connection and health check, the auth library's own adapter, the Mongo
+// implementation of the repositories, and the one-shot MongoDB -> PostgreSQL
+// loader, which reads the old store's raw collections by design.
 const ALLOWED = [
 	'lib/database.js',
 	'lib/require-replica-set.js',
 	'lib/auth.js',
 	'data/mongo/',
+	'scripts/migrate-mongo-to-postgres.js',
+	'scripts/migrate-mongo/',
 ];
 
 const REQUIRE = /require\(\s*(['"`])([^'"`]+)\1\s*\)/g;

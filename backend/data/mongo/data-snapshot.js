@@ -153,4 +153,4 @@ async function replaceAll(snapshot, tx) {
 	return written;
 }
 
-module.exports = { exportAll, countRows, replaceAll };
+module.exports = { exportAll, countRows, replaceAll, toWire };

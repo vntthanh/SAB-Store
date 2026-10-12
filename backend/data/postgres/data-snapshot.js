@@ -60,10 +60,12 @@ function movementWire(row) {
 /**
  * Every row of the business tables from one consistent read.
  *
+ * @param {object} [outer] read inside this transaction (its isolation level, its
+ *   uncommitted rows) instead of a snapshot transaction of its own
  * @returns {Promise<Record<string, Array<object>>>} section -> wire-form rows, oldest id first (movements in ledger order)
  */
-function exportAll() {
-	return withSnapshotTransaction(async (tx) => {
+function exportAll(outer) {
+	const read = async (tx) => {
 		const [products, combos, orders, movements, settings] = [
 			await tx.product.findMany({ orderBy: { id: 'asc' } }),
 			await tx.combo.findMany({ orderBy: { id: 'asc' }, include: { requirements: { orderBy: { position: 'asc' } } } }),
@@ -78,7 +80,8 @@ function exportAll() {
 			stockMovements: movements.map((row) => toWire(movementWire(row))),
 			settings: settings.map((row) => toWire(settingsRecord(row, { defaults: false })))
 		};
-	});
+	};
+	return outer ? read(outer) : withSnapshotTransaction(read);
 }
 
 /**
@@ -271,4 +274,4 @@ function replaceAll(snapshot, tx) {
 	});
 }
 
-module.exports = { exportAll, countRows, replaceAll };
+module.exports = { exportAll, countRows, replaceAll, WHOLE_STORE_TX };
