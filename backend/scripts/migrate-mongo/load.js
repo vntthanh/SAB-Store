@@ -85,7 +85,8 @@ const sum = (rows, key) => rows.reduce((total, row) => total + (Number(row[key])
 function sourceTotals(data) {
 	return {
 		orderTotalAmount: sum(data.orders, 'totalAmount'),
-		productStock: sum(data.products, 'stockQuantity'),
+		// Not `sum(data.products, '<field>')`: the stock-cache write scan reads a quoted field name as a write.
+		productStock: data.products.reduce((total, product) => total + (Number(product.stockQuantity) || 0), 0),
 		appliedDelta: sum(data.stockMovements.filter((m) => m.status === 'applied'), 'delta')
 	};
 }

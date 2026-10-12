@@ -230,6 +230,27 @@ async function launch(EmbeddedPostgres, dataDir) {
 }
 
 /**
+ * The EmbeddedPostgres class, without the 'beforeExit' listener the package adds.
+ *
+ * Importing embedded-postgres registers async-exit-hook, whose 'beforeExit'
+ * handler calls process.exit(0) once the event loop drains. In vitest's main
+ * process (globalSetup) that replaced the exit code vitest sets for failed
+ * tests: measured 2026-10-12, `vitest run` exited 0 with a failing test and the
+ * git hooks let it through. Shutdown is handled here anyway (stop(), the 'exit'
+ * and signal handlers), so the listener the import added is removed.
+ */
+async function importEmbeddedPostgres() {
+	// Any listener that appears during the import is taken as the package's;
+	// nothing else registers one in globalSetup.
+	const before = new Set(process.listeners('beforeExit'));
+	const { default: EmbeddedPostgres } = await import('embedded-postgres');
+	for (const listener of process.listeners('beforeExit')) {
+		if (!before.has(listener)) process.removeListener('beforeExit', listener);
+	}
+	return EmbeddedPostgres;
+}
+
+/**
  * Starts the server and builds the template. Resolves to { uri, template, stop }.
  * `uri` is a superuser URL on the maintenance database. `label` separates
  * independent servers started by the same process.
@@ -255,7 +276,7 @@ async function startEmbeddedPostgres({ label = 'run' } = {}) {
 	};
 
 	try {
-		const { default: EmbeddedPostgres } = await import('embedded-postgres');
+		const EmbeddedPostgres = await importEmbeddedPostgres();
 		let started;
 		try {
 			started = await launch(EmbeddedPostgres, dataDir);
@@ -316,6 +337,7 @@ module.exports = {
 	truncateAll,
 	pidAlive,
 	sweepSync,
+	importEmbeddedPostgres,
 	startEmbeddedPostgres,
 	startTestPostgres,
 };
