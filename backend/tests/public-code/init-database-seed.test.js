@@ -1,12 +1,10 @@
-const { listProducts } = require('../helpers/db');
+const { listProducts, countRows } =require('../helpers/db');
 const { PUBLIC_CODE_PATTERN } = require('../../utils/public-code');
 const { initDatabase } = require('../../init-database');
-const { POSTGRES } = require('../helpers/backend');
 
 const ENV_KEYS = ['NODE_ENV', 'INIT_EMPTY_DATABASE', 'ADMIN_EMAIL', 'ADMIN_USERNAME', 'ADMIN_PASSWORD'];
 
-// Skipped on Postgres: covers the bootstrap repository, which moves with auth (bootstrap reads the login tables and is not implemented on Postgres yet).
-describe.skipIf(POSTGRES)('initDatabase seed', () => {
+describe('initDatabase seed', () => {
 	let saved;
 
 	beforeEach(() => {
@@ -37,5 +35,17 @@ describe.skipIf(POSTGRES)('initDatabase seed', () => {
 			expect(product.slug).toBeTruthy();
 		}
 		expect(new Set(products.map((p) => p.publicCode)).size).toBe(products.length);
+	});
+
+	it('seeds a mixed-case admin once and recognises it on the next run', async () => {
+		// The auth library stores email and username lower-cased; a seed that compared
+		// the raw env value would miss the admin on the second boot and fail creating it.
+		process.env.ADMIN_EMAIL = 'Seed-Admin@Example.com';
+		process.env.ADMIN_USERNAME = 'SeedAdmin';
+
+		await initDatabase();
+		await expect(initDatabase()).resolves.not.toThrow();
+
+		expect(await countRows('user')).toBe(1);
 	});
 });

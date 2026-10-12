@@ -7,7 +7,7 @@
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { createAccount } = require('../helpers/factories');
-const mongoose = require('mongoose');
+const { findAuthRows } = require('../helpers/db');
 
 describe('client IP resolution behind the proxy chain', () => {
 	let app;
@@ -18,15 +18,14 @@ describe('client IP resolution behind the proxy chain', () => {
 
 	async function signInVia(forwardedFor) {
 		const { email, password } = await createAccount();
-		const sessions = mongoose.connection.db.collection('session');
-		await sessions.deleteMany({});
 
 		const res = await request(app)
 			.post('/api/auth/sign-in/email')
 			.set('X-Forwarded-For', forwardedFor)
 			.send({ email, password });
 		expect(res.status).toBe(200);
-		return sessions.findOne({});
+		// The mongo store keeps sessions across tests, so take the one just written.
+		return (await findAuthRows('session')).at(-1);
 	}
 
 	it('takes the client from a single-hop header', async () => {

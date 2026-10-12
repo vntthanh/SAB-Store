@@ -1,7 +1,6 @@
 const { makeSettings } = require('../helpers/factories');
 const { countRows, findSettings, insertRawUser, databaseName } = require('../helpers/db');
 const { initDatabase } = require('../../init-database');
-const { POSTGRES } = require('../helpers/backend');
 
 const ENV_KEYS = [
 	'NODE_ENV',
@@ -11,8 +10,7 @@ const ENV_KEYS = [
 	'ADMIN_PASSWORD',
 ];
 
-// Skipped on Postgres: covers the bootstrap repository, which moves with auth (bootstrap reads the login tables and is not implemented on Postgres yet).
-describe.skipIf(POSTGRES)('initDatabase seed guard', () => {
+describe('initDatabase seed guard', () => {
 	let saved;
 	let logSpy;
 

@@ -1,6 +1,6 @@
 /**
- * DATA_BACKEND picks the repositories; a repository the chosen backend lacks
- * must fail loudly, never answer from the other store.
+ * DATA_BACKEND picks the repositories, and an unknown name must stop the process
+ * at load time, never answer from another store.
  */
 const data = require('../../data');
 
@@ -13,13 +13,6 @@ describe('data backend switch', () => {
 		expect(data.stockLedger).toBe(require(expected));
 		expect(typeof data.withTransaction).toBe('function');
 		expect(typeof data.translateWriteError).toBe('function');
-	});
-
-	it.skipIf(!POSTGRES)('throws a clear error when a postgres repository that is not written yet is used', () => {
-		// bootstrap reads the login tables and moves with auth.
-		for (const repository of ['bootstrap']) {
-			expect(() => data[repository].anything, repository).toThrow(`${repository}.anything is not implemented in postgres yet`);
-		}
 	});
 
 	it.skipIf(!POSTGRES)('rejects an unknown backend name at load time', () => {

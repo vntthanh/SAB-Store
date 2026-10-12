@@ -177,6 +177,9 @@ describe('POST /api/admin/database/import (merge) with a backup file', () => {
 	});
 
 	it('refuses to write login sections of any kind and reports them', async () => {
+		// The first authenticated request of a database mints the token signing key. Take
+		// the snapshot after it, or a store that was just emptied counts it as written by the import.
+		await request(app).get('/api/auth/get-session').set('Cookie', cookies);
 		const before = { user: await countRows('user'), account: await countRows('account'), session: await countAuthRows('session'), jwks: await countAuthRows('jwks') };
 
 		const res = await importFile(app, cookies, {

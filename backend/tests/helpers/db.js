@@ -18,7 +18,7 @@
  * Portability: most of this file is plain data access. These seams are tied to
  * the store and each needs a deliberate SQL counterpart. The counterpart is
  * db-postgres.js, which this file exports instead of its own when DATA_BACKEND
- * is `postgres`; a helper it has not implemented yet throws.
+ * is `postgres`.
  *
  * Fault seams (`failNext*`, `failProductCatalogReads`) return a handle. A test
  * that arms one must assert `fired()`, or a change in how production writes
@@ -188,13 +188,15 @@ const insertRawProduct = insertRaw(Product);
 const insertRawCombo = insertRaw(Combo);
 // A login row with no credentials: enough to make the user table non-empty.
 const insertRawUser = insertRaw(User);
+/** The oldest login user matching `filter` (field -> value), or null. */
+const findUser = (filter) => findOne(User, toQuery(filter), byAge);
 
 // The auth library's own collections, by the names it gives them.
 const authRows = (name) => mongoose.connection.collection(name);
 /** Row count of one of the auth library's tables. */
 const countAuthRows = (name) => authRows(name).countDocuments({});
-/** Every row of one of the auth library's tables, as hex-id plain objects. */
-const findAuthRows = async (name) => plain(await authRows(name).find({}).toArray());
+/** Every row of one of the auth library's tables, oldest first, as hex-id plain objects. */
+const findAuthRows = async (name) => plain(await authRows(name).find({}).sort({ createdAt: 1, _id: 1 }).toArray());
 
 /**
  * The settings row as an older version stored it: the given fields only, no
@@ -374,6 +376,7 @@ const mongoOracle = {
 	insertRawCombo,
 	insertRawSettings,
 	insertRawUser,
+	findUser,
 	findAuthRows,
 	countAuthRows,
 	settingsDefaults,
@@ -400,19 +403,6 @@ const mongoOracle = {
 	failProductCatalogReads,
 };
 
-// The postgres implementation lives in db-postgres.js and answers the same calls.
-// Login tables stay on MongoDB until the auth conversion, on both backends, so
-// their helpers keep reading MongoDB when the store is on Postgres.
-function postgresOracle() {
-	const pg = require('./db-postgres');
-	const isLoginKind = (kind) => kind === 'user' || kind === 'account';
-	return {
-		...pg,
-		insertRawUser,
-		findAuthRows,
-		countAuthRows,
-		countRows: (kind, filter) => (isLoginKind(kind) ? countRows(kind, filter) : pg.countRows(kind, filter)),
-	};
-}
-
-module.exports = process.env.DATA_BACKEND === 'postgres' ? postgresOracle() : mongoOracle;
+// The postgres implementation lives in db-postgres.js and answers the same calls,
+// the login tables included.
+module.exports = process.env.DATA_BACKEND === 'postgres' ? require('./db-postgres') : mongoOracle;

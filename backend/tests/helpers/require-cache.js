@@ -18,11 +18,12 @@ const dependencyDir = `${path.sep}node${'_'}modules${path.sep}`;
 // the same server registry; third-party packages and the generated Prisma client
 // stay cached because they hold no state under test and re-evaluating them is
 // slow. Returns a promise: the current
-// better-auth MongoClient and the Prisma pool are closed first, or the
-// re-required modules open second ones and the first are never closed.
+// better-auth connection (MongoClient or Prisma pool) and the Prisma pool are
+// closed first, or the re-required modules open second ones and the first are
+// never closed.
 async function clearAppModules() {
 	const authPath = path.join(backendRoot, 'lib', 'auth.js');
-	if (require.cache[authPath]) await require.cache[authPath].exports.client?.close();
+	if (require.cache[authPath]) await require.cache[authPath].exports.closeAuth?.();
 	const prismaPath = path.join(backendRoot, 'lib', 'prisma.js');
 	if (require.cache[prismaPath]) await require.cache[prismaPath].exports.closeDb();
 	// mongoose is a cached package, so its model registry would otherwise make the

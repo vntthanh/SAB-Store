@@ -2,11 +2,7 @@
  * The active data implementation. `DATA_BACKEND` picks it (`mongo`, the default,
  * or `postgres`), transactions included; an unknown value stops the process at
  * require time rather than falling back to another store. On `postgres`, ids are
- * UUID strings and a repository that has no implementation yet throws when used.
- *
- * Postgres status per repository: `stockLedger`, `products`, `combos`, `settings`,
- * `orders`, `dashboard` and `dataSnapshot` implemented; `bootstrap` not yet (it
- * reads the login tables and moves with auth).
+ * UUID strings.
  *
  * Record shape contract for repository functions:
  * - Records are plain objects, never store documents or query objects. The id is
@@ -80,7 +76,8 @@
  *   `ensureIndexes`). The stock-deducted pair exists only for a store where the
  *   field can be absent; a NOT NULL column makes it a no-op. `bootstrap` serves
  *   the first-run seed (`databaseName`, `hasLoginUsers`, `loginUserExists`) and reads
- *   the auth library's login table directly; it moves with auth.
+ *   the auth library's login table directly. `databaseName` may be async (postgres
+ *   asks the server), so callers `await` it.
  * - `dataSnapshot` moves whole rows in the wire form of data/snapshot.js (ids as
  *   strings, dates as ISO strings; mongo keeps `__v`, postgres has none), unlike the
  *   other repositories. On postgres a restore maps every id of the file, legacy hex
@@ -108,23 +105,18 @@ const BACKENDS = {
 		withTransaction: require('./mongo/tx').withTransaction,
 		translateWriteError: require('./mongo/errors').translateWriteError
 	}),
-	// Repositories not converted yet are present but throw on first use, so a
-	// partial backend can never answer from the wrong store.
-	postgres: () => {
-		const { notImplemented } = require('./postgres/not-implemented');
-		return {
-			stockLedger: require('./postgres/stock-ledger'),
-			orders: require('./postgres/orders'),
-			products: require('./postgres/products'),
-			combos: require('./postgres/combos'),
-			settings: require('./postgres/settings'),
-			dataSnapshot: require('./postgres/data-snapshot'),
-			dashboard: require('./postgres/dashboard'),
-			bootstrap: notImplemented('bootstrap'),
-			withTransaction: require('./postgres/tx').withTransaction,
-			translateWriteError: require('./postgres/errors').translateWriteError
-		};
-	}
+	postgres: () => ({
+		stockLedger: require('./postgres/stock-ledger'),
+		orders: require('./postgres/orders'),
+		products: require('./postgres/products'),
+		combos: require('./postgres/combos'),
+		settings: require('./postgres/settings'),
+		dataSnapshot: require('./postgres/data-snapshot'),
+		dashboard: require('./postgres/dashboard'),
+		bootstrap: require('./postgres/bootstrap'),
+		withTransaction: require('./postgres/tx').withTransaction,
+		translateWriteError: require('./postgres/errors').translateWriteError
+	})
 };
 
 module.exports = BACKENDS[backendName]();

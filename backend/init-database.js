@@ -30,7 +30,7 @@ async function initDatabase() {
 	// across two databases, so a first deploy must opt in by naming the database
 	// it expects. A plain `true` would keep the guard off forever if the flag
 	// were left behind; a name only matches the database it was meant for.
-	const dbName = bootstrap.databaseName();
+	const dbName = await bootstrap.databaseName();
 	const optIn = process.env.INIT_EMPTY_DATABASE;
 	const hasUsers = await bootstrap.hasLoginUsers();
 	if (isProduction && !hasUsers && optIn !== dbName) {

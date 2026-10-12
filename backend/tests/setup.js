@@ -5,8 +5,8 @@
  * mongoose to Mongo and keeps state from leaking between tests.
  *
  * The URI comes from MONGODB_URI (built in tests/env.js) rather than being
- * assembled here, so mongoose and better-auth's own MongoClient share one
- * database instead of silently using two.
+ * assembled here, so on the mongo backend mongoose and better-auth's own
+ * MongoClient share one database instead of silently using two.
  */
 const mongoose = require('mongoose');
 const { Client } = require('pg');
@@ -62,8 +62,9 @@ afterAll(async () => {
 	await closeTestServers();
 	await mongoose.disconnect();
 
-	// better-auth opens its own MongoClient at require time, separate from
-	// mongoose's. Leaving it open keeps a live handle and the run never exits.
-	const { client } = require('../lib/auth');
-	await client.close();
+	// better-auth opens its own connection at require time (a MongoClient apart
+	// from mongoose's, or the Prisma pool). Leaving it open keeps a live handle and
+	// the run never exits.
+	const { closeAuth } = require('../lib/auth');
+	await closeAuth();
 });

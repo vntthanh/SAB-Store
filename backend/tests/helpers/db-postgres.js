@@ -7,13 +7,11 @@
  * the repositories or Prisma models under test. Only the fault seams touch the
  * code under test, and only at the boundary the header of db.js names for them.
  *
- * Helpers no contract needs yet throw "not implemented for postgres"; each phase
- * that converts a repository fills in its own. `unsetOrderField` can never
- * apply (a column cannot be missing) and throws for good.
+ * `unsetOrderField` can never apply (a column cannot be missing) and throws.
  *
- * The login-table helpers (`countRows('user'|'account')`, `insertRawUser`,
- * `findAuthRows`, `countAuthRows`) are not here: login stays on MongoDB until
- * the auth conversion, so db.js keeps serving them from MongoDB.
+ * The login tables (`user`, `account`, `session`, `jwks`, `verification`) belong
+ * to the auth library and keep its camelCase column names, unlike the store
+ * tables, so their helpers address columns by the key as given.
  *
  * Fault seams: see db.js. Here `failNextStockWrite` wraps the transaction client
  * so the first write of a product row inside a transaction rejects after the
@@ -28,6 +26,8 @@ const { prisma } = require('../../lib/prisma');
 const { SETTINGS_KEY, DEFAULT_NOTICES, DEFAULT_CONTACT, NOTICE_MAX_LENGTH } = require('../../constants/settings');
 
 const TABLES = { product: 'products', combo: 'combos', order: 'orders', movement: 'stock_movements', settings: 'settings' };
+const AUTH_TABLES = new Set(['user', 'account', 'session', 'jwks', 'verification']);
+for (const name of AUTH_TABLES) TABLES[name] = name;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 let pool = null;
@@ -53,6 +53,7 @@ const snake = (name) => name.replace(/[A-Z]/g, (char) => `_${char.toLowerCase()}
 const camel = (name) => name.replace(/_([a-z0-9])/g, (_, char) => char.toUpperCase());
 const quote = (name) => `"${name.replace(/"/g, '""')}"`;
 const columnOf = (key) => (key === '_id' ? 'id' : snake(key));
+const authColumnOf = (key) => (key === '_id' ? 'id' : key);
 
 /** A row as the API would show it: `_id`, camelCase keys, no internal `seq`. */
 function toPlain(row) {
@@ -72,14 +73,14 @@ function tableOf(kind) {
 }
 
 /** `WHERE` for a field -> value filter; an array means "any of". Everything compares as text, so enums and uuids need no casts. */
-function whereOf(filter, values = []) {
+function whereOf(filter, values = [], toColumn = columnOf) {
 	const clauses = Object.entries(filter).map(([key, value]) => {
-		const column = `${quote(columnOf(key))}::text`;
+		const column = `${quote(toColumn(key))}::text`;
 		if (Array.isArray(value)) {
 			values.push(value.map(String));
 			return `${column} = ANY($${values.length}::text[])`;
 		}
-		if (value === null) return `${quote(columnOf(key))} IS NULL`;
+		if (value === null) return `${quote(toColumn(key))} IS NULL`;
 		values.push(String(value));
 		return `${column} = $${values.length}`;
 	});
@@ -159,9 +160,43 @@ async function stockOf(productId) {
 
 /** Row count of `kind`, optionally narrowed by `filter`. */
 async function countRows(kind, filter = {}) {
+	const table = tableOf(kind);
 	const values = [];
-	const { rows } = await db().query(`SELECT count(*)::int AS n FROM ${quote(tableOf(kind))} ${whereOf(filter, values)}`, values);
+	const where = whereOf(filter, values, AUTH_TABLES.has(table) ? authColumnOf : columnOf);
+	const { rows } = await db().query(`SELECT count(*)::int AS n FROM ${quote(table)} ${where}`, values);
 	return rows[0].n;
+}
+
+function authTableOf(name) {
+	if (!AUTH_TABLES.has(name)) throw new Error(`unknown auth table "${name}"`);
+	return name;
+}
+
+/** Row count of one of the auth library's tables. */
+const countAuthRows = (name) => countRows(authTableOf(name));
+
+/** Every row of one of the auth library's tables, with `_id` for the row id. */
+async function findAuthRows(name) {
+	const { rows } = await db().query(`SELECT * FROM ${quote(authTableOf(name))} ORDER BY "createdAt", id`);
+	return rows.map(toPlain);
+}
+
+/** The oldest login user matching `filter` (field -> value), or null. */
+async function findUser(filter) {
+	const values = [];
+	const { rows } = await db().query(`SELECT * FROM "user" ${whereOf(filter, values, authColumnOf)} ORDER BY "createdAt", id LIMIT 1`, values);
+	return rows.length ? toPlain(rows[0]) : null;
+}
+
+/** A login row with no credentials: enough to make the user table non-empty. */
+async function insertRawUser(fields) {
+	const row = { id: uuidv7(), name: 'Test User', email: `${uuidv7()}@test.local`, username: `user_${uuidv7()}`, ...fields };
+	const columns = Object.keys(row);
+	const { rows } = await db().query(
+		`INSERT INTO "user" (${columns.map(quote).join(', ')}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING *`,
+		Object.values(row)
+	);
+	return toPlain(rows[0]);
 }
 
 // Defaults for the NOT NULL columns without a database default, so a test names only what it cares about.
@@ -424,9 +459,10 @@ module.exports = {
 	insertRawProduct,
 	insertRawCombo,
 	insertRawSettings,
-	insertRawUser: notImplemented('insertRawUser'),
-	findAuthRows: notImplemented('findAuthRows'),
-	countAuthRows: notImplemented('countAuthRows'),
+	insertRawUser,
+	findUser,
+	findAuthRows,
+	countAuthRows,
 	settingsDefaults,
 	patchProduct,
 	patchOrder,
