@@ -52,5 +52,12 @@
 - **JWKS is bound to `JWT_SECRET`:** under another secret the migrated key does not decrypt and `get-session` itself returns 500. A local rehearsal deletes the scratch `jwks` row; production must keep the same secret.
 - **macOS AirPlay Receiver holds :5000**, the port the Vite proxy expects; a local app run used backend :5051 and a throwaway Vite config overriding only the proxy target.
 
+## Compose postgres + release job (measured 2026-10-12, dev compose on the Mac)
+- From `up` to the release job exiting 0 on an empty database took 4 s (postgres healthy, dump, `migrate deploy`). A second run prints "No pending migrations". With a wrong password, pg_dump fails and the job exits 1 before migrating. The whole dev backend was healthy on postgres 13 s after `up`, and the first admin was seeded.
+- The postgres guard in `command:` rejects a short or non-hex password and a bad user name with exit 1. `pg_isready -h 127.0.0.1` inside a YAML double-quoted string needs `\"$${VAR}\"`.
+- **`log_min_duration_statement` logs bind values in full by default.** That means customer data and session tokens end up in Loki, so the compose files set `log_parameter_max_length=0`.
+- **Deploy A cannot be a cherry-pick of the compose commit onto `main`.** `main`'s Dockerfile has no `release` target, so the build of the release job would fail. The first postgres deploy has to carry the dev backend code, pinned to `DATA_BACKEND: mongo`.
+- Missing `SAB_PG_*` in Coolify makes postgres exit, release then fails on `service_healthy`, and `compose up` exits non-zero after Coolify has already removed the old containers. Create them, with build-time off, before that merge.
+
 ## Production data (copy taken 2026-10-10)
 - No order has the legacy `pending` status. No product or combo lacks a publicCode. No phone fails `^0[0-9]{9}$`. No price or total is negative or fractional. So the CHECKs are safe.
