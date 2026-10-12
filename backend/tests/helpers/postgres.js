@@ -230,22 +230,30 @@ async function launch(EmbeddedPostgres, dataDir) {
 }
 
 /**
- * The EmbeddedPostgres class, without the 'beforeExit' listener the package adds.
+ * The EmbeddedPostgres class, without the 'beforeExit' and 'exit' listeners the
+ * package adds. Its signal listeners stay: they exit 128+n, as a signal should.
  *
- * Importing embedded-postgres registers async-exit-hook, whose 'beforeExit'
- * handler calls process.exit(0) once the event loop drains. In vitest's main
+ * Importing embedded-postgres registers async-exit-hook. Its 'beforeExit'
+ * handler calls process.exit(0) once the event loop drains: in vitest's main
  * process (globalSetup) that replaced the exit code vitest sets for failed
- * tests: measured 2026-10-12, `vitest run` exited 0 with a failing test and the
- * git hooks let it through. Shutdown is handled here anyway (stop(), the 'exit'
- * and signal handlers), so the listener the import added is removed.
+ * tests. Measured 2026-10-12, `vitest run` exited 0 with a failing test and the
+ * git hooks let it through. Its 'exit' handler calls the package's shutdown
+ * function without the `done` callback, which the function then calls: measured
+ * the same day, every run ended with "TypeError: done is not a function".
+ * Shutdown is handled here anyway (stop(), this file's 'exit' and signal
+ * handlers), so both are removed.
  */
 async function importEmbeddedPostgres() {
 	// Any listener that appears during the import is taken as the package's;
-	// nothing else registers one in globalSetup.
-	const before = new Set(process.listeners('beforeExit'));
+	// nothing else registers one in globalSetup. This file's own 'exit' listener
+	// must already be registered (startEmbeddedPostgres does it first) to survive.
+	const events = ['beforeExit', 'exit'];
+	const before = new Map(events.map((event) => [event, new Set(process.listeners(event))]));
 	const { default: EmbeddedPostgres } = await import('embedded-postgres');
-	for (const listener of process.listeners('beforeExit')) {
-		if (!before.has(listener)) process.removeListener('beforeExit', listener);
+	for (const event of events) {
+		for (const listener of process.listeners(event)) {
+			if (!before.get(event).has(listener)) process.removeListener(event, listener);
+		}
 	}
 	return EmbeddedPostgres;
 }

@@ -156,18 +156,20 @@ describe('teardown', () => {
 	});
 
 	// The whole suite's exit status rides on this: vitest reports failed tests by
-	// setting the exit code and letting the main process drain.
+	// setting the exit code and letting the main process drain. The process must
+	// also end without the package's 'exit' handler crashing.
 	it.each([
 		// The package's own behaviour, pinned. If this case fails, the package no
 		// longer exits 0 and importEmbeddedPostgres' workaround can be deleted.
-		['the plain package', `import('embedded-postgres')`, 0],
-		['the helper', `require(HELPER).importEmbeddedPostgres()`, 1]
-	])('a process that set exit code 1 after importing %s exits with %s', (_label, load, expected) => {
+		['the plain package', 0, `import('embedded-postgres')`],
+		['the helper', 1, `require(HELPER).importEmbeddedPostgres()`]
+	])('a process that set exit code 1 after importing %s exits with %s', (_label, expected, load) => {
 		const helperPath = path.join(__dirname, '..', 'helpers', 'postgres.js');
 		// Exit 7 on a failed import, so "could not load" never passes for either case.
 		const script = `const HELPER = ${JSON.stringify(helperPath)}; ${load}.then(() => { process.exitCode = 1; }, (err) => { console.error(err); process.exit(7); });`;
 		const run = spawnSync(process.execPath, ['-e', script], { cwd: path.join(__dirname, '..', '..'), stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8', timeout: 15000 });
 		expect(run.status, run.stderr).toBe(expected);
+		expect(run.stderr).not.toMatch(/done is not a function/);
 	});
 
 	// Windows has no SIGINT delivery to a child process: kill() terminates it outright.
