@@ -31,5 +31,12 @@
 - **Assert lock waits through `pg_stat_activity`, not a sleep race:** poll until a session is waiting on a lock, then assert the operation is still pending.
 - **Read Committed reads are not a snapshot across statements.** Two reads that must agree (stock and applied sum) need a row lock first, or a single SQL statement.
 
+## better-auth on Prisma and Postgres scripts (measured 2026-10-12)
+- **The Prisma pool keeps a script alive for about 30 s.** On Postgres, an operational script exited about 30 s after its work, until `closeDB` also called `$disconnect`. `closeDB` only disconnects when `lib/prisma.js` is already in `require.cache`, so closing never creates a pool.
+- **Mongoose's `lowercase` setter also applies to query filters; Prisma compares raw.** `User.exists({ email })` folded a mixed-case `ADMIN_EMAIL`. The Prisma version missed the lowercase-stored admin, so the second boot's `createUser` threw `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL`. Fold email and username yourself. better-auth stores both lowercased.
+- **A non-uuid id on a native uuid column is an empty 500.** better-auth admin routes (`set-user-password`, `ban-user`, `get-user?id=`, `list-user-sessions`, and others) answered 500 on Postgres where Mongo answered 404. A `hooks.before` check with `isUuid` turns it into a 400. A Mongo repo's `InvalidIdError` (CastError) is likewise a 500 in any route catch that does not handle it.
+- **jwks is minted by the first authenticated request.** Mongo keeps `jwks` between tests (no model, so cleanup skips it). Postgres `truncateAll` empties it. A test that counts login rows before and after an operation needs a warm-up request.
+- **`uuid` 14 is ESM-only, but `require()` works on Node 24.** It is used lazily in the Postgres branch of `lib/auth.js` for `generateId`, since better-auth's built-in `"uuid"` is v4.
+
 ## Production data (copy taken 2026-10-10)
 - No order has the legacy `pending` status. No product or combo lacks a publicCode. No phone fails `^0[0-9]{9}$`. No price or total is negative or fractional. So the CHECKs are safe.
