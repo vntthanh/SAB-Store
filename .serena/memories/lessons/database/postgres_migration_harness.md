@@ -25,5 +25,11 @@
 - **Signed commits and long hooks.** Commits are signed through the 1Password SSH agent. If the hook runs long (about 2 min for the full suite), 1Password fails with "failed to fill whole buffer" when it is locked or the prompt times out. The staged state survives: unlock 1Password and commit again. Do not disable signing.
 - **Scratchpad.** A reboot wipes the session scratchpad, including helper scripts and parked patches. Keep anything you need across a pause in the plan files, not only in the scratchpad.
 
+## Prisma transactions on Postgres (measured 2026-10-12, Prisma 7.10 + adapter-pg)
+- **A deadlock inside `$queryRaw`/`$executeRaw` (e.g. `SELECT … FOR UPDATE`) is NOT reported as `P2034`.** It arrives as `P2010` carrying SQLSTATE `40P01`, and a serialization failure carries `40001`. Retrying only on `P2034` would skip exactly those deadlocks. `data/postgres/tx.js` retries on P2034 or 40P01/40001. This was proven with a real two-transaction deadlock test, where a barrier makes each side hold its first lock before asking for the second (it takes about 1 s because of the server's deadlock_timeout).
+- **Lock product rows `FOR NO KEY UPDATE` when only a non-key column changes.** `FOR UPDATE` conflicts with the `KEY SHARE` that FK inserts (movements, order items) take on the parent row, so order transactions would wait on the stock applier.
+- **Assert lock waits through `pg_stat_activity`, not a sleep race:** poll until a session is waiting on a lock, then assert the operation is still pending.
+- **Read Committed reads are not a snapshot across statements.** Two reads that must agree (stock and applied sum) need a row lock first, or a single SQL statement.
+
 ## Production data (copy taken 2026-10-10)
 - No order has the legacy `pending` status. No product or combo lacks a publicCode. No phone fails `^0[0-9]{9}$`. No price or total is negative or fractional. So the CHECKs are safe.
