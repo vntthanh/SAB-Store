@@ -7,9 +7,10 @@
 #   module, the test harness or the backend manifest changed. `vitest related` is not used
 #   for source files: the backend loads its modules with native require(), which
 #   Vitest's module graph cannot see, so it would find no tests and skip them silently;
-# - Postgres contract suite (`pnpm test:contract:postgres`): runs after knip and
-#   before the backend suite whenever a staged path is in touches_postgres_contract below,
-#   so a change to the data layer cannot pass on Mongo alone. It is a separate command, not
+# - Mongo contract suite (`pnpm test:contract:mongo`): runs after knip and
+#   before the backend suite (which runs on Postgres) whenever a staged path is in
+#   touches_mongo_contract below, so a change to the data layer cannot break the rollback
+#   store unnoticed. It is a separate command, not
 #   chained into `pnpm test`, because this hook appends staged test files to `pnpm test`
 #   and they would reach only the last command of a chained script;
 # - frontend: the production bundle must build and the frontend unit tests must pass;
@@ -27,15 +28,15 @@ set -Eeuo pipefail
 MAX_STAGED=29
 ROOT="$(git rev-parse --show-toplevel)"
 
-# postgres-contract-paths:begin
-# Code the Postgres contract suite (backend/tests/contract on DATA_BACKEND=postgres)
-# loads or is built from: the data layer and what it requires (services, lib, models,
+# mongo-contract-paths:begin
+# Code the Mongo contract suite (backend/tests/contract on DATA_BACKEND=mongo, the
+# rollback store) loads or is built from: the data layer and what it requires (services, lib, models,
 # queues, constants, utils), the Prisma schema and migrations, the test harness and
 # helpers, the backend manifest and vitest configs, and workspace plumbing (the shared
 # package supplies id mapping and validation). Routes, middleware and scripts are not
 # in its require closure, so they do not trigger it. The same list is in pre-commit and
-# pre-push; backend/tests/architecture/hook-postgres-trigger.test.js keeps the two equal.
-touches_postgres_contract() {
+# pre-push; backend/tests/architecture/hook-mongo-trigger.test.js keeps the two equal.
+touches_mongo_contract() {
 	case "$1" in
 		*.md) return 1 ;;
 		package.json | pnpm-lock.yaml | pnpm-workspace.yaml | .npmrc | packages/*) return 0 ;;
@@ -47,7 +48,7 @@ touches_postgres_contract() {
 	esac
 	return 1
 }
-# postgres-contract-paths:end
+# mongo-contract-paths:end
 
 # --no-renames: a rename is listed as delete + add, so moving a shared file away
 # still triggers the full suite through the deleted path.
@@ -64,12 +65,12 @@ backend_files=()
 frontend_changed=false
 shared_changed=false
 knip_needed=false
-postgres_contract=false
+mongo_contract=false
 for entry in "${STAGED[@]}"; do
 	status="${entry%%$'\t'*}"
 	f="${entry#*$'\t'}"
 	# A deleted or moved file counts too: removing a helper breaks the suite as well.
-	if touches_postgres_contract "$f"; then postgres_contract=true; fi
+	if touches_mongo_contract "$f"; then mongo_contract=true; fi
 	# An import added or removed, or a manifest edit, can leave a file, an export
 	# or a dependency unused (or used but undeclared) anywhere in the workspace.
 	case "$f" in
@@ -96,7 +97,7 @@ for entry in "${STAGED[@]}"; do
 	esac
 done
 
-if [[ "$backend_full" == false && ${#backend_files[@]} -eq 0 && "$frontend_changed" == false && "$shared_changed" == false && "$knip_needed" == false && "$postgres_contract" == false ]]; then
+if [[ "$backend_full" == false && ${#backend_files[@]} -eq 0 && "$frontend_changed" == false && "$shared_changed" == false && "$knip_needed" == false && "$mongo_contract" == false ]]; then
 	echo "pre-commit: no backend or frontend code staged, nothing to run"
 	exit 0
 fi
@@ -112,9 +113,9 @@ if [[ "$knip_needed" == true ]]; then
 	(cd "$ROOT" && pnpm --silent knip)
 fi
 
-if [[ "$postgres_contract" == true ]]; then
-	echo "pre-commit: data layer, schema or harness changed, running the contract suite on Postgres"
-	(cd "$ROOT/backend" && pnpm --silent test:contract:postgres)
+if [[ "$mongo_contract" == true ]]; then
+	echo "pre-commit: data layer, schema or harness changed, running the contract suite on Mongo (rollback store)"
+	(cd "$ROOT/backend" && pnpm --silent test:contract:mongo)
 fi
 
 if [[ "$backend_full" == true ]]; then

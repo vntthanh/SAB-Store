@@ -2,15 +2,16 @@
  * Environment defaults for tests.
  *
  * Loaded first in vitest `setupFiles`, which run before any test module is imported.
- * That ordering is required: lib/auth.js reads MONGODB_URI and JWT_SECRET at
- * require time and opens its own MongoClient there, so setting these from a
- * beforeAll hook would be too late and better-auth would hold a client pointed
- * at a server that does not exist.
+ * That ordering is required: lib/auth.js reads DATABASE_URL (or MONGODB_URI) and
+ * JWT_SECRET at require time and opens its own connection there, so setting these
+ * from a beforeAll hook would be too late and better-auth would hold a client
+ * pointed at a server that does not exist.
  *
- * MONGODB_URI therefore has to be the real in-memory server, not a placeholder:
- * mongoose and better-auth each open their own connection from it and must land
- * in the SAME database, or an account written through one is invisible to the
- * other.
+ * On the mongo backend MONGODB_URI has to be the real in-memory server, not a
+ * placeholder: mongoose and better-auth each open their own connection from it and
+ * must land in the SAME database, or an account written through one is invisible to
+ * the other. On postgres MONGODB_URI stays unset, so code that reaches for Mongo by
+ * mistake fails at once instead of finding a server.
  */
 
 // Each test file runs in its own forked process, so the pid names a database no
@@ -25,9 +26,6 @@ if (process.env.MONGO_TEST_URI) {
 	const uri = new URL(process.env.MONGO_TEST_URI);
 	uri.pathname = `/${workerDb}`;
 	process.env.MONGODB_URI = uri.toString();
-} else if (!process.env.MONGODB_URI) {
-	// Only reached if globalSetup did not run (e.g. a bare node invocation).
-	process.env.MONGODB_URI = `mongodb://127.0.0.1:27017/${workerDb}`;
 }
 
 // PostgreSQL: the same per-file naming; setup.js creates the database from the

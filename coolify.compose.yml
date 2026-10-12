@@ -305,6 +305,9 @@ services:
       # their own copies that can drift apart.
       PUBLIC_URL: ${PUBLIC_URL}
       BASE_URL: ${PUBLIC_URL}
+      # The backend defaults to PostgreSQL; this stack still runs MongoDB until
+      # the cutover switches the store, so the choice is pinned here.
+      DATA_BACKEND: mongo
       MONGODB_URI: ${MONGODB_URI}
       JWT_SECRET: ${JWT_SECRET}
       ADMIN_EMAIL: ${ADMIN_EMAIL}

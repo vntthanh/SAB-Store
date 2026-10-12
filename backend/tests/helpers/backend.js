@@ -5,6 +5,8 @@
  * MongoDB document. Login-table reads are not a reason: tests/helpers/db.js
  * serves them from either store.
  */
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
+const { backendName } = require('../../data/backend-name');
+
+const POSTGRES = backendName === 'postgres';
 
 module.exports = { POSTGRES };

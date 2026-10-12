@@ -33,10 +33,17 @@
 
 ## better-auth on Prisma and Postgres scripts (measured 2026-10-12)
 - **The Prisma pool keeps a script alive for about 30 s.** On Postgres, an operational script exited about 30 s after its work, until `closeDB` also called `$disconnect`. `closeDB` only disconnects when `lib/prisma.js` is already in `require.cache`, so closing never creates a pool.
-- **Mongoose's `lowercase` setter also applies to query filters; Prisma compares raw.** `User.exists({ email })` folded a mixed-case `ADMIN_EMAIL`. The Prisma version missed the lowercase-stored admin, so the second boot's `createUser` threw `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL`. Fold email and username yourself. better-auth stores both lowercased.
+- **Mongoose's `lowercase` setter also applies to query filters; Prisma compares raw.** `User.exists({ email })` folded a mixed-case `ADMIN_EMAIL`. The Prisma version missed the lowercase-stored admin, so the second boot's `createUser` threw `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL`. Fold email and username yourself. better-auth stores both lowercased. (function removed; the seed now keys on whether an admin exists)
 - **A non-uuid id on a native uuid column is an empty 500.** better-auth admin routes (`set-user-password`, `ban-user`, `get-user?id=`, `list-user-sessions`, and others) answered 500 on Postgres where Mongo answered 404. A `hooks.before` check with `isUuid` turns it into a 400. A Mongo repo's `InvalidIdError` (CastError) is likewise a 500 in any route catch that does not handle it.
 - **jwks is minted by the first authenticated request.** Mongo keeps `jwks` between tests (no model, so cleanup skips it). Postgres `truncateAll` empties it. A test that counts login rows before and after an operation needs a warm-up request.
 - **`uuid` 14 is ESM-only, but `require()` works on Node 24.** It is used lazily in the Postgres branch of `lib/auth.js` for `generateId`, since better-auth's built-in `"uuid"` is v4.
+
+## Default-store flip (measured 2026-10-12)
+- **Vitest `test.env` reaches the workers, not `globalSetup`.** globalSetup runs in the main process and receives the project as its argument: read `project.config.env.DATA_BACKEND` there (shell variable as fallback), or the Mongo replica set starts on the wrong runs.
+- **With Mongo not connected in a Postgres run, only four test files broke**: two `Model.init()` in `beforeAll` (they buffer 30 s, then time out), one `Model.create` in an integer-price test, and the case of `require-replica-set.test.js` that asks the live harness replica set (now `skipIf(POSTGRES)`). `new Model(x).validate()` runs the schema validators without a connection.
+- **Boot check for migrations.** `lib/require-migrations.js` compares the `prisma/migrations` directories shipped in the runner image (`COPY backend ./` keeps them; only `tests` is ignored) with `_prisma_migrations`. Measured on a scratch postgres:17: backend before the release step exits 1 after about 4 s with "no _prisma_migrations table"; after the release step `/health` is 200, the admin is created, and a second boot is idempotent (one user row).
+- **macOS has no `timeout` command.** A smoke script that wrapped `docker run` in it exited 127 at once. Start the container detached and poll `docker inspect -f '{{.State.Running}}'`.
+- **A connection string can be quoted by driver errors.** `ErrorLogger.log` and `logCritical` now remove the `scheme://user:password@` part (greedy to the last `@` of the token) and keep the host.
 
 ## Production data (copy taken 2026-10-10)
 - No order has the legacy `pending` status. No product or combo lacks a publicCode. No phone fails `^0[0-9]{9}$`. No price or total is negative or fractional. So the CHECKs are safe.

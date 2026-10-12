@@ -248,6 +248,9 @@ services:
       # prod.compose.yml uses `:?` to fail fast instead.
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost}
       BASE_URL: ${PUBLIC_URL:-http://localhost}
+      # The backend defaults to PostgreSQL; this stack runs MongoDB until the
+      # compose switch, so the choice is pinned here.
+      DATA_BACKEND: mongo
       MONGODB_URI: ${MONGODB_URI:-mongodb://admin:password123@mongodb:27017/minipreorder?authSource=admin&replicaSet=rs0}
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-here}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-sab@fit.hcmus.edu.vn}

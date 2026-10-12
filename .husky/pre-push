@@ -3,8 +3,12 @@
 # three plus the shared package tests when workspace plumbing (packages/*, root
 # manifest, lockfile, workspace file) changed.
 # knip (unused files, exports, dependencies) runs first, before any test or build.
-# The contract suite on Postgres (`pnpm test:contract:postgres`) runs next, ahead
-# of the full backend suite, when a pushed path is in touches_postgres_contract below.
+# The contract suite on Mongo, the rollback store (`pnpm test:contract:mongo`), runs next,
+# ahead of the full backend suite (on Postgres), when a pushed path is in
+# touches_mongo_contract below. The whole backend suite then runs on Mongo too
+# (`pnpm test:mongo`) after the Postgres one: the rollback store must stay
+# bootable until the Mongo code is removed, and a push is the one place its
+# cost is acceptable.
 # Anything else (Markdown, hooks, compose files) runs nothing. Work runs under
 # the machine-wide heavy lock (lib/heavy-lock.sh).
 . "$(dirname "$0")/lib/require-bash.sh"
@@ -14,15 +18,15 @@ set -Eeuo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 
-# postgres-contract-paths:begin
-# Code the Postgres contract suite (backend/tests/contract on DATA_BACKEND=postgres)
-# loads or is built from: the data layer and what it requires (services, lib, models,
+# mongo-contract-paths:begin
+# Code the Mongo contract suite (backend/tests/contract on DATA_BACKEND=mongo, the
+# rollback store) loads or is built from: the data layer and what it requires (services, lib, models,
 # queues, constants, utils), the Prisma schema and migrations, the test harness and
 # helpers, the backend manifest and vitest configs, and workspace plumbing (the shared
 # package supplies id mapping and validation). Routes, middleware and scripts are not
 # in its require closure, so they do not trigger it. The same list is in pre-commit and
-# pre-push; backend/tests/architecture/hook-postgres-trigger.test.js keeps the two equal.
-touches_postgres_contract() {
+# pre-push; backend/tests/architecture/hook-mongo-trigger.test.js keeps the two equal.
+touches_mongo_contract() {
 	case "$1" in
 		*.md) return 1 ;;
 		package.json | pnpm-lock.yaml | pnpm-workspace.yaml | .npmrc | packages/*) return 0 ;;
@@ -34,7 +38,7 @@ touches_postgres_contract() {
 	esac
 	return 1
 }
-# postgres-contract-paths:end
+# mongo-contract-paths:end
 
 ZERO_SHA="0000000000000000000000000000000000000000"
 
@@ -45,7 +49,7 @@ REFS="${CC_SAB_PUSH_REFS-$(cat)}"
 backend_changed=false
 frontend_changed=false
 shared_changed=false
-postgres_contract=false
+mongo_contract=false
 while read -r local_ref local_sha remote_ref remote_sha; do
 	[[ -z "${local_ref:-}" || "$local_sha" == "$ZERO_SHA" ]] && continue
 	if [[ "$remote_sha" == "$ZERO_SHA" ]]; then
@@ -61,11 +65,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 		backend_changed=true
 		frontend_changed=true
 		shared_changed=true
-		postgres_contract=true
+		mongo_contract=true
 		continue
 	fi
 	while IFS= read -r f; do
-		if touches_postgres_contract "$f"; then postgres_contract=true; fi
+		if touches_mongo_contract "$f"; then mongo_contract=true; fi
 		case "$f" in
 			*.md) ;;
 			package.json | pnpm-lock.yaml | pnpm-workspace.yaml | .npmrc | packages/*)
@@ -89,14 +93,16 @@ CC_SAB_PUSH_REFS="$REFS" heavy_lock_hook SAB-Store pre-push "$0" "$@"
 echo "pre-push: knip (unused files, exports, dependencies)"
 (cd "$ROOT" && pnpm --silent knip)
 
-if [[ "$postgres_contract" == true ]]; then
-	echo "pre-push: data layer, schema or harness changed, running the contract suite on Postgres"
-	(cd "$ROOT/backend" && pnpm --silent test:contract:postgres)
+if [[ "$mongo_contract" == true ]]; then
+	echo "pre-push: data layer, schema or harness changed, running the contract suite on Mongo (rollback store)"
+	(cd "$ROOT/backend" && pnpm --silent test:contract:mongo)
 fi
 
 if [[ "$backend_changed" == true ]]; then
 	echo "pre-push: full backend suite"
 	(cd "$ROOT/backend" && pnpm --silent test)
+	echo "pre-push: full backend suite on Mongo (rollback store)"
+	(cd "$ROOT/backend" && pnpm --silent test:mongo)
 fi
 
 if [[ "$frontend_changed" == true ]]; then

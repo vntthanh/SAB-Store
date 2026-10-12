@@ -12,7 +12,8 @@ const {
 	createWithPublicCodeRetry
 } = publicCode;
 
-beforeAll(() => Product.init());
+// The model builds its indexes through a Mongo connection, which only a mongo run opens.
+beforeAll(() => (POSTGRES ? undefined : Product.init()));
 afterEach(() => vi.restoreAllMocks());
 
 describe('generatePublicCode', () => {

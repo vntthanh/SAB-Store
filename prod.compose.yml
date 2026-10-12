@@ -243,6 +243,8 @@ services:
       # their own copies that can drift apart.
       PUBLIC_URL: ${PUBLIC_URL:?PUBLIC_URL is required}
       BASE_URL: ${PUBLIC_URL}
+      # The backend defaults to PostgreSQL; this stack runs MongoDB.
+      DATA_BACKEND: mongo
       MONGODB_URI: ${MONGODB_URI:?MONGODB_URI is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}

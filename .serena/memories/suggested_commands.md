@@ -5,9 +5,9 @@ Package manager: **pnpm** (gốc, backend và frontend). Không `npm`/`yarn`.
 ## Backend (`cd backend`)
 - `pnpm dev` — nodemon server
 - `pnpm test <pattern>` — Vitest, chạy hẹp (pattern là bộ lọc đường dẫn, truyền thẳng)
-- `pnpm test` — full suite (mongodb-memory-server replica set, tốn CPU)
+- `pnpm test` — full suite trên PostgreSQL (embedded-postgres, tốn CPU); `pnpm test:mongo` — full suite trên Mongo (rollback store, mongodb-memory-server); `pnpm test:contract:mongo` — chỉ bộ contract trên Mongo
 - `node check-env.js` — kiểm env bắt buộc, không in giá trị
-- `node scripts/audit-combo-pricing.js` (read-only), `node scripts/backfill-stock-deducted.js` (dry-run mặc định)
+- `node scripts/audit-combo-pricing.js` (read-only)
 
 ## Frontend (`cd frontend`)
 - `pnpm dev` (Vite) · `pnpm build` · `pnpm test` (Vitest)
