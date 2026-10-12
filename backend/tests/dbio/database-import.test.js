@@ -2,6 +2,7 @@ const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession, makeProduct, makeCombo, makeOrder } = require('../helpers/factories');
 const { findOrderByCode, findProduct, findProductByName, movementsFor, countRows, deleteAllRows } = require('../helpers/db');
+const { normalizeRecordId } = require('../../data/ids');
 
 function attachImport(app, cookies, payload) {
 	const buffer = Buffer.from(JSON.stringify(payload));
@@ -300,7 +301,8 @@ describe('POST /api/admin/database/import', () => {
 
 		const stored = await findProductByName('Preserved Id Product');
 		expect(stored).not.toBeNull();
-		expect(stored._id).toBe(realId);
+		// A legacy hex id is stored under its uuid on Postgres.
+		expect(stored._id).toBe(normalizeRecordId(realId));
 	});
 
 	it('still recomputes a non-combo order\'s total from items, ignoring the file-supplied value, when comboInfo is absent', async () => {

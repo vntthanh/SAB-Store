@@ -2,6 +2,7 @@ const publicCode = require('../../utils/public-code');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
 const { makeProduct, makeCombo, makeLegacyProduct } = require('../helpers/factories');
+const { POSTGRES } = require('../helpers/backend');
 
 const { PUBLIC_CODE_PATTERN, makeSlug } = publicCode;
 
@@ -23,7 +24,8 @@ describe('publicCode + slug on new documents', () => {
 	});
 });
 
-describe('slug follows the current name, the code never changes', () => {
+// Skipped on Postgres: drives Mongoose model hooks (save, findByIdAndUpdate, updateOne); a repository has none. The same rules (slug follows the name, the code never changes) are asserted through the repositories in contract/catalog.contract.test.js.
+describe.skipIf(POSTGRES)('slug follows the current name, the code never changes', () => {
 	it('on save()', async () => {
 		const product = await makeProduct({ name: 'Tên cũ' });
 		const code = product.publicCode;
@@ -74,7 +76,8 @@ describe('slug follows the current name, the code never changes', () => {
 	});
 });
 
-describe('documents written before public codes existed', () => {
+// Skipped on Postgres: raw legacy Mongo documents without a code; public_code is NOT NULL on Postgres, so no such row can exist.
+describe.skipIf(POSTGRES)('documents written before public codes existed', () => {
 	// publicCode is immutable, so a save cannot add it. This pins that fact so
 	// nobody builds on the hook to heal old rows: the backfill does that.
 	it('stay without a code after save()', async () => {

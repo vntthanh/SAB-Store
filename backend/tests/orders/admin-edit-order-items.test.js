@@ -13,6 +13,7 @@ const {
 	findOrder, findOrderByCode, movements, countRows, patchProduct, patchOrder, unsetOrderField, failNextMovementInsert,
 	stockOf: cachedStock,
 } = require('../helpers/db');
+const { POSTGRES } = require('../helpers/backend');
 
 const customer = {
 	studentId: '24120001',
@@ -299,7 +300,8 @@ describe('PUT /api/admin/orders/:id/items', () => {
 		expect(await reload(order)).toEqual(before);
 	});
 
-	it('edits an order stored without itemsRevision and keeps counting from there', async () => {
+	// Skipped on Postgres: unsets a stored field; a Postgres column cannot be missing (itemsRevision is NOT NULL DEFAULT 0).
+	it.skipIf(POSTGRES)('edits an order stored without itemsRevision and keeps counting from there', async () => {
 		const [a, b, c] = [await product(), await product(), await product()];
 		const order = await placeOrder([line(a)]);
 		await unsetOrderField(order._id, 'itemsRevision');

@@ -38,10 +38,11 @@ describe('data written by the previous Better Auth release', () => {
 
 	// The suite wipes the mongoose-registered collections after each test, so the
 	// data is re-seeded. jwks, session and account have no mongoose model and must be
-	// cleared here.
+	// cleared here, and so is `user` when no loaded module registers its model (a run
+	// with the data layer on Postgres), so the fixed _id below is never inserted twice.
 	beforeEach(async () => {
 		const now = new Date();
-		await Promise.all(['jwks', 'session', 'account'].map((name) => db.collection(name).deleteMany({})));
+		await Promise.all(['jwks', 'session', 'account', 'user'].map((name) => db.collection(name).deleteMany({})));
 
 		await db.collection('user').insertOne({
 			_id: userId,

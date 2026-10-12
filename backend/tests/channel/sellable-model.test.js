@@ -8,6 +8,7 @@ const Combo = require('../../models/Combo');
 const { products, combos } = require('../../data');
 const { SALES_CHANNELS, sellableQuery } = require('../../data/mongo/sellable');
 const { makeProduct, makeCombo } = require('../helpers/factories');
+const { POSTGRES } = require('../helpers/backend');
 
 const idsOf = (docs) => docs.map((d) => d._id.toString());
 
@@ -40,7 +41,8 @@ describe('products.findSellable', () => {
 		expect(offlineIds).not.toContain(online._id.toString());
 	});
 
-	it('treats a document written before the field existed as "all" on both channels', async () => {
+	// Skipped on Postgres: the row is a raw Mongo document that predates a field; Postgres columns are NOT NULL with defaults, so no such row can exist.
+	it.skipIf(POSTGRES)('treats a document written before the field existed as "all" on both channels', async () => {
 		// Mongoose applies schema defaults when hydrating, not when querying, so a
 		// raw legacy document has no salesChannel at all. The query must still match.
 		const { insertedId } = await Product.collection.insertOne({
@@ -105,7 +107,8 @@ describe('combos.findSellable', () => {
 		expect(offlineIds).not.toContain(online._id.toString());
 	});
 
-	it('treats a legacy combo without the field as "all" on both channels', async () => {
+	// Skipped on Postgres: the row is a raw Mongo document that predates a field; Postgres columns are NOT NULL with defaults, so no such row can exist.
+	it.skipIf(POSTGRES)('treats a legacy combo without the field as "all" on both channels', async () => {
 		const { insertedId } = await Combo.collection.insertOne({
 			name: 'Legacy combo',
 			price: 1000,

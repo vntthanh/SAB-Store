@@ -63,8 +63,13 @@ async function connectDB() {
 	}
 }
 
-function closeDB() {
-	return mongoose.connection.close();
+async function closeDB() {
+	await mongoose.connection.close();
+	// The Prisma pool exists once lib/prisma has been required. Looking it up in the
+	// module cache avoids opening a pool just to close it; a pool left open keeps a
+	// script alive until its idle timeout.
+	const loaded = require.cache[require.resolve('./prisma')];
+	if (loaded) await loaded.exports.closeDb();
 }
 
 module.exports = { connectDB, closeDB };

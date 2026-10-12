@@ -7,14 +7,36 @@
  * schema would let a test pass against a document production code could never
  * actually produce. `makeSettings` and the legacy factories are the exception:
  * they exist to store shapes the model would never write.
+ *
+ * On `DATA_BACKEND=postgres` there is no model: the same fixtures go through the
+ * repositories, whose validation and column defaults play the model's part, and
+ * the result is the repository's plain record (`_id` a uuid string) instead of a
+ * Mongoose document. A test that needs a document method (`save`, `toObject`)
+ * is Mongo-only and says so.
  */
 const { randomUUID } = require('crypto');
 const request = require('supertest');
 const mongoose = require('mongoose');
-const { insertRawProduct, insertRawCombo, insertRawSettings } = require('./db');
+const data = require('../../data');
+const { insertRawProduct, insertRawCombo, insertRawSettings, patchProduct, patchCombo, patchOrder } = require('./db');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
 const Order = require('../../models/Order');
+
+const POSTGRES = process.env.DATA_BACKEND === 'postgres';
+
+// The model lets a caller choose the timestamps of a new document (a backdated
+// order); a repository stamps rows itself, so the fixture sets them afterwards.
+const STAMPS = ['createdAt', 'updatedAt'];
+
+async function createStamped(create, patch, find, fields) {
+	const stamps = Object.fromEntries(STAMPS.filter((key) => fields[key] !== undefined).map((key) => [key, fields[key]]));
+	const rest = Object.fromEntries(Object.entries(fields).filter(([key]) => !(key in stamps)));
+	const created = await create(rest);
+	if (Object.keys(stamps).length === 0) return created;
+	await patch(created._id, stamps);
+	return find(created._id);
+}
 
 let sequence = 0;
 function nextSequence() {
@@ -28,7 +50,7 @@ function nextSequence() {
  */
 async function makeProduct(overrides = {}) {
 	const n = nextSequence();
-	return Product.create({
+	const fields = {
 		name: `Test Product ${n}`,
 		description: 'Factory-created product',
 		price: 100000,
@@ -36,7 +58,12 @@ async function makeProduct(overrides = {}) {
 		available: true,
 		stockQuantity: 10,
 		...overrides,
-	});
+	};
+	if (!POSTGRES) return Product.create(fields);
+	// The repository takes the opening balance apart from the fields and, like the
+	// model, writes it to the cache without a movement: the fixture is stock-neutral.
+	const { stockQuantity, ...rest } = fields;
+	return createStamped((own) => data.products.create(own, stockQuantity), patchProduct, data.products.findById, rest);
 }
 
 /**
@@ -46,14 +73,15 @@ async function makeProduct(overrides = {}) {
  */
 async function makeCombo(overrides = {}) {
 	const n = nextSequence();
-	return Combo.create({
+	const fields = {
 		name: `Test Combo ${n}`,
 		description: 'Factory-created combo',
 		price: 150000,
 		categoryRequirements: [{ category: 'general', quantity: 2 }],
 		isActive: true,
 		...overrides,
-	});
+	};
+	return POSTGRES ? createStamped(data.combos.create, patchCombo, data.combos.findById, fields) : Combo.create(fields);
 }
 
 /**
@@ -75,7 +103,7 @@ async function makeOrder(overrides = {}) {
 		};
 	}
 	const n = Math.floor(Math.random() * 1e8); // 8 digits max: "W" + 8 digits = 9 chars, under the 10-char orderCode limit
-	return Order.create({
+	const fields = {
 		orderCode: `W${n}`,
 		studentId: `SV${n}`,
 		fullName: 'Web Buyer',
@@ -87,7 +115,8 @@ async function makeOrder(overrides = {}) {
 		stockDeducted: true,
 		statusHistory: [{ status: 'confirmed', updatedBy: 'system', updatedAt: new Date() }],
 		...overrides,
-	});
+	};
+	return POSTGRES ? createStamped((own) => data.orders.create(own), patchOrder, (id) => data.orders.findById(id), fields) : Order.create(fields);
 }
 
 /**
@@ -104,7 +133,7 @@ const makeSettings = (fields) => insertRawSettings(fields);
  * Returns the stored document with its native ObjectId `_id`, which the
  * legacy tests pass to the raw driver.
  */
-const asStored = (row) => ({ ...row, _id: new mongoose.Types.ObjectId(row._id) });
+const asStored = (row) => (POSTGRES ? row : { ...row, _id: new mongoose.Types.ObjectId(row._id) });
 
 function makeLegacyProduct(overrides = {}) {
 	const n = nextSequence();

@@ -2,8 +2,10 @@ const { run } = require('../../scripts/backfill-public-codes');
 const { PUBLIC_CODE_PATTERN, makeSlug } = require('../../utils/public-code');
 const { makeLegacyProduct, makeLegacyCombo, makeProduct } = require('../helpers/factories');
 const { findProduct, findCombo } = require('../helpers/db');
+const { POSTGRES } = require('../helpers/backend');
 
-describe('backfill-public-codes', () => {
+// Skipped on Postgres: builds legacy rows without a public code; public_code is NOT NULL on Postgres, so there is nothing to backfill.
+describe.skipIf(POSTGRES)('backfill-public-codes', () => {
 	it('dry run writes nothing; apply assigns codes and slugs without touching updatedAt; a re-run assigns none', async () => {
 		const [a, b] = [await makeLegacyProduct({ name: 'Móc khoá' }), await makeLegacyProduct({ name: 'Mũ' })];
 		const combo = await makeLegacyCombo({ name: 'Combo cũ' });

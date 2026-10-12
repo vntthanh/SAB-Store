@@ -1,10 +1,12 @@
 const { listProducts } = require('../helpers/db');
 const { PUBLIC_CODE_PATTERN } = require('../../utils/public-code');
 const { initDatabase } = require('../../init-database');
+const { POSTGRES } = require('../helpers/backend');
 
 const ENV_KEYS = ['NODE_ENV', 'INIT_EMPTY_DATABASE', 'ADMIN_EMAIL', 'ADMIN_USERNAME', 'ADMIN_PASSWORD'];
 
-describe('initDatabase seed', () => {
+// Skipped on Postgres: covers the bootstrap repository, which moves with auth (bootstrap reads the login tables and is not implemented on Postgres yet).
+describe.skipIf(POSTGRES)('initDatabase seed', () => {
 	let saved;
 
 	beforeEach(() => {

@@ -401,4 +401,18 @@ const mongoOracle = {
 };
 
 // The postgres implementation lives in db-postgres.js and answers the same calls.
-module.exports = process.env.DATA_BACKEND === 'postgres' ? require('./db-postgres') : mongoOracle;
+// Login tables stay on MongoDB until the auth conversion, on both backends, so
+// their helpers keep reading MongoDB when the store is on Postgres.
+function postgresOracle() {
+	const pg = require('./db-postgres');
+	const isLoginKind = (kind) => kind === 'user' || kind === 'account';
+	return {
+		...pg,
+		insertRawUser,
+		findAuthRows,
+		countAuthRows,
+		countRows: (kind, filter) => (isLoginKind(kind) ? countRows(kind, filter) : pg.countRows(kind, filter)),
+	};
+}
+
+module.exports = process.env.DATA_BACKEND === 'postgres' ? postgresOracle() : mongoOracle;

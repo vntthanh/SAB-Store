@@ -12,6 +12,7 @@
 		"dev": "nodemon server.js",
 		"test": "vitest run",
 		"test:contract:postgres": "pnpm run pretest && vitest run --config vitest.contract-postgres.config.mjs",
+		"test:postgres": "pnpm run pretest && vitest run --config vitest.postgres.config.mjs",
 		"init-db": "node init-database.js",
 		"debug": "node check-env.js && node start.js"
 	},

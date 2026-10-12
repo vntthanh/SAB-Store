@@ -7,6 +7,7 @@ const { DuplicateKeyError, RecordValidationError, InvalidIdError } = require('..
 const { translateWriteError } = require('../../data/mongo/errors');
 const Product = require('../../models/Product');
 const { makeProduct, makeCombo } = require('../helpers/factories');
+const { POSTGRES } = require('../helpers/backend');
 
 const VALID = { name: 'Bút', price: 1000, category: 'general' };
 
@@ -52,7 +53,8 @@ describe('repository write errors', () => {
 		expect(translateWriteError(failure)).toBe(failure);
 	});
 
-	it('product update reports a taken unique value as DuplicateKeyError', async () => {
+	// Skipped on Postgres: spies on Product.findByIdAndUpdate to fake an engine error; the Postgres translation is covered by contract/postgres-write-errors.test.js.
+	it.skipIf(POSTGRES)('product update reports a taken unique value as DuplicateKeyError', async () => {
 		const product = await makeProduct();
 		vi.spyOn(Product, 'findByIdAndUpdate').mockRejectedValueOnce(
 			Object.assign(new Error('E11000'), { code: 11000, keyPattern: { sku: 1 } })

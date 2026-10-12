@@ -8,13 +8,12 @@
  * code under test, and only at the boundary the header of db.js names for them.
  *
  * Helpers no contract needs yet throw "not implemented for postgres"; each phase
- * that converts a repository fills in its own. The auth-table helpers wait for
- * the auth conversion; `unsetOrderField` can never apply (a column cannot be
- * missing).
+ * that converts a repository fills in its own. `unsetOrderField` can never
+ * apply (a column cannot be missing) and throws for good.
  *
- * Known gaps against db.js, all moving with auth: `countRows('user'|'account')`
- * throws (db.js lists those kinds), as do `insertRawUser`, `findAuthRows` and
- * `countAuthRows`; `unsetOrderField` throws for good.
+ * The login-table helpers (`countRows('user'|'account')`, `insertRawUser`,
+ * `findAuthRows`, `countAuthRows`) are not here: login stays on MongoDB until
+ * the auth conversion, so db.js keeps serving them from MongoDB.
  *
  * Fault seams: see db.js. Here `failNextStockWrite` wraps the transaction client
  * so the first write of a product row inside a transaction rejects after the

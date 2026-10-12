@@ -5,6 +5,7 @@ const { makeProduct, makeOrder, makeCombo, makeLegacyProduct } = require('../hel
 const {
 	countRows, findOrder, unsetOrderField, findProduct, listProducts, listCombos, listOrders, movements,
 } = require('../helpers/db');
+const { POSTGRES } = require('../helpers/backend');
 
 const run = promisify(execFile);
 const BACKEND = path.resolve(__dirname, '../..');
@@ -48,7 +49,8 @@ describe('operational scripts default to a dry run', () => {
 		expect(await countRows('movement', { type: 'opening', status: 'applied' })).toBe(1);
 	});
 
-	it('backfill-public-codes reports the rows without a code and writes none', async () => {
+	// Skipped on Postgres: builds a legacy row without a public code; public_code is NOT NULL on Postgres, so there is nothing to backfill.
+	it.skipIf(POSTGRES)('backfill-public-codes reports the rows without a code and writes none', async () => {
 		const legacy = await makeLegacyProduct({ name: 'Móc khoá' });
 		const before = await snapshot();
 
@@ -60,7 +62,8 @@ describe('operational scripts default to a dry run', () => {
 		expect(await snapshot()).toEqual(before);
 	});
 
-	it('backfill-stock-deducted counts orders with no flag and sets nothing until --apply', async () => {
+	// Skipped on Postgres: unsets a stored field; stock_deducted is NOT NULL on Postgres and the repository's backfill is a constant no-op.
+	it.skipIf(POSTGRES)('backfill-stock-deducted counts orders with no flag and sets nothing until --apply', async () => {
 		const order = await makeOrder({ isDirectSale: true });
 		await unsetOrderField(order._id, 'stockDeducted');
 		const before = await snapshot();

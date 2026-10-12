@@ -8,6 +8,8 @@ const {
 const { applyPendingMovements } = require('../helpers/stock');
 const { recordAppliedOpening } = require('../../services/stock-ledger');
 const { seedStore } = require('./snapshot-fixture');
+const { POSTGRES } = require('../helpers/backend');
+const { normalizeRecordId } = require('../../data/ids');
 
 const importFile = (app, cookies, payload) => request(app)
 	.post('/api/admin/database/import')
@@ -168,7 +170,8 @@ describe('POST /api/admin/database/import (merge) with a backup file', () => {
 		expect(res.status).toBe(200);
 		expect(res.body.ignored.stockMovements.count).toBe(8);
 		expect(res.body.ignored.settings.count).toBe(1);
-		expect(res.body.droppedFields.orders).toEqual(expect.objectContaining({ createdAt: 4, updatedAt: 4, __v: 4, _id: 4 }));
+		// A Postgres row has no storage version key, so it is only dropped from Mongo-shaped files.
+		expect(res.body.droppedFields.orders).toEqual(expect.objectContaining({ createdAt: 4, updatedAt: 4, _id: 4, ...(POSTGRES ? {} : { __v: 4 }) }));
 		expect(res.body.droppedFields.products).toEqual(expect.objectContaining({ slug: 3, createdAt: 3 }));
 		expect(await countRows('settings')).toBe(0);
 	});
@@ -219,7 +222,8 @@ describe('POST /api/admin/database/import (merge) with a backup file', () => {
 		expect(res.status).toBe(200);
 		expect(res.body.results.products.imported).toBe(1);
 		expect(res.body.ignored).toBeUndefined();
-		expect((await findProductByName('From v1'))._id).toBe('507f1f77bcf86cd799439011');
+		// A legacy hex id is stored under its uuid on Postgres.
+		expect((await findProductByName('From v1'))._id).toBe(normalizeRecordId('507f1f77bcf86cd799439011'));
 		expect(await findProduct(product._id)).not.toBeNull();
 	});
 });
