@@ -1,5 +1,5 @@
 // Đường dẫn công khai khớp với nginx (/p, /c) và `path` do API trả về.
-// Giống server: thiếu slug → mã viết thường; thiếu mã (dữ liệu chưa backfill) → null, không có link.
+// Giống server: thiếu slug → mã viết thường; thiếu mã (dữ liệu cũ chưa có publicCode) → null, không có link.
 const publicPath = (prefix, { publicCode, slug } = {}) =>
 	publicCode ? `/${prefix}/${publicCode}/${slug || publicCode.toLowerCase()}` : null;
 export const productPath = (product) => publicPath('p', product);

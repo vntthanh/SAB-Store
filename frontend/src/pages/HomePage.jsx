@@ -90,7 +90,7 @@ const HomePage = () => {
 							</div>
 							<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 								{combos.map(combo => {
-									// Docs without a public code yet (before backfill) have no detail page.
+									// Legacy records without a public code have no detail page.
 									const detailPath = combo.path ?? comboPath(combo);
 									return (
 										<div key={combo._id} className="bg-white rounded-lg p-4 border border-blue-100 shadow-sm">

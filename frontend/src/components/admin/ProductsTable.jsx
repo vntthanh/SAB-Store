@@ -97,7 +97,7 @@ const ProductsTable = ({ products, onEdit, onDelete, onManageStock }) => {
 								<ShareButton
 									mode="copy"
 									path={productPath(product)}
-									disabledHint="Chưa có mã — chạy backfill"
+									disabledHint="Chưa có mã chia sẻ"
 									className="px-3 py-1 text-xs mr-3 align-middle"
 								/>
 								<button
