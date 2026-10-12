@@ -46,5 +46,11 @@
 - **macOS has no `timeout` command.** A smoke script that wrapped `docker run` in it exited 127 at once. Start the container detached and poll `docker inspect -f '{{.State.Running}}'`.
 - **A connection string can be quoted by driver errors.** `ErrorLogger.log` and `logCritical` now remove the `scheme://user:password@` part (greedy to the last `@` of the token) and keep the host.
 
+## Migration rehearsal (measured 2026-10-12, prod dump of 20:51)
+- **Dump:** `mongodump --oplog --archive --gzip` inside the prod mongo container, the password in a 0600 `--config` file inside the container (removed after), so nothing secret is on argv. A script piped through `ssh host 'bash -s' < file` loses the rest of itself to the first `docker exec -i` (it reads stdin): use no `-i`, or `< /dev/null`. `mongorestore --oplogReplay` refuses `--nsExclude`; restore everything into the scratch mongod.
+- **Loader on real data:** dry run and `--apply` passed first time, about 1 s each; no legacy repair was needed; 63 of 69 sessions were expired and dropped.
+- **JWKS is bound to `JWT_SECRET`:** under another secret the migrated key does not decrypt and `get-session` itself returns 500. A local rehearsal deletes the scratch `jwks` row; production must keep the same secret.
+- **macOS AirPlay Receiver holds :5000**, the port the Vite proxy expects; a local app run used backend :5051 and a throwaway Vite config overriding only the proxy target.
+
 ## Production data (copy taken 2026-10-10)
 - No order has the legacy `pending` status. No product or combo lacks a publicCode. No phone fails `^0[0-9]{9}$`. No price or total is negative or fractional. So the CHECKs are safe.
