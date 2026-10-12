@@ -23,6 +23,7 @@
 		"backend/services/stock-ledger.js": ["exports"],
 		// The repositories are reached through the `data` index (`stockLedger.claimForApply()`).
 		"backend/data/mongo/*.js": ["exports"],
+		"backend/data/postgres/*.js": ["exports"],
 		"backend/utils/public-code.js": ["exports"],
 		"backend/tests/helpers/postgres.js": ["exports"],
 		"backend/lib/prisma.js": ["exports"]

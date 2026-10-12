@@ -41,10 +41,16 @@ const PRODUCT_CREATION_WRITERS = new Map([
 const SKIPPED_TOP_LEVEL = new Set(['tests', 'prisma', 'generated', 'uploads']);
 
 const FIELD = 'stockQuantity';
+const COLUMN = 'stock_quantity';
 const WRITE_PATTERNS = [
-	// Object key: create / $set / $inc / update documents. The lookbehind skips the
-	// else-branch of a ternary (`cond ? stockQuantity : 0`).
-	new RegExp(`(?<!\\?\\s*)\\b${FIELD}['"]?\\s*:`),
+	// Object key: create / $set / $inc / update documents, Prisma `data`. The lookbehind
+	// skips the else-branch of a ternary (`cond ? stockQuantity : 0`); the lookahead skips
+	// the `true` of a Prisma select or aggregate (`_sum: { stockQuantity: true }`), which
+	// names the field to read and can never be a stock value.
+	new RegExp(`(?<!\\?\\s*)\\b${FIELD}['"]?\\s*:(?!\\s*true\\b)`),
+	// Raw SQL: `SET stock_quantity = ...`, also with the quoted identifier. A comparison written with `=` in a WHERE
+	// counts too; reads belong in Prisma, where they are not mistaken for writes.
+	new RegExp(`\\b${COLUMN}\\b"?\\s*=(?!=)`),
 	// Assignment to the property, plain or compound.
 	new RegExp(`\\.${FIELD}\\s*(?:[+\\-*/%]|\\*\\*|\\|\\||&&|\\?\\?)?=(?!=)`),
 	// Mongoose document setter.
@@ -84,10 +90,21 @@ function shorthandWriteLines(code) {
 	return lines;
 }
 
+// `INSERT INTO products (..., stock_quantity, ...)`: a raw insert names the column in a list, possibly over several lines.
+function sqlInsertWriteLines(code) {
+	const lines = new Set();
+	const insert = new RegExp(`INSERT\\s+INTO\\s+"?products"?\\s*\\([^)]*\\b${COLUMN}\\b`, 'gi');
+	for (const match of code.matchAll(insert)) {
+		const column = match.index + match[0].search(new RegExp(`\\b${COLUMN}\\b`));
+		lines.add(code.slice(0, column).split('\n').length);
+	}
+	return lines;
+}
+
 /** Line numbers (1-based) that write the stock cache. */
 function writeLines(source) {
 	const code = withoutComments(source);
-	const lines = shorthandWriteLines(code);
+	const lines = new Set([...shorthandWriteLines(code), ...sqlInsertWriteLines(code)]);
 	code.split('\n').forEach((line, index) => {
 		if (WRITE_PATTERNS.some((pattern) => pattern.test(line))) lines.add(index + 1);
 	});
@@ -122,7 +139,16 @@ describe('stockQuantity writers', () => {
 			"const FIELDS = ['name', 'stockQuantity'];",
 			'product.stockQuantity -= item.quantity;',
 			'product.stockQuantity = 5;',
-			'const x = { a, stockQuantity: n ? 1 : 2 };'
+			'const x = { a, stockQuantity: n ? 1 : 2 };',
+			'tx.product.update({ where: { id }, data: { stockQuantity: { increment: delta } } });',
+			"tx.product.create({ data: { name, stockQuantity: 5 } });",
+			'await tx.$executeRaw`UPDATE products SET stock_quantity = stock_quantity + ${delta} WHERE id = ${id}::uuid`;',
+			'await tx.$executeRaw`UPDATE products\n\tSET updated_at = now(),\n\t\tstock_quantity = 0`;',
+			'await tx.$executeRaw`UPDATE "products" SET "stock_quantity" = 0`;',
+			'await tx.$executeRaw`UPDATE products SET "stock_quantity"=stock_quantity+1`;',
+			'await tx.$executeRaw`INSERT INTO "products" ("id", "stock_quantity") VALUES (1, 2)`;',
+			'await tx.$executeRaw`INSERT INTO products (id, name, stock_quantity) VALUES (${id}::uuid, ${name}, 3)`;',
+			'await tx.$executeRaw`INSERT INTO products (\n\tid,\n\tname,\n\tstock_quantity\n) VALUES (1, 2, 3)`;'
 		];
 		for (const source of writes) expect(writeLines(source), source).not.toEqual([]);
 
@@ -135,11 +161,21 @@ describe('stockQuantity writers', () => {
 			'const {\n\tname,\n\tstockQuantity\n} = req.body;',
 			'const opening = stockQuantity !== undefined ? stockQuantity : 0;',
 			'// stockQuantity: 5 would be a write\nconst a = 1;',
-			'/**\n * stockQuantity: the cache\n */\nconst a = 1;'
+			'/**\n * stockQuantity: the cache\n */\nconst a = 1;',
+			'tx.product.findMany({ select: { id: true, stockQuantity: true } });',
+			'tx.product.aggregate({ _sum: { stockQuantity: true } });',
+			'await tx.$queryRaw`SELECT stock_quantity FROM products WHERE id = ${id}::uuid FOR UPDATE`;',
+			'await tx.$queryRaw`SELECT sum(stock_quantity) FROM products`;',
+			'await tx.$executeRaw`INSERT INTO orders (id, total_amount) VALUES (${id}::uuid, 1)`;'
 		];
 		for (const source of notWrites) expect(writeLines(source), source).toEqual([]);
 
 		expect(writeLines('const a = 1;\n/* x\n */\nProduct.updateOne({}, { $set: { stockQuantity: 1 } });')).toEqual([4]);
+	});
+
+	it('counts the line of a multi-line raw insert and of a Prisma data key at their own lines', () => {
+		expect(writeLines('const a = 1;\nawait tx.$executeRaw`INSERT INTO products (\n\tid,\n\tstock_quantity\n) VALUES (1, 2)`;')).toEqual([4]);
+		expect(writeLines('const a = 1;\ntx.product.update({\n\tdata: { stockQuantity: { increment: 1 } }\n});')).toEqual([3]);
 	});
 
 	it('finds the real write in the ledger storage, so the scan is not vacuous', () => {

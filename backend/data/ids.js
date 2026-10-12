@@ -1,12 +1,15 @@
 /**
- * Record ids are 24-character hex strings in both stores: Mongo ObjectIds today,
- * `substr(replace(gen_random_uuid()::text, '-', ''), 1, 24)` in Postgres, so
- * documents and rows keep the ids that already appear in URLs and exports.
- * Lowercase is the canonical form.
+ * Record ids are 24-character hex strings (Mongo ObjectIds) on the mongo backend
+ * and UUIDs (v7, a native `uuid` column) on the postgres one. Lowercase is the
+ * canonical form. A value of the other shape is refused here, before it reaches
+ * a query: Postgres would fail it with 22P02 instead of matching nothing.
  */
 const { InvalidIdError } = require('./errors');
+const { backendName } = require('./backend-name');
 
-const RECORD_ID = /^[0-9a-f]{24}$/i;
+const HEX_ID = /^[0-9a-f]{24}$/i;
+const UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RECORD_ID = backendName === 'postgres' ? UUID_ID : HEX_ID;
 
 /**
  * True for a record id as a string, or an id object whose string form is one

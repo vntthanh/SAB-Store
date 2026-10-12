@@ -1,7 +1,11 @@
 /**
- * The active data implementation. `DATA_BACKEND` picks it, transactions
- * included; an unknown value stops the process at require time rather than
- * falling back to another store.
+ * The active data implementation. `DATA_BACKEND` picks it (`mongo`, the default,
+ * or `postgres`), transactions included; an unknown value stops the process at
+ * require time rather than falling back to another store. On `postgres`, ids are
+ * UUID strings and a repository that has no implementation yet throws when used.
+ *
+ * Postgres status per repository: `stockLedger` implemented; `orders`, `products`,
+ * `combos`, `settings`, `dataSnapshot`, `dashboard` and `bootstrap` not yet.
  *
  * Record shape contract for repository functions:
  * - Records are plain objects, never store documents or query objects. The id is
@@ -72,6 +76,8 @@
  * - `dataSnapshot` moves whole rows in the wire form of data/snapshot.js (ids as
  *   hex strings, dates as ISO strings, `__v` kept), unlike the other repositories.
  */
+const { backendName } = require('./backend-name');
+
 const BACKENDS = {
 	mongo: () => ({
 		stockLedger: require('./mongo/stock-ledger'),
@@ -84,12 +90,24 @@ const BACKENDS = {
 		bootstrap: require('./mongo/bootstrap'),
 		withTransaction: require('./mongo/tx').withTransaction,
 		translateWriteError: require('./mongo/errors').translateWriteError
-	})
+	}),
+	// Repositories not converted yet are present but throw on first use, so a
+	// partial backend can never answer from the wrong store.
+	postgres: () => {
+		const { notImplemented } = require('./postgres/not-implemented');
+		return {
+			stockLedger: require('./postgres/stock-ledger'),
+			orders: notImplemented('orders'),
+			products: notImplemented('products'),
+			combos: notImplemented('combos'),
+			settings: notImplemented('settings'),
+			dataSnapshot: notImplemented('dataSnapshot'),
+			dashboard: notImplemented('dashboard'),
+			bootstrap: notImplemented('bootstrap'),
+			withTransaction: require('./postgres/tx').withTransaction,
+			translateWriteError: require('./postgres/errors').translateWriteError
+		};
+	}
 };
 
-const name = process.env.DATA_BACKEND || 'mongo';
-if (!Object.hasOwn(BACKENDS, name)) {
-	throw new Error(`Unknown DATA_BACKEND "${name}"; expected one of: ${Object.keys(BACKENDS).join(', ')}`);
-}
-
-module.exports = BACKENDS[name]();
+module.exports = BACKENDS[backendName]();

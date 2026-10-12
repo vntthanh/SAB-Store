@@ -16,7 +16,9 @@
  * insertion order.
  *
  * Portability: most of this file is plain data access. These seams are tied to
- * the store and each needs a deliberate SQL counterpart.
+ * the store and each needs a deliberate SQL counterpart. The counterpart is
+ * db-postgres.js, which this file exports instead of its own when DATA_BACKEND
+ * is `postgres`; a helper it has not implemented yet throws.
  *
  * Fault seams (`failNext*`, `failProductCatalogReads`) return a handle. A test
  * that arms one must assert `fired()`, or a change in how production writes
@@ -349,7 +351,7 @@ const failProductCatalogReads = (message) => handleOf(vi.spyOn(data.products, 'f
 	throw new Error(message);
 }));
 
-module.exports = {
+const mongoOracle = {
 	newId,
 	findProduct,
 	findProductByName,
@@ -397,3 +399,6 @@ module.exports = {
 	failNextProductInsertAsRetryable,
 	failProductCatalogReads,
 };
+
+// The postgres implementation lives in db-postgres.js and answers the same calls.
+module.exports = process.env.DATA_BACKEND === 'postgres' ? require('./db-postgres') : mongoOracle;
