@@ -321,9 +321,9 @@ services:
       logging: david-alloy
       logging.project: sab-store
       logging.service: postgres
-    # Only this service and the two that connect (release, backend) see database
-    # credentials; the separate SAB_PG_* names keep the generic POSTGRES_* names
-    # out of every other container.
+    # Coolify also passes every variable of the app to every service, so this list
+    # only decides what the postgres image reads, not what the other containers
+    # can see (measured 2026-10-13: SAB_PG_* are present in every service).
     environment:
       POSTGRES_USER: ${SAB_PG_USER}
       POSTGRES_PASSWORD: ${SAB_PG_PASSWORD}

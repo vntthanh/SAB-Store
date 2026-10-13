@@ -2,8 +2,9 @@
 
 ## Which file to copy
 
-- **Docker Compose (dev or prod)** reads the **root** `.env` — `cp .env.example .env`. This is
-  what `compose.yml`/`prod.compose.yml` inject into every container.
+- **Docker Compose (dev or prod)** reads the **root** `.env` — `cp .env.example .env`.
+  `compose.yml`/`prod.compose.yml` use it for `${VAR}` interpolation; each service receives
+  only the variables its `environment:` lists.
 - **Running the backend directly** (`cd backend && pnpm dev`, no Docker) reads
   `backend/.env` — `cp backend/.env.example backend/.env`. This file is loaded by plain
   `dotenv`, which does **not** expand `${VAR}` references, so `PUBLIC_URL`/`BASE_URL`/
@@ -37,11 +38,15 @@ same data migration first.
   value. The user and database names use only `a-z 0-9 _`; the password is lowercase hex of at
   least 32 characters (`openssl rand -hex 24`) because it is embedded unescaped in
   `DATABASE_URL`. Otherwise the postgres container exits at start-up with the reason in its log.
-- Only the containers that connect receive them, each listing them explicitly in its
-  `environment:`: the postgres service (`POSTGRES_*`), the release job (`DATABASE_URL`) and,
-  when it runs on PostgreSQL, the backend (`DATABASE_URL`). The separate `SAB_PG_*` names keep
-  the generic names out of every other container. In Coolify, create them with "Available
-  during build" off, or every build stage receives them as `ARG`.
+- The services that connect list them explicitly in their `environment:`: the postgres
+  service (`POSTGRES_*`), the release job (`DATABASE_URL`) and, when it runs on PostgreSQL, the
+  backend (`DATABASE_URL`). That scoping holds for `compose.yml` and `prod.compose.yml`.
+  **Coolify does not scope**: it passes every variable of the app to every service, so
+  `SAB_PG_*`, `JWT_SECRET`, the Mongo root password and the rest are readable inside every
+  container of the app, frontend, redis and seaweedfs included (measured on production
+  2026-10-13). Treat shell access to any of them as access to all its secrets, including the
+  session signing key. In Coolify, create
+  them with "Available during build" off, or every build stage receives them as `ARG`.
 - `POSTGRES_INITDB_ARGS` (builtin `C.UTF-8` locale, the same as the test databases) only takes
   effect when the data directory is initialised; changing it later does nothing.
 - The release job (`backend/scripts/release.sh`) runs before the backend: it writes a
@@ -49,9 +54,10 @@ same data migration first.
   stops it before any migration. The backend refuses to boot while migrations are pending.
 
 The Mongo variables (`MONGO_INITDB_*`, `MONGO_REPLICA_KEY`, `MONGODB_URI`) stay until MongoDB is
-removed, for the rollback path and `prod.compose.yml` only. In Coolify no service receives
-`MONGODB_URI` any more. In `prod.compose.yml` the Mongo root account still doubles as the app's
-credential; it retires with MongoDB instead of being split.
+removed, for the rollback path and `prod.compose.yml` only. In Coolify the backend runs with
+`DATA_BACKEND=postgres` and does not use `MONGODB_URI`, though Coolify still passes it in. In
+`prod.compose.yml` the Mongo root account still doubles as the app's credential; it retires
+with MongoDB instead of being split.
 
 ## Object storage (SeaweedFS)
 
