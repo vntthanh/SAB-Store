@@ -7,6 +7,7 @@ const { validateOrderUpdate, validateOrderNotes, validateOrderItemsEdit, trimTex
 const { editOrderItems } = require('../../services/order-edit');
 const { PricingError, pricingErrorBody } = require('../../services/pricing');
 const { sendOrderToAppScript } = require('../../utils/appscript');
+const { sendOrderMail } = require('../../services/mailer');
 const { transitionOrderWithStock } = require('../../services/stock');
 const { enqueueMovements } = require('../../services/stock-ledger');
 const { gated } = require('../../services/write-gate');
@@ -183,6 +184,11 @@ router.put('/:id', validateOrderUpdate, gated(async (req, res) => {
 			sendOrderToAppScript(appscriptData).catch(err => {
 				console.error('AppScript push error:', err.message);
 			});
+		});
+
+		// Only a real transition reaches here (the refusals above returned already).
+		setImmediate(() => {
+			sendOrderMail('status_changed', transitioned);
 		});
 
 		res.json({

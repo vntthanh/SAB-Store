@@ -4,6 +4,9 @@ const { contactEmail, contactUrl } = require('@sab/shared');
 const { settings: settingsRepo } = require('../../data');
 const { RecordValidationError } = require('../../data/errors');
 const { authenticateAdmin } = require('../../middleware/better-auth');
+const { validateMailSettings, validateMailTest } = require('../../middleware/validation');
+const { MailServiceError, getPublicConfig, saveConfig, sendTest, takeTestSlot } = require('../../services/mailer');
+const ErrorLogger = require('../../utils/errorLogger');
 
 const { STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH, NOTICE_FIELDS, CONTACT_FIELDS } = require('../../constants/settings');
 const CONTACT_SCHEMAS = { contactEmail, contactFacebookUrl: contactUrl };
@@ -139,5 +142,60 @@ router.put('/', gated(async (req, res) => {
 		});
 	}
 }));
+
+/** Answers a mailer failure: its own message when it is meant for the admin, a generic 500 otherwise. */
+function mailFailure(res, error, route, fallbackMessage) {
+	if (error instanceof MailServiceError) {
+		return res.status(error.status).json({ success: false, message: error.message });
+	}
+	ErrorLogger.log(error, { route });
+	return res.status(500).json({ success: false, message: fallbackMessage });
+}
+
+const adminName = (req) => req.admin?.username || req.admin?.email || 'admin';
+
+/**
+ * @route   GET /api/admin/settings/mail
+ * @desc    SMTP settings for order mail; the password is never returned (`hasPassword` instead)
+ * @access  Private (Admin only)
+ */
+router.get('/mail', async (req, res) => {
+	try {
+		res.json({ success: true, data: await getPublicConfig() });
+	} catch (error) {
+		mailFailure(res, error, 'GET /admin/settings/mail', 'Lỗi server khi lấy cấu hình mail');
+	}
+});
+
+/**
+ * @route   PUT /api/admin/settings/mail
+ * @desc    Save SMTP settings; omitting `pass` keeps the stored password
+ * @access  Private (Admin only)
+ */
+router.put('/mail', validateMailSettings, gated(async (req, res) => {
+	try {
+		const data = await saveConfig(req.body, adminName(req));
+		res.json({ success: true, message: 'Cập nhật cấu hình mail thành công', data });
+	} catch (error) {
+		mailFailure(res, error, 'PUT /admin/settings/mail', 'Lỗi server khi cập nhật cấu hình mail');
+	}
+}));
+
+/**
+ * @route   POST /api/admin/settings/mail/test
+ * @desc    Send one test mail through the saved SMTP account (5 per 10 minutes per admin)
+ * @access  Private (Admin only)
+ */
+router.post('/mail/test', validateMailTest, async (req, res) => {
+	if (!takeTestSlot(String(req.admin?.id || adminName(req)))) {
+		return res.status(429).json({ success: false, message: 'Gửi thử quá nhiều lần, vui lòng thử lại sau ít phút' });
+	}
+	try {
+		await sendTest(req.body.to.trim());
+		res.json({ success: true, message: 'Đã gửi mail thử' });
+	} catch (error) {
+		mailFailure(res, error, 'POST /admin/settings/mail/test', 'Lỗi server khi gửi mail thử');
+	}
+});
 
 module.exports = router;

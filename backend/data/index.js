@@ -56,6 +56,8 @@
  *   for missing/NULL fields and never for `''`. Another backend substitutes defaults
  *   with a null check, never `||`. Partial `upsertConfig` and the layer that enforces
  *   length/trim rules: see data/mongo/settings.js.
+ * - `mailSettings.findConfig` returns the SMTP row (password as its encrypted envelope) or
+ *   null; `upsertConfig` applies the given fields. Mongo holds none: null on read, an Error on write.
  * - `dashboard.stats` returns the dashboard's figures; `topSelling[].productId` is a
  *   string. `topSelling` ranks every order line whatever the order's status, grouped
  *   by (productId, productName): one product sold under two names gives two rows,
@@ -102,6 +104,7 @@ const BACKENDS = {
 		products: require('./mongo/products'),
 		combos: require('./mongo/combos'),
 		settings: require('./mongo/settings'),
+		mailSettings: require('./mongo/mail-settings'),
 		dataSnapshot: require('./mongo/data-snapshot'),
 		dashboard: require('./mongo/dashboard'),
 		bootstrap: require('./mongo/bootstrap'),
@@ -114,6 +117,7 @@ const BACKENDS = {
 		products: require('./postgres/products'),
 		combos: require('./postgres/combos'),
 		settings: require('./postgres/settings'),
+		mailSettings: require('./postgres/mail-settings'),
 		dataSnapshot: require('./postgres/data-snapshot'),
 		dashboard: require('./postgres/dashboard'),
 		bootstrap: require('./postgres/bootstrap'),

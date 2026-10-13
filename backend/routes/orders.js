@@ -2,6 +2,7 @@ const express = require('express');
 const { validateOrder, trimText } = require('../middleware/validation');
 const { generateOrderCode } = require('../utils/helpers');
 const { sendOrderToAppScript } = require('../utils/appscript');
+const { sendOrderMail } = require('../services/mailer');
 const { generateOrderPaymentQR, formatOrderPaymentDescription } = require('../utils/paymentHelper');
 const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError } = require('../services/pricing');
 const { recordOrderMovements } = require('../services/stock');
@@ -137,6 +138,18 @@ router.post('/', validateOrder, gated(async (req, res) => {
 		setImmediate(() => {
 			sendOrderToAppScript(appscriptData).catch(err => {
 				console.error('Gửi đơn hàng lên App Script thất bại:', err.message);
+			});
+		});
+
+		// Confirmation mail to the customer; the mailer skips it unless an admin turned it on.
+		setImmediate(() => {
+			sendOrderMail('order_created', {
+				orderCode: order.orderCode,
+				fullName,
+				email,
+				items: orderItems,
+				totalAmount,
+				paymentDescription
 			});
 		});
 
