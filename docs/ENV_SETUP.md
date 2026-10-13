@@ -74,6 +74,14 @@ the variables keep the `MINIO_*` names — the names describe the client, not th
 - `MINIO_ENDPOINT` is fixed to the storage service name in the compose files; a stale value
   left in the platform's environment is ignored.
 
+## Order mail (SMTP)
+
+There are no SMTP environment variables. An admin configures the server, sender and the two
+mails (order confirmation, status change) on the Settings page; it is off until the master
+switch is turned on. The password is stored encrypted and is never shown again; leaving it
+blank on a later save keeps it. The settings live in their own table, so the admin database
+export never contains them.
+
 ## `ADMIN_*` and `INIT_EMPTY_DATABASE`
 
 `ADMIN_EMAIL`, `ADMIN_USERNAME` and `ADMIN_PASSWORD` are read only when the database has no
