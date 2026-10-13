@@ -118,6 +118,7 @@ describe('ids', () => {
 			'combo_category_requirements.combo_id', 'combo_category_requirements.id',
 			'combos.id',
 			'jwks.id',
+			'mail_settings.id',
 			'order_internal_notes.id', 'order_internal_notes.order_id',
 			'order_items.combo_id', 'order_items.id', 'order_items.order_id', 'order_items.product_id',
 			'order_items_edits.id', 'order_items_edits.order_id',

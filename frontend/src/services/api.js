@@ -657,4 +657,37 @@ export const settingsService = {
 	}
 };
 
+// Admin SMTP settings. The stored password never comes back (`hasPassword` only), and `pass`
+// is omitted from a PUT to keep the stored one.
+export const mailSettingsService = {
+	get: async () => {
+		try {
+			const response = await api.get('/admin/settings/mail');
+			return response.data.data;
+		} catch (error) {
+			throw toApiError(error, 'Lỗi khi tải cấu hình email');
+		}
+	},
+
+	update: async (payload) => {
+		try {
+			const response = await api.put('/admin/settings/mail', payload);
+			return response.data;
+		} catch (error) {
+			throw toApiError(error, 'Lỗi khi cập nhật cấu hình email');
+		}
+	},
+
+	sendTest: async (to) => {
+		try {
+			// Longer than the server's SMTP timeouts (10 s connect + 10 s greeting + 20 s socket),
+			// so the admin sees the server's reason instead of a client-side abort.
+			const response = await api.post('/admin/settings/mail/test', { to }, { timeout: 45000 });
+			return response.data;
+		} catch (error) {
+			throw toApiError(error, 'Lỗi khi gửi email thử');
+		}
+	}
+};
+
 export default api;

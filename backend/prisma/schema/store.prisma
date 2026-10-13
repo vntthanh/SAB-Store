@@ -252,3 +252,26 @@ model Settings {
 
   @@map("settings")
 }
+
+// The SMTP account for order mail: one row, kept out of `settings` on purpose so
+// the admin data export, which lists its tables explicitly, can never carry the
+// credential. pass_encrypted is an AES-256-GCM envelope (lib/secret-box.js).
+model MailSettings {
+  id                  String   @id @default(uuid(7)) @db.Uuid
+  key                 String   @unique @default("smtp")
+  enabled             Boolean  @default(false)
+  host                String
+  port                Int
+  secure              Boolean  @default(false)
+  username            String
+  passEncrypted       String   @map("pass_encrypted")
+  fromName            String   @map("from_name")
+  fromAddress         String   @map("from_address")
+  notifyOrderCreated  Boolean  @default(true) @map("notify_order_created")
+  notifyStatusChanged Boolean  @default(true) @map("notify_status_changed")
+  updatedBy           String   @default("system") @map("updated_by")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("mail_settings")
+}

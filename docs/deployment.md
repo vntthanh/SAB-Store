@@ -88,8 +88,15 @@ covers `prod.compose.yml` on a host without Coolify and is kept as the fallback 
   cutover commit points the backend back at it and discards every write made on PostgreSQL since,
   so it is only an option before the shop has taken any. After that, fix forward. The Mongo-only
   sections below apply to `prod.compose.yml` and to that history.
-- **`JWT_SECRET` must not change**: the jwks signing key in the database is encrypted with it;
-  with another value every session check answers 500.
+- **`JWT_SECRET`** is better-auth's secret: it signs the session cookies and encrypts the jwks
+  signing key stored in the database. Changing only the variable makes every session check answer
+  500, because the stored key no longer decrypts. Rotate it as one step: new value (64 hex,
+  `openssl rand -hex 32`; better-auth warns below about 120 bits of estimated entropy) into the
+  password manager and the Coolify variable, stop the backend, empty `jwks`, `session` and
+  `verification` in one transaction, then deploy. The first authenticated request mints a new
+  key; everyone, the admin included, has to sign in again. The SMTP password (Settings page) is
+  encrypted with a key derived from `JWT_SECRET`, so after a rotation the stored one no longer
+  decrypts, order mail stays off, and the admin re-enters the password.
 
 ### Copying the database under a new name (MongoDB)
 

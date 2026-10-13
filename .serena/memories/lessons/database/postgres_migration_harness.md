@@ -59,5 +59,12 @@
 - **Deploy A cannot be a cherry-pick of the compose commit onto `main`.** `main`'s Dockerfile has no `release` target, so the build of the release job would fail. The first postgres deploy has to carry the dev backend code, pinned to `DATA_BACKEND: mongo`.
 - Missing `SAB_PG_*` in Coolify makes postgres exit, release then fails on `service_healthy`, and `compose up` exits non-zero after Coolify has already removed the old containers. Create them, with build-time off, before that merge.
 
+## Production cutover (measured 2026-10-13, 02:06–02:20 Asia/Saigon)
+- Deploy A (dev code, backend pinned to mongo, empty postgres + release job): push with hooks 230 s, Coolify then replaced every container; release exited 0 with one migration, backend healthy on mongo. Coolify starts postgres, waits for the release job, then the backend (`service_completed_successfully` works there).
+- Data path (freeze → mongodump → scratch mongo/PG on the Mac → loader → pg_dump → pg_restore on prod): 44 s end to end. 80 orders, 63 of 70 sessions expired and dropped; ledger checksum equal to the migration file.
+- Deploy B (backend on postgres): push 216 s, release took a pre-migrate dump of the loaded data and found "No pending migrations"; backend healthy on postgres with the same JWT_SECRET; RSS 146 MiB of 256. Backend down about 5.5 min (freeze 02:13:30 to Deploy B healthy 02:19), most of it Deploy B's pre-push suite; plus about 1 min during Deploy A. Pushing Deploy B's merge before the freeze would not help: Coolify deploys on push.
+- **Coolify injects every app variable into every service**, whatever `environment:` lists: `SAB_PG_PASSWORD` and the Mongo root password are visible in the frontend and redis containers too. The per-service scoping in the compose files only controls what the app reads, not what the container receives.
+- The `[Storage] ECONNREFUSED` lines at boot are seaweedfs still starting; the retry loop reaches "Object storage is ready" a few seconds later.
+
 ## Production data (copy taken 2026-10-10)
 - No order has the legacy `pending` status. No product or combo lacks a publicCode. No phone fails `^0[0-9]{9}$`. No price or total is negative or fractional. So the CHECKs are safe.

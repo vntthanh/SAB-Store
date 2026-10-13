@@ -3,18 +3,13 @@
  * lookup both the fragment and the image route use to decide what is public.
  */
 const { settings: settingsRepo } = require('../data');
+const { escapeHtml } = require('../utils/escape-html');
 const { DEFAULT_STORE_TITLE } = require('../constants/settings');
 const { findPublicProductByCode, findPublicComboByCode, ogVersion } = require('./public-catalog');
 
 const DESCRIPTION_MAX_LENGTH = 140;
 const IMAGE_WIDTH = 1200;
 const IMAGE_HEIGHT = 630;
-
-const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-
-function escapeHtml(value) {
-	return String(value ?? '').replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
-}
 
 function formatPrice(price) {
 	const rounded = Math.round(Number(price) || 0);

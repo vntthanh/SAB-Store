@@ -3,6 +3,7 @@ import { toast } from 'react-toastify';
 import api, { settingsService, DEFAULT_STORE_TITLE, STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH } from '../../services/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import MarkdownEditor from '../../components/admin/MarkdownEditor';
+import MailSettingsSection from '../../components/admin/MailSettingsSection';
 import useFieldErrors from '../../hooks/use-field-errors';
 import FormField from '../../components/form/FormField';
 import { contactEmail, contactUrl, CONTACT_EMAIL_MAX_LENGTH, CONTACT_URL_MAX_LENGTH } from '@sab/shared';
@@ -327,6 +328,10 @@ const SettingsManagement = () => {
 							<li>Các đơn hàng đã tạo trước đó không bị ảnh hưởng</li>
 						</ul>
 					</div>
+				</div>
+
+				<div className="mt-6">
+					<MailSettingsSection />
 				</div>
 			</div>
 		</div>

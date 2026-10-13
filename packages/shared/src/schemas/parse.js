@@ -3,7 +3,7 @@
 
 // A rejected value of these fields must never be echoed back: a wrong password
 // would otherwise appear verbatim in the response.
-const SENSITIVE_FIELDS = ['password', 'token', 'secret', 'apikey', 'creditcard'];
+const SENSITIVE_FIELDS = ['password', 'pass', 'token', 'secret', 'apikey', 'creditcard'];
 
 export function isSensitiveField(field) {
 	const name = String(field).toLowerCase();

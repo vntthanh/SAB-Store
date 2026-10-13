@@ -9,6 +9,8 @@ const {
 	orderIdParams,
 	passwordChange,
 	makeComboItems,
+	mailSettingsUpdate,
+	mailTestRequest,
 } = require('@sab/shared');
 const { MAX_UNITS_PER_ORDER } = require('../services/pricing');
 
@@ -68,6 +70,8 @@ const validateOrderItemsEdit = validateRequest({ params: orderIdParams, body: or
 const validateOrderNotes = validateRequest({ params: orderIdParams, body: orderNotes });
 const validateComboItems = validateBody(makeComboItems({ maxUnits: MAX_UNITS_PER_ORDER }));
 const validatePasswordChange = validateBody(passwordChange);
+const validateMailSettings = validateBody(mailSettingsUpdate);
+const validateMailTest = validateBody(mailTestRequest);
 
 module.exports = {
 	trimText,
@@ -79,4 +83,6 @@ module.exports = {
 	validateOrderItemsEdit,
 	validateComboItems,
 	validatePasswordChange,
+	validateMailSettings,
+	validateMailTest,
 };
