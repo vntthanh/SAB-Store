@@ -35,5 +35,15 @@
 - `mem:lessons/process/deploy_coordination` — một tên tmux mỗi project; báo peer trước/sau deploy; `df -h` + build từng image; bind-mount file đơn giữ inode cũ; backup mongo bằng mongodump trong container.
 - `mem:lessons/process/tools_secrets_user_facing` — MCP trước; không in secret; `.gitguardian.yaml` cho fixture; trả lời tiếng Việt.
 
+## owner (quyết định/ưu tiên riêng của owner SAB-Store)
+- `mem:lessons/owner/agent_review_not_user_approval` — không hỏi user duyệt plan/dry-run; ≥2–3 agent review thay; cổng deploy vẫn tự kiểm.
+- `mem:lessons/owner/fewer_permission_prompts` — Edit/Write/Read/MCP trước Bash; một script helper dùng lại; gộp lệnh phá huỷ.
+- `mem:lessons/owner/backup_is_admin_export` — "backup/restore" = export/import trên admin dashboard, không backup định kỳ.
+- `mem:lessons/owner/prisma_db_server_priority` — đọc trước khi viết query/luật dữ liệu: Prisma > DB constraint/SQL > server JS.
+- `mem:lessons/owner/uuidv7_primary_keys` — PK uuid(7) native; ObjectId cũ map tất định bằng `objectIdToUuidV7`.
+- `mem:lessons/owner/pagination_like_judgehub` — `{data, meta}`, page/limit, count+findMany, id tiebreak; pattern JudgeHub có sẵn thì làm theo.
+- `mem:lessons/owner/revenue_bound` — doanh thu < 100 tr VND: tổng int32 ổn, bỏ phát hiện tràn số tiền.
+- `mem:lessons/owner/postgres_cutover_gate` — pipeline DB tạm cục bộ cho cutover; cutover xong 13/10, merge `main` sau cần yêu cầu mới.
+
 ## sync
 - `mem:lessons/sync/syncthing_shared_git` — `.git` đồng bộ Mac↔Windows; git config per-machine; một người ghi git tại một thời điểm.
