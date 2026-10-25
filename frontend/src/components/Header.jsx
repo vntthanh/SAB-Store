@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { settingsService, DEFAULT_STORE_TITLE } from '../services/api';
+import { useAuthIdentity } from '../lib/use-storefronts';
 import Logo from './Logo';
+import LoginDialog from './auth/LoginDialog';
+import AccountMenu from './auth/AccountMenu';
 
 const STORE_TITLE_CACHE_KEY = 'storeTitle';
 
@@ -31,6 +34,9 @@ const Header = () => {
   // Start from the last title this browser saw, so a renamed store does not
   // flash the default on every page load. Empty until the first fetch settles.
   const [storeTitle, setStoreTitle] = useState(readCachedTitle);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const closeLogin = useCallback(() => setLoginOpen(false), []);
+  const { ready: sessionReady, user } = useAuthIdentity();
 
   useEffect(() => {
     let active = true;
@@ -94,7 +100,7 @@ const Header = () => {
           <div className="flex items-center space-x-4">
             {/* Cart Icon with Count */}
             <div className="relative cursor-pointer" onClick={handleCartSummaryClick}>
-              <div className="flex items-center space-x-2 bg-gray-100 px-3 py-2 rounded-lg">
+              <div className="flex h-12 items-center space-x-2 bg-gray-100 px-3 rounded-lg">
                 <i className="fas fa-shopping-bag text-gray-600"></i>
                 <div className="text-sm">
                   <div className="font-medium text-gray-900">
@@ -113,8 +119,27 @@ const Header = () => {
                 </span>
               )}
             </div>
+
+            {/* Same height as the cart pill so the row stays aligned */}
+            {!sessionReady ? (
+              <div className="h-12 w-12 animate-pulse rounded-lg bg-gray-100" aria-hidden="true"></div>
+            ) : user ? (
+              <AccountMenu user={user} />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setLoginOpen(true)}
+                className="btn-primary flex h-12 items-center justify-center gap-2 px-3"
+                aria-label="Đăng nhập"
+              >
+                <i className="fas fa-sign-in-alt"></i>
+                <span className="hidden sm:inline">Đăng nhập</span>
+              </button>
+            )}
           </div>
         </div>
+
+        <LoginDialog isOpen={loginOpen} onClose={closeLogin} />
 
         {/* Mobile Navigation */}
         <nav className="md:hidden mt-4 flex items-center justify-center space-x-6 border-t pt-4">

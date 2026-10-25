@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useSession } from '../../lib/auth-client';
+import { canUseAdmin } from '../../lib/auth-flow';
 import LoadingSpinner from '../LoadingSpinner';
 
 const ProtectedRoute = ({ children }) => {
@@ -14,7 +15,7 @@ const ProtectedRoute = ({ children }) => {
 		);
 	}
 
-	if (error || !session || !session.user || session.user.role !== 'admin') {
+	if (error || !session || !session.user || !canUseAdmin(session.user)) {
 		return <Navigate to="/login" replace />;
 	}
 
