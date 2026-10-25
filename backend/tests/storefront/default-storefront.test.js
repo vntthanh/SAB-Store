@@ -62,7 +62,7 @@ describe.skipIf(!POSTGRES)('default storefront rows', () => {
 		const missing = '01a173f3-7280-71fd-b24f-000000000000';
 
 		await expect(data.products.create({ name: 'Orphan', price: 1000, category: 'general', storefrontId: missing }, 0))
-			.rejects.toMatchObject({ code: 'P2003' });
+			.rejects.toMatchObject({ name: 'ConflictError', code: 'REFERENCE_VIOLATION' });
 		expect(await prisma.product.count()).toBe(0);
 	});
 

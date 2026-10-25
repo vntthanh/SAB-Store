@@ -5,7 +5,11 @@
  * `_id` of a requirement is that row's uuid string.
  *
  * A record carries `storefrontIds`, the storefronts the combo is offered in,
- * sorted. `create` links the default storefront when the caller names none.
+ * sorted. `create` links the default storefront when the caller names none; an
+ * edit replaces the whole link set and refuses an empty one (a combo offered
+ * nowhere is unreachable, and the database cannot express "at least one").
+ * `findSellable`, `listSellable` and `findSellableForPricing` take an optional
+ * `storefrontId` to keep only the combos linked to it.
  *
  * Every list orders priority first, then newest, then id, so two reads of a tie
  * never come back in different orders.
@@ -21,7 +25,7 @@ const { drawCodeAndSlug, slugFor, publicCodeBackfill } = require('./public-code'
 const { Problems, checkText, checkNumber, checkBoolean, checkEnum, recordId } = require('./rules');
 
 // The only fields an edit may change.
-const EDITABLE_FIELDS = ['name', 'description', 'price', 'categoryRequirements', 'priority', 'isActive', 'salesChannel'];
+const EDITABLE_FIELDS = ['name', 'description', 'price', 'categoryRequirements', 'priority', 'isActive', 'salesChannel', 'storefrontIds'];
 
 const OFFERED_ORDER = [{ priority: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }];
 const REQUIREMENT_SELECT = { select: { id: true, category: true, quantity: true }, orderBy: { position: 'asc' } };
@@ -53,9 +57,13 @@ function selectOf(fields) {
 	return select;
 }
 
-const sellableWhere = (channel) => {
+const sellableWhere = (channel, storefrontId) => {
 	assertSaleChannel(channel);
-	return { isActive: true, salesChannel: { in: ['all', channel] } };
+	return {
+		isActive: true,
+		salesChannel: { in: ['all', channel] },
+		...(storefrontId !== undefined && storefrontId !== null && { storefronts: { some: { storefrontId: recordId(storefrontId, 'storefrontId') } } })
+	};
 };
 
 /**
@@ -131,12 +139,13 @@ const requirementRows = (requirements) => requirements.map((entry, position) => 
  * synchronously, like `products.findSellable`.
  *
  * @param {'online'|'offline'} channel
- * @param {{publicCode?: string}} [options]
+ * @param {{publicCode?: string, storefrontId?: string}} [options]
  * @returns {Promise<object[]>}
  * @throws {TypeError} channel missing or unknown
+ * @throws {InvalidIdError} storefrontId is not an id
  */
-function findSellable(channel, { publicCode } = {}) {
-	const where = { ...sellableWhere(channel), ...(publicCode !== undefined && { publicCode }) };
+function findSellable(channel, { publicCode, storefrontId } = {}) {
+	const where = { ...sellableWhere(channel, storefrontId), ...(publicCode !== undefined && { publicCode }) };
 	return prisma.combo.findMany({ where, orderBy: OFFERED_ORDER, include: RECORD_INCLUDE }).then((rows) => rows.map(toRecord));
 }
 
@@ -147,10 +156,11 @@ function findSellable(channel, { publicCode } = {}) {
  * @param {'online'|'offline'} channel
  * @param {string[]} fields
  * @param {object|null} [tx]
+ * @param {{storefrontId?: string}} [options] only the combos linked to this storefront
  * @returns {Promise<object[]>}
  */
-async function findSellableForPricing(channel, fields, tx) {
-	const rows = await clientOf(tx).combo.findMany({ where: sellableWhere(channel), orderBy: OFFERED_ORDER, select: selectOf(fields) });
+async function findSellableForPricing(channel, fields, tx, { storefrontId } = {}) {
+	const rows = await clientOf(tx).combo.findMany({ where: sellableWhere(channel, storefrontId), orderBy: OFFERED_ORDER, select: selectOf(fields) });
 	return rows.map(toRecord);
 }
 
@@ -160,9 +170,9 @@ async function list({ active } = {}) {
 	return rows.map(toRecord);
 }
 
-/** The combos that may discount an order on `channel`, offered order first. @throws {TypeError} */
-async function listSellable(channel) {
-	return findSellable(channel);
+/** The combos that may discount an order on `channel`, offered order first, optionally only those linked to `storefrontId`. @throws {TypeError} */
+async function listSellable(channel, { storefrontId } = {}) {
+	return findSellable(channel, { storefrontId });
 }
 
 /** The name of every combo. */
@@ -215,19 +225,22 @@ function create(data) {
 /**
  * Apply the editable fields of `changes` that are not undefined and return the
  * combo as stored, or null when it does not exist. Given requirements replace
- * the whole list. The combo row is locked first, so two edits of one combo run
+ * the whole list, and given `storefrontIds` replace the whole link set. The combo row is locked first, so two edits of one combo run
  * one after the other instead of interleaving their delete and insert of rows.
  *
  * @param {string} id
  * @param {object} changes
  * @returns {Promise<object|null>}
- * @throws {RecordValidationError|InvalidIdError}
+ * @throws {RecordValidationError|InvalidIdError} an empty `storefrontIds` is refused
+ * @throws {ConflictError} REFERENCE_VIOLATION: a named storefront does not exist
  */
 function update(id, changes) {
 	const picked = Object.fromEntries(EDITABLE_FIELDS.filter((field) => changes[field] !== undefined).map((field) => [field, changes[field]]));
 	return translating(async () => {
 		const comboId = recordId(id);
 		const { columns, requirements } = valuesOf(picked, { creating: false });
+		// null is "no storefront", not "the default": only create falls back to the default.
+		const storefrontIds = picked.storefrontIds === undefined ? undefined : storefrontIdsOf(picked.storefrontIds ?? []);
 
 		return withTransaction(async (tx) => {
 			const locked = await tx.$queryRaw`SELECT public_code, name FROM combos WHERE id = ${comboId}::uuid FOR UPDATE`;
@@ -237,6 +250,10 @@ function update(id, changes) {
 			if (requirements) {
 				await tx.comboCategoryRequirement.deleteMany({ where: { comboId } });
 				data.requirements = { create: requirementRows(requirements) };
+			}
+			if (storefrontIds) {
+				await tx.comboStorefront.deleteMany({ where: { comboId } });
+				data.storefronts = { create: storefrontIds.map((storefrontId) => ({ storefrontId })) };
 			}
 			return toRecord(await tx.combo.update({ where: { id: comboId }, data, include: RECORD_INCLUDE }));
 		});
@@ -248,4 +265,4 @@ function remove(id) {
 	return translating(async () => (await prisma.combo.deleteMany({ where: { id: recordId(id) } })).count === 1);
 }
 
-module.exports = { ...publicCodeBackfill(() => prisma.combo), toRecord, findSellable, findSellableForPricing, list, listNames, listSellable, exists, findById, create, update, remove };
+module.exports = { ...publicCodeBackfill(() => prisma.combo), toRecord, STOREFRONT_SELECT, findSellable, findSellableForPricing, list, listNames, listSellable, exists, findById, create, update, remove };

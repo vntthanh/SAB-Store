@@ -12,7 +12,9 @@
  *   by id, so a tie never reorders between two reads.
  * - `findSellableForPricing` returns `_id` as a lowercase uuid string.
  * - A record carries `storefrontId` (every product belongs to one storefront).
- *   `create` defaults it to the default storefront when the caller names none.
+ *   `create` defaults it to the default storefront when the caller names none, and
+ *   an edit may move the product to another one. `findSellable`, `listSellable` and
+ *   `findSellableForPricing` take an optional `storefrontId` to list one storefront's products.
  *
  * `stock_quantity` is written by `create` alone (the opening balance, which the
  * caller records as an applied `opening` movement in the same transaction) and
@@ -31,7 +33,7 @@ const { Problems, checkText, checkNumber, checkBoolean, checkEnum, checkDate, re
 
 // The only fields an edit may change. The stock cache is absent on purpose: it
 // changes only through a movement.
-const EDITABLE_FIELDS = ['name', 'description', 'price', 'category', 'imageUrl', 'available', 'salesChannel', 'minOrderQuantity'];
+const EDITABLE_FIELDS = ['name', 'description', 'price', 'category', 'imageUrl', 'available', 'salesChannel', 'minOrderQuantity', 'storefrontId'];
 
 const SEARCH_MAX_LENGTH = 100;
 const DIMENSION_COLUMNS = { length: 'dimensionLength', width: 'dimensionWidth', height: 'dimensionHeight' };
@@ -73,6 +75,11 @@ function selectOf(fields) {
 function sellableWhere(channel) {
 	assertSaleChannel(channel);
 	return { available: true, salesChannel: { in: ['all', channel] } };
+}
+
+/** The filter for one storefront's products; no storefront, no filter. @throws {InvalidIdError} */
+function storefrontWhere(storefrontId) {
+	return storefrontId === undefined || storefrontId === null ? {} : { storefrontId: recordId(storefrontId, 'storefrontId') };
 }
 
 /** "Contains `search`" over name or description, as a filter. No search, no filter. */
@@ -161,14 +168,14 @@ function columnsOf(fields, { creating }) {
  * anything is queried and the error is thrown synchronously.
  *
  * @param {'online'|'offline'} channel
- * @param {{publicCode?: string, id?: string}} [options]
+ * @param {{publicCode?: string, id?: string, storefrontId?: string}} [options]
  * @returns {Promise<object[]>}
  * @throws {TypeError} channel missing or unknown
  */
-function findSellable(channel, { publicCode, id } = {}) {
+function findSellable(channel, { publicCode, id, storefrontId } = {}) {
 	const sellable = sellableWhere(channel);
 	return translating(async () => {
-		const where = { ...sellable, ...(publicCode !== undefined && { publicCode }), ...(id !== undefined && { id: recordId(id) }) };
+		const where = { ...sellable, ...storefrontWhere(storefrontId), ...(publicCode !== undefined && { publicCode }), ...(id !== undefined && { id: recordId(id) }) };
 		const rows = await prisma.product.findMany({ where, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
 		return rows.map(toRecord);
 	});
@@ -180,12 +187,12 @@ function findSellable(channel, { publicCode, id } = {}) {
  * stock level, the SKU and the retired `isActive` flag.
  *
  * @param {'online'|'offline'} channel
- * @param {{category?: string, search?: string, forCustomers?: boolean}} [options]
+ * @param {{category?: string, search?: string, forCustomers?: boolean, storefrontId?: string}} [options]
  * @returns {Promise<object[]>}
  * @throws {TypeError} channel missing or unknown
  */
-async function listSellable(channel, { category, search, forCustomers = false } = {}) {
-	const where = { ...sellableWhere(channel), ...(category && { category }), ...searchWhere(search) };
+async function listSellable(channel, { category, search, forCustomers = false, storefrontId } = {}) {
+	const where = { ...sellableWhere(channel), ...storefrontWhere(storefrontId), ...(category && { category }), ...searchWhere(search) };
 	const rows = await prisma.product.findMany({
 		where,
 		...(forCustomers && { omit: CUSTOMER_HIDDEN }),
@@ -202,11 +209,13 @@ async function listSellable(channel, { category, search, forCustomers = false } 
  * @param {string[]} ids record ids, uuid or legacy hex; mapped here so a caller that skipped normalising cannot reach Postgres with a 22P02
  * @param {string[]} fields
  * @param {object|null} [tx]
+ * @param {{storefrontId?: string}} [options] only the products of this storefront
  * @returns {Promise<object[]>}
  */
-function findSellableForPricing(channel, ids, fields, tx) {
+function findSellableForPricing(channel, ids, fields, tx, { storefrontId } = {}) {
 	return translating(async () => {
-		const rows = await clientOf(tx).product.findMany({ where: { id: { in: ids.map((id) => recordId(id)) }, ...sellableWhere(channel) }, select: selectOf(fields) });
+		const where = { id: { in: ids.map((id) => recordId(id)) }, ...sellableWhere(channel), ...storefrontWhere(storefrontId) };
+		const rows = await clientOf(tx).product.findMany({ where, select: selectOf(fields) });
 		return rows.map(toRecord);
 	});
 }

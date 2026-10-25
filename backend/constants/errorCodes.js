@@ -33,9 +33,15 @@ const ERROR_CODES = {
 	RESTORE_STOCK_MISMATCH: 'RESTORE_STOCK_MISMATCH',
 	RESTORE_IN_PROGRESS: 'RESTORE_IN_PROGRESS',
 	RESTORE_ERROR: 'RESTORE_ERROR',
+	IMPORT_STOREFRONT_MISSING: 'IMPORT_STOREFRONT_MISSING',
 	RESTORE_BUSY: 'RESTORE_BUSY',
 	STORE_RESTORING: 'STORE_RESTORING',
-	EXPORT_TOO_LARGE: 'EXPORT_TOO_LARGE'
+	EXPORT_TOO_LARGE: 'EXPORT_TOO_LARGE',
+	OTP_MAIL_UNAVAILABLE: 'OTP_MAIL_UNAVAILABLE',
+	OTP_COOLDOWN: 'OTP_COOLDOWN',
+	OTP_LIMIT_REACHED: 'OTP_LIMIT_REACHED',
+	EMAIL_HELD_BY_CUSTOMER: 'EMAIL_HELD_BY_CUSTOMER',
+	GOOGLE_EMAIL_UNVERIFIED: 'GOOGLE_EMAIL_UNVERIFIED'
 };
 
 const ERROR_MESSAGES = {
@@ -175,6 +181,10 @@ const ERROR_MESSAGES = {
 		vi: 'Khôi phục thất bại, dữ liệu hiện tại được giữ nguyên',
 		en: 'Restore failed; current data is unchanged'
 	},
+	[ERROR_CODES.IMPORT_STOREFRONT_MISSING]: {
+		vi: 'File nhắc tới cửa hàng chưa có trong hệ thống này. Hãy dùng "Khôi phục" để nạp lại cửa hàng trước; chưa có dữ liệu nào bị thay đổi',
+		en: 'The file names a storefront this system lacks. Use Restore to load the storefront first; nothing was changed'
+	},
 	[ERROR_CODES.RESTORE_BUSY]: {
 		vi: 'Hệ thống còn thao tác ghi đang chạy nên chưa khôi phục được, vui lòng thử lại sau ít phút',
 		en: 'Writes are still in flight; restore did not start'
@@ -186,6 +196,26 @@ const ERROR_MESSAGES = {
 	[ERROR_CODES.EXPORT_TOO_LARGE]: {
 		vi: 'Bản sao lưu vượt quá giới hạn 10MB nên không thể khôi phục lại được, vì vậy không tạo file. Hãy liên hệ người quản trị hệ thống',
 		en: 'The backup exceeds the 10MB restore limit, so it was not produced'
+	},
+	[ERROR_CODES.OTP_MAIL_UNAVAILABLE]: {
+		vi: 'Hiện chưa gửi được mã qua email, vui lòng đăng nhập bằng Google',
+		en: 'Sign-in codes by email are unavailable right now'
+	},
+	[ERROR_CODES.OTP_COOLDOWN]: {
+		vi: 'Vui lòng đợi 60 giây trước khi gửi lại mã',
+		en: 'Please wait 60 seconds before requesting another code'
+	},
+	[ERROR_CODES.OTP_LIMIT_REACHED]: {
+		vi: 'Đã gửi quá nhiều mã, vui lòng thử lại sau',
+		en: 'Too many codes were sent, please try again later'
+	},
+	[ERROR_CODES.EMAIL_HELD_BY_CUSTOMER]: {
+		vi: 'Email đã thuộc một tài khoản khách hàng',
+		en: 'This email already belongs to a customer account'
+	},
+	[ERROR_CODES.GOOGLE_EMAIL_UNVERIFIED]: {
+		vi: 'Email của tài khoản Google này chưa được xác minh',
+		en: 'The Google account email is not verified'
 	}
 };
 
@@ -241,9 +271,15 @@ const ERROR_CODE_TO_HTTP_STATUS = {
 	[ERROR_CODES.RESTORE_STOCK_MISMATCH]: HTTP_STATUS.BAD_REQUEST,
 	[ERROR_CODES.RESTORE_IN_PROGRESS]: HTTP_STATUS.CONFLICT,
 	[ERROR_CODES.RESTORE_ERROR]: HTTP_STATUS.INTERNAL_SERVER_ERROR,
+	[ERROR_CODES.IMPORT_STOREFRONT_MISSING]: HTTP_STATUS.BAD_REQUEST,
 	[ERROR_CODES.RESTORE_BUSY]: HTTP_STATUS.SERVICE_UNAVAILABLE,
 	[ERROR_CODES.STORE_RESTORING]: HTTP_STATUS.SERVICE_UNAVAILABLE,
-	[ERROR_CODES.EXPORT_TOO_LARGE]: HTTP_STATUS.PAYLOAD_TOO_LARGE
+	[ERROR_CODES.EXPORT_TOO_LARGE]: HTTP_STATUS.PAYLOAD_TOO_LARGE,
+	[ERROR_CODES.OTP_MAIL_UNAVAILABLE]: HTTP_STATUS.SERVICE_UNAVAILABLE,
+	[ERROR_CODES.OTP_COOLDOWN]: HTTP_STATUS.TOO_MANY_REQUESTS,
+	[ERROR_CODES.OTP_LIMIT_REACHED]: HTTP_STATUS.TOO_MANY_REQUESTS,
+	[ERROR_CODES.EMAIL_HELD_BY_CUSTOMER]: HTTP_STATUS.CONFLICT,
+	[ERROR_CODES.GOOGLE_EMAIL_UNVERIFIED]: HTTP_STATUS.FORBIDDEN
 };
 
 module.exports = {

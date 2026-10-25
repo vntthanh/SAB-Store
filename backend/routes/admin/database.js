@@ -3,12 +3,13 @@ const multer = require('multer');
 const { randomUUID } = require('crypto');
 
 const { asString } = require('../../utils/query-guard');
-const { isRecordId } = require('../../data/ids');
-const { dataSnapshot, products, combos, orders, withTransaction } = require('../../data');
+const { isRecordId, normalizeRecordId } = require('../../data/ids');
+const { dataSnapshot, products, combos, orders, storefronts, withTransaction } = require('../../data');
 const { isDuplicateKeyError, duplicateKeyFields, RecordValidationError } = require('../../data/errors');
 const {
 	SNAPSHOT_FORMAT_VERSION,
 	CREDENTIAL_SECTIONS,
+	STOREFRONT_SECTIONS,
 	storedOrderTotal,
 	validateSnapshot,
 	buildMetadata
@@ -78,6 +79,12 @@ const upload = multer({
  * total is recomputed from the (whitelisted) `items` array by storedOrderTotal()
  * instead of trusted from the file.
  *
+ * `storefrontId` (products, orders) and `storefrontIds` (combos) are carried so a
+ * private-storefront record is not quietly merged into the default storefront. The
+ * import refuses the whole file when a storefront it names is missing here
+ * (`missingStorefrontIds`); a record without the field (an older file) gets the
+ * default storefront from the repository.
+ *
  * A new order keeps its descriptive history (`statusHistory`, `internalNotes`,
  * `itemsHistory`, `itemsRevision`): none of it prices anything or moves stock,
  * and dropping it made an export followed by an import quietly lose it.
@@ -91,14 +98,14 @@ const IMPORT_WHITELIST = {
 		'_id', 'publicCode', 'name', 'description', 'price', 'imageUrl', 'category', 'available',
 		'isActive', 'salesChannel', 'stockQuantity', 'minOrderQuantity', 'maxOrderQuantity',
 		'sku', 'tags', 'weight', 'dimensions', 'featured', 'salePrice',
-		'saleStartDate', 'saleEndDate'
+		'saleStartDate', 'saleEndDate', 'storefrontId'
 	],
-	combos: ['_id', 'publicCode', 'name', 'description', 'price', 'categoryRequirements', 'isActive', 'salesChannel', 'priority'],
+	combos: ['_id', 'publicCode', 'name', 'description', 'price', 'categoryRequirements', 'isActive', 'salesChannel', 'priority', 'storefrontIds'],
 	orders: [
 		'phoneNumber', 'orderCode', 'orderNumber', 'studentId', 'fullName', 'email',
 		'additionalNote', 'items', 'status', 'transactionCode', 'cancelReason',
 		'lastUpdatedBy', 'isDirectSale', 'comboInfo', 'statusUpdatedAt',
-		'statusHistory', 'internalNotes', 'itemsHistory', 'itemsRevision'
+		'statusHistory', 'internalNotes', 'itemsHistory', 'itemsRevision', 'storefrontId'
 	]
 };
 
@@ -113,8 +120,11 @@ const REJECTED_SECTIONS = CREDENTIAL_SECTIONS;
 // reported as ignored and the message points at Restore.
 const IGNORED_SECTIONS = {
 	stockMovements: 'Lịch sử tồn kho không được gộp. Dùng "Khôi phục" để nạp lại toàn bộ lịch sử tồn kho.',
-	settings: 'Cài đặt không được gộp để tránh ghi đè cài đặt hiện tại. Dùng "Khôi phục" để nạp lại cài đặt.'
+	settings: 'Cài đặt không được gộp để tránh ghi đè cài đặt hiện tại. Dùng "Khôi phục" để nạp lại cài đặt.',
+	...Object.fromEntries(STOREFRONT_SECTIONS.map((section) => [section, 'Cửa hàng, quy tắc truy cập và danh sách email không được gộp. Dùng "Khôi phục" để nạp lại chúng.']))
 };
+
+const STOREFRONT_KEYS = ['storefrontId', 'storefrontIds'];
 
 const CHANNEL_SECTIONS = ['products', 'combos'];
 // `publicCode` is importable so a restore keeps the links customers already
@@ -145,6 +155,8 @@ function pick(obj, allowed, dropped = []) {
 	}
 	for (const key of allowed) {
 		if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+		// An explicit null means "no storefront named", the same as absent.
+		if (STOREFRONT_KEYS.includes(key) && obj[key] === null) continue;
 		if (key === '_id') {
 			if (isRecordId(String(obj._id))) {
 				out._id = obj._id;
@@ -205,6 +217,27 @@ function validateImportStructure(data) {
 		});
 	}
 	return problems;
+}
+
+/**
+ * The storefront ids the file names that this database does not hold. Only
+ * well-formed ids are looked at; a malformed one fails on its own record later.
+ * One query, whatever the file holds.
+ */
+async function missingStorefrontIds(data) {
+	const named = new Set();
+	const add = (value) => {
+		if (value !== null && value !== undefined && isRecordId(String(value))) named.add(normalizeRecordId(String(value)));
+	};
+	for (const section of ['products', 'orders']) {
+		if (Array.isArray(data[section])) data[section].forEach((record) => add(record.storefrontId));
+	}
+	if (Array.isArray(data.combos)) {
+		data.combos.forEach((record) => Array.isArray(record.storefrontIds) && record.storefrontIds.forEach(add));
+	}
+	if (named.size === 0) return [];
+	const held = new Set((await storefronts.listAll()).map((storefront) => storefront._id));
+	return [...named].filter((id) => !held.has(id));
 }
 
 /**
@@ -331,6 +364,20 @@ router.post('/import', upload.single('dataFile'), gated(async (req, res) => {
 		}
 
 		const { data } = importData;
+
+		// Checked before the first write: a record that names a storefront this
+		// database lacks would otherwise land in the default storefront, and a
+		// private product would become public.
+		const missingStorefronts = await missingStorefrontIds(data);
+		if (missingStorefronts.length > 0) {
+			console.error(`[${correlationId}] Import rejected before any write: ${missingStorefronts.length} storefront(s) missing`);
+			return sendCodedError(
+				res,
+				ERROR_CODES.IMPORT_STOREFRONT_MISSING,
+				correlationId,
+				missingStorefronts.slice(0, 20).map((id) => `Cửa hàng ${id} không có trong hệ thống`)
+			);
+		}
 
 		// users/accounts/sessions/jwks: never written, but the file is inspected
 		// so the admin sees an explicit count instead of a silent "0 imported, 0 errors".

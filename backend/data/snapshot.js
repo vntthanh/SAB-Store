@@ -14,14 +14,24 @@
  * Fields outside a collection's list are rejected, not dropped: the restore
  * writes whole rows, so an unknown key must stop the file instead of being
  * written (or silently lost).
+ *
+ * Storefronts: a file made before they existed has none of the four storefront
+ * sections and no storefront field on a row, and restores into the default
+ * storefront. A file that has any of them must have all four, each row's
+ * references must resolve inside the file, and nothing may name a storefront the
+ * file does not hold: the restore deletes every storefront, so a dangling
+ * reference could not be repaired afterwards.
  */
-const { isRecordId } = require('./ids');
+const { isRecordId, normalizeRecordId } = require('./ids');
 const { PUBLIC_CODE_PATTERN } = require('../utils/public-code');
 
 const SNAPSHOT_FORMAT_VERSION = 2;
 
-/** Sections of `data`, in the order a restore writes them. */
+/** Sections every file has, in the order a restore writes them. */
 const SNAPSHOT_SECTIONS = ['products', 'combos', 'orders', 'stockMovements', 'settings'];
+
+/** Sections a file made after storefronts existed adds (all four or none). */
+const STOREFRONT_SECTIONS = ['storefronts', 'storefrontAccessRules', 'emailLists', 'emailListEntries'];
 
 // Login material belongs to the auth library, not to this file. A file that
 // carries one of these sections is refused (restore) or reported (merge import)
@@ -118,7 +128,21 @@ const ORDER_STATUSES = ['confirmed', 'paid', 'delivered', 'cancelled'];
 const MOVEMENT_TYPES = ['opening', 'order', 'order_cancel', 'order_edit', 'adjust', 'set_target'];
 const MOVEMENT_STATUSES = ['pending', 'applied'];
 
+const VISIBILITIES = ['PUBLIC', 'PRIVATE'];
+const RULE_TYPES = ['EMAIL', 'DOMAIN', 'LIST'];
+
 const stamps = { _id: id, createdAt: date, updatedAt: date, __v: whole(0) };
+
+const lowercase = (max) => leaf(
+	(v) => typeof v === 'string' && v.length > 0 && v.length <= max && v === v.toLowerCase(),
+	`phải là chuỗi chữ thường, tối đa ${max} ký tự`
+);
+const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const slug = leaf((v) => typeof v === 'string' && v.length <= 60 && SLUG_PATTERN.test(v), 'phải là đường dẫn hợp lệ (chữ thường, số, gạch ngang)');
+const int32 = leaf((v) => Number.isSafeInteger(v) && Math.abs(v) <= 2147483647, 'phải là số nguyên 32 bit');
+const EMAIL_SHAPE = /^[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+$/;
+const DOMAIN_SHAPE = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/;
+const email = leaf((v) => typeof v === 'string' && v.length <= 254 && v === v.toLowerCase() && EMAIL_SHAPE.test(v), 'phải là email chữ thường hợp lệ');
 
 const PUBLIC_CODE = leaf((v) => typeof v === 'string' && PUBLIC_CODE_PATTERN.test(v), 'không phải mã công khai hợp lệ');
 
@@ -144,7 +168,8 @@ const productShape = record({
 	featured: bool,
 	salePrice: whole(0),
 	saleStartDate: date,
-	saleEndDate: date
+	saleEndDate: date,
+	storefrontId: id
 }, ['_id', 'name', 'price', 'category']);
 
 const comboShape = record({
@@ -157,7 +182,8 @@ const comboShape = record({
 	categoryRequirements: listOf(record({ _id: id, category: text(200), quantity: whole(1) }, ['category', 'quantity'])),
 	isActive: bool,
 	salesChannel: oneOf(SALES_CHANNELS),
-	priority: number()
+	priority: number(),
+	storefrontIds: listOf(id)
 }, ['_id', 'name', 'price', 'categoryRequirements']);
 
 const orderItemShape = record({
@@ -208,7 +234,8 @@ const orderShape = record({
 	statusUpdatedAt: date,
 	isDirectSale: bool,
 	createdBy: id,
-	comboInfo: anything
+	comboInfo: anything,
+	storefrontId: id
 }, ['_id', 'orderCode', 'totalAmount']);
 
 const movementShape = record({
@@ -246,12 +273,49 @@ const settingsShape = record({
 	updatedBy: text(200)
 }, ['_id', 'bankNameId', 'bankAccountId']);
 
+const storefrontShape = record({
+	...stamps,
+	slug,
+	name: text(80),
+	description: text(500),
+	visibility: oneOf(VISIBILITIES),
+	sortOrder: int32,
+	isActive: bool
+}, ['_id', 'slug', 'name', 'visibility']);
+
+const accessRuleShape = record({
+	_id: id,
+	storefrontId: id,
+	type: oneOf(RULE_TYPES),
+	value: lowercase(254),
+	emailListId: id,
+	createdBy: id,
+	createdAt: date
+}, ['_id', 'storefrontId', 'type']);
+
+const emailListShape = record({
+	...stamps,
+	name: text(80),
+	description: text(500)
+}, ['_id', 'name']);
+
+const emailListEntryShape = record({
+	_id: id,
+	emailListId: id,
+	email,
+	createdAt: date
+}, ['_id', 'emailListId', 'email']);
+
 const SHAPES = {
 	products: productShape,
 	combos: comboShape,
 	orders: orderShape,
 	stockMovements: movementShape,
-	settings: settingsShape
+	settings: settingsShape,
+	storefronts: storefrontShape,
+	storefrontAccessRules: accessRuleShape,
+	emailLists: emailListShape,
+	emailListEntries: emailListEntryShape
 };
 
 // ---- order total rule ----
@@ -291,6 +355,108 @@ function checkUnique(records, field, where, problems) {
 	});
 }
 
+function checkUniqueBy(rows, keyOf, label, where, problems) {
+	const seen = new Set();
+	rows.forEach((row, index) => {
+		const key = isObject(row) ? keyOf(row) : null;
+		if (key === null) return;
+		if (seen.has(key)) problems.push(`${where}[${index}] bị trùng ${label} trong file`);
+		seen.add(key);
+	});
+}
+
+// The canonical form of an id, or null for a value the field check already reported.
+const canonicalId = (value) => {
+	try {
+		return normalizeRecordId(value);
+	} catch {
+		return null;
+	}
+};
+
+const idsOf = (rows) => new Set(rows.filter(isObject).map((row) => canonicalId(row._id)).filter((key) => key !== null));
+
+const isGiven = (value) => value !== undefined && value !== null;
+
+/** A file without the storefront sections must not name a storefront anywhere. */
+function checkNoStorefrontFields(data, problems) {
+	const stray = (rows, field, where) => rows.forEach((row, index) => {
+		if (isObject(row) && isGiven(row[field])) problems.push(`${where}[${index}]: trường "${field}" cần đi cùng các phần ${STOREFRONT_SECTIONS.join(', ')}`);
+	});
+	stray(data.products, 'storefrontId', 'products');
+	stray(data.combos, 'storefrontIds', 'combos');
+	stray(data.orders, 'storefrontId', 'orders');
+}
+
+/** Every reference inside the four storefront sections, and from products, combos and orders to them, resolves in the file. */
+function checkStorefrontLinks(data, problems) {
+	const storefronts = idsOf(data.storefronts);
+	const lists = idsOf(data.emailLists);
+	const refers = (value, known, where, label) => {
+		const key = isGiven(value) ? canonicalId(value) : null;
+		if (key !== null && !known.has(key)) problems.push(`${where} trỏ tới ${label} không có trong file`);
+	};
+
+	if (!data.storefronts.some((row) => isObject(row) && row.isActive !== false)) {
+		problems.push('Phần "storefronts" phải có ít nhất một cửa hàng đang hoạt động');
+	}
+	checkUnique(data.storefronts, 'slug', 'storefronts', problems);
+	checkUnique(data.emailLists, 'name', 'emailLists', problems);
+
+	data.products.forEach((product, index) => {
+		if (!isObject(product)) return;
+		const where = `products[${index}].storefrontId`;
+		if (!isGiven(product.storefrontId)) problems.push(`products[${index}]: thiếu "storefrontId"`);
+		else refers(product.storefrontId, storefronts, where, 'cửa hàng');
+	});
+
+	data.combos.forEach((combo, index) => {
+		if (!isObject(combo)) return;
+		const where = `combos[${index}].storefrontIds`;
+		if (!Array.isArray(combo.storefrontIds) || combo.storefrontIds.length === 0) {
+			problems.push(`combos[${index}]: "storefrontIds" phải có ít nhất một cửa hàng`);
+			return;
+		}
+		const keys = combo.storefrontIds.map(canonicalId);
+		if (new Set(keys).size !== keys.length) problems.push(`${where} có cửa hàng bị lặp`);
+		combo.storefrontIds.forEach((storefrontId, position) => refers(storefrontId, storefronts, `${where}[${position}]`, 'cửa hàng'));
+	});
+
+	data.orders.forEach((order, index) => {
+		if (isObject(order)) refers(order.storefrontId, storefronts, `orders[${index}].storefrontId`, 'cửa hàng');
+	});
+
+	data.storefrontAccessRules.forEach((rule, index) => {
+		if (!isObject(rule)) return;
+		const where = `storefrontAccessRules[${index}]`;
+		refers(rule.storefrontId, storefronts, `${where}.storefrontId`, 'cửa hàng');
+		if (rule.type === 'LIST') {
+			if (!isGiven(rule.emailListId)) problems.push(`${where}: quy tắc LIST thiếu "emailListId"`);
+			else refers(rule.emailListId, lists, `${where}.emailListId`, 'danh sách email');
+			if (isGiven(rule.value)) problems.push(`${where}: quy tắc LIST không có "value"`);
+		} else if (rule.type === 'EMAIL' || rule.type === 'DOMAIN') {
+			if (isGiven(rule.emailListId)) problems.push(`${where}: quy tắc ${rule.type} không dùng "emailListId"`);
+			if (!isGiven(rule.value)) problems.push(`${where}: thiếu "value"`);
+			else if (typeof rule.value === 'string' && !(rule.type === 'EMAIL' ? EMAIL_SHAPE : DOMAIN_SHAPE).test(rule.value)) {
+				problems.push(`${where}.value không phải ${rule.type === 'EMAIL' ? 'email' : 'tên miền'} hợp lệ`);
+			}
+		}
+	});
+	checkUniqueBy(data.storefrontAccessRules, (rule) => {
+		const storefrontId = canonicalId(rule.storefrontId);
+		const target = rule.type === 'LIST' ? canonicalId(rule.emailListId) : rule.value;
+		return storefrontId === null || !isGiven(target) ? null : `${storefrontId}|${rule.type}|${target}`;
+	}, 'quy tắc', 'storefrontAccessRules', problems);
+
+	data.emailListEntries.forEach((entry, index) => {
+		if (isObject(entry)) refers(entry.emailListId, lists, `emailListEntries[${index}].emailListId`, 'danh sách email');
+	});
+	checkUniqueBy(data.emailListEntries, (entry) => {
+		const listId = canonicalId(entry.emailListId);
+		return listId === null || typeof entry.email !== 'string' ? null : `${listId}|${entry.email}`;
+	}, 'email', 'emailListEntries', problems);
+}
+
 function checkOrderTotals(orders, problems) {
 	orders.forEach((order, index) => {
 		if (!isObject(order) || !Number.isSafeInteger(order.totalAmount)) return;
@@ -324,12 +490,18 @@ function validateSnapshot(metadata, data) {
 	for (const section of Object.keys(data)) {
 		if (Object.hasOwn(CREDENTIAL_SECTIONS, section)) {
 			problems.push(`Phần "${section}" không được phép có trong file khôi phục: ${CREDENTIAL_SECTIONS[section]}`);
-		} else if (!SNAPSHOT_SECTIONS.includes(section)) {
+		} else if (!SNAPSHOT_SECTIONS.includes(section) && !STOREFRONT_SECTIONS.includes(section)) {
 			problems.push(`Không nhận diện được phần "${section}"`);
 		}
 	}
 
-	for (const section of SNAPSHOT_SECTIONS) {
+	const storefrontSections = STOREFRONT_SECTIONS.filter((section) => data[section] !== undefined);
+	if (storefrontSections.length > 0 && storefrontSections.length < STOREFRONT_SECTIONS.length) {
+		problems.push(`Các phần ${STOREFRONT_SECTIONS.join(', ')} phải đi cùng nhau`);
+	}
+	const sections = [...SNAPSHOT_SECTIONS, ...storefrontSections];
+
+	for (const section of sections) {
 		const rows = data[section];
 		if (!Array.isArray(rows)) {
 			problems.push(`Phần "${section}" phải có và là một mảng`);
@@ -343,12 +515,16 @@ function validateSnapshot(metadata, data) {
 	if (Array.isArray(data.stockMovements)) checkUnique(data.stockMovements, 'idempotencyKey', 'stockMovements', problems);
 	if (Array.isArray(data.settings) && data.settings.length > 1) problems.push('Phần "settings" chỉ được có tối đa một bản ghi');
 	if (Array.isArray(data.orders)) checkOrderTotals(data.orders, problems);
+	if (SNAPSHOT_SECTIONS.every((section) => Array.isArray(data[section]))) {
+		if (storefrontSections.length === STOREFRONT_SECTIONS.length && storefrontSections.every((section) => Array.isArray(data[section]))) checkStorefrontLinks(data, problems);
+		else if (storefrontSections.length === 0) checkNoStorefrontFields(data, problems);
+	}
 
 	const counts = isObject(metadata) ? metadata.collections : undefined;
 	if (!isObject(counts)) {
 		problems.push('metadata.collections là bắt buộc');
 	} else {
-		for (const section of SNAPSHOT_SECTIONS) {
+		for (const section of sections) {
 			if (Array.isArray(data[section]) && counts[section] !== data[section].length) {
 				problems.push(`metadata.collections.${section} (${counts[section]}) không khớp số bản ghi trong file (${data[section].length})`);
 			}
@@ -372,12 +548,13 @@ function buildMetadata(data, now) {
 	return {
 		formatVersion: SNAPSHOT_FORMAT_VERSION,
 		exportedAt: now.toISOString(),
-		collections: Object.fromEntries(SNAPSHOT_SECTIONS.map((section) => [section, data[section].length]))
+		collections: Object.fromEntries([...SNAPSHOT_SECTIONS, ...STOREFRONT_SECTIONS.filter((section) => Array.isArray(data[section]))].map((section) => [section, data[section].length]))
 	};
 }
 
 module.exports = {
 	SNAPSHOT_FORMAT_VERSION,
+	STOREFRONT_SECTIONS,
 	CREDENTIAL_SECTIONS,
 	storedOrderTotal,
 	validateSnapshot,
