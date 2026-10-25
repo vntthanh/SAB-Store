@@ -1,80 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
-import { toast } from 'react-toastify';
-import { useCart } from '../context/CartContext';
-import { productService, comboService } from '../services/api';
-import ProductCard from '../components/ProductCard';
-import Cart from '../components/Cart';
-import LoadingSpinner from '../components/LoadingSpinner';
-import { comboPath } from '../utils/share-links';
+import { useCart } from '../../context/CartContext';
+import ProductCard from '../ProductCard';
+import Cart from '../Cart';
+import { comboPath } from '../../utils/share-links';
 
-const HomePage = () => {
-	const [products, setProducts] = useState([]);
-	const [combos, setCombos] = useState([]);
-	const [loading, setLoading] = useState(true);
-	const [error, setError] = useState(null);
-
+// Presentational: the page decides what the viewer may see; this only draws a
+// storefront's combos, products and its own cart.
+const CatalogView = ({ products, combos, canOrder = true }) => {
 	const { getCartItemCount, getCartTotal, formatCurrency, comboDetection } = useCart();
-
-	// Fetch products and combos
-	useEffect(() => {
-		const fetchData = async () => {
-			try {
-				setLoading(true);
-				setError(null);
-
-				const [productsResponse, combosResponse] = await Promise.all([
-					productService.getProducts({ available: true }),
-					comboService.getActiveCombos()
-				]);
-
-				if (productsResponse.success) {
-					setProducts(productsResponse.data.products);
-				}
-
-				if (combosResponse.success) {
-					setCombos(combosResponse.data.combos || []);
-				}
-
-			} catch (err) {
-				setError(err.message);
-				toast.error(err.message);
-			} finally {
-				setLoading(false);
-			}
-		};
-
-		fetchData();
-	}, []);
-
 	const cartItemCount = getCartItemCount();
 	const cartTotal = getCartTotal();
-
-	if (loading) {
-		return (
-			<div className="min-h-screen flex items-center justify-center">
-				<LoadingSpinner size="large" text="Đang tải sản phẩm..." />
-			</div>
-		);
-	}
-
-	if (error) {
-		return (
-			<div className="min-h-screen flex items-center justify-center">
-				<div className="text-center">
-					<i className="fas fa-exclamation-triangle text-6xl text-danger-500 mb-4"></i>
-					<h2 className="text-2xl font-bold text-gray-900 mb-2">Có lỗi xảy ra</h2>
-					<p className="text-gray-600 mb-4">{error}</p>
-					<button
-						onClick={() => window.location.reload()}
-						className="btn-primary"
-					>
-						Thử lại
-					</button>
-				</div>
-			</div>
-		);
-	}
 
 	return (
 		<div className="container mx-auto px-4 py-8">
@@ -176,13 +112,23 @@ const HomePage = () => {
 						{/* Checkout Button */}
 						{cartItemCount > 0 && (
 							<div className="mt-6">
-								<Link
-									to="/checkout"
-									className="btn-success w-full text-center block text-lg py-3"
-								>
-									<i className="fas fa-credit-card mr-2"></i>
-									Xác nhận ({formatCurrency(cartTotal)})
-								</Link>
+								{canOrder ? (
+									<Link
+										to="/checkout"
+										className="btn-success w-full text-center block text-lg py-3"
+									>
+										<i className="fas fa-credit-card mr-2"></i>
+										Xác nhận ({formatCurrency(cartTotal)})
+									</Link>
+								) : (
+									<span
+										aria-disabled="true"
+										className="btn-success w-full text-center block text-lg py-3 opacity-50 cursor-not-allowed"
+									>
+										<i className="fas fa-credit-card mr-2"></i>
+										Xác nhận ({formatCurrency(cartTotal)})
+									</span>
+								)}
 							</div>
 						)}
 					</div>
@@ -192,4 +138,4 @@ const HomePage = () => {
 	);
 };
 
-export default HomePage;
+export default CatalogView;

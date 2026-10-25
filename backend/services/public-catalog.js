@@ -9,7 +9,7 @@ const crypto = require('crypto');
 const { products, combos, storefronts } = require('../data');
 const { DEFAULT_STOREFRONT_ID } = require('../data/default-storefront');
 const { ERROR_CODES } = require('../constants/errorCodes');
-const { StorefrontAccessError, assertCanView, canView } = require('./storefront-access');
+const { StorefrontAccessError, assertCanView, canView, describeAccess } = require('./storefront-access');
 const { mergeRequirements } = require('./combo-optimizer');
 const { normalizePublicCode } = require('../utils/public-code');
 
@@ -146,6 +146,15 @@ async function findPublicComboByCode(code) {
 }
 
 /**
+ * The storefront a detail page adds to the cart of, in the shape the catalog uses.
+ * Only built after the viewer passed the view check, so it never names a gated storefront.
+ */
+async function toStorefrontRef(storefront, viewer) {
+	const { canOrder } = (await describeAccess([storefront], viewer)).get(storefront._id);
+	return { id: storefront._id, slug: storefront.slug, name: storefront.name, visibility: storefront.visibility, canOrder };
+}
+
+/**
  * The product as `viewer` may see it.
  *
  * @returns {Promise<{data: object, cacheable: boolean}>} `cacheable`: the same body for every visitor
@@ -154,7 +163,10 @@ async function findPublicComboByCode(code) {
 async function viewProduct(product, viewer) {
 	const storefront = await storefronts.findById(storefrontIdOf(product));
 	await assertCanView(storefront, viewer);
-	return { data: toPublicProduct(product), cacheable: isOpen(storefront) };
+	return {
+		data: { ...toPublicProduct(product), storefront: await toStorefrontRef(storefront, viewer) },
+		cacheable: isOpen(storefront)
+	};
 }
 
 /**
@@ -175,8 +187,13 @@ async function viewCombo(combo, viewer) {
 		await assertCanView(linked.find((storefront) => storefront.isActive) || null, viewer);
 		throw new StorefrontAccessError(ERROR_CODES.STOREFRONT_NOT_FOUND);
 	}
+	// The first storefront the viewer can open, a public one before a private one.
+	const home = visible.find(isOpen) || visible[0];
 	return {
-		data: await toPublicComboIn(combo, new Set(visible.map((storefront) => storefront._id))),
+		data: {
+			...(await toPublicComboIn(combo, new Set(visible.map((storefront) => storefront._id)))),
+			storefront: await toStorefrontRef(home, viewer)
+		},
 		cacheable: linked.every(isOpen)
 	};
 }

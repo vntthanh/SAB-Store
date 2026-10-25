@@ -5,6 +5,8 @@ import { productService } from '../services/api';
 import usePublicDetail from '../hooks/use-public-detail';
 import { getImageUrl } from '../utils/helpers';
 import ShareButton from '../components/ShareButton';
+import GatedStorefrontView from '../components/shop/GatedStorefrontView';
+import { storefrontPath } from '../lib/storefront-tabs';
 import NotFoundPage from './NotFoundPage';
 
 // Mirrors the cart's own ceiling so a detail-page quantity never exceeds what +/- can reach.
@@ -25,10 +27,15 @@ const DetailSkeleton = () => (
 
 const ProductDetailPage = () => {
 	const { code } = useParams();
-	const { addToCart, formatCurrency } = useCart();
+	const { addToCart, formatCurrency, canOrder, setActiveStorefront } = useCart();
 
-	const { data: product, status, retry } = usePublicDetail(productService.getByCode, code);
+	const { data: product, status, retry, error } = usePublicDetail(productService.getByCode, code);
 	const [quantity, setQuantity] = useState(1);
+
+	// The cart the product goes into is its own storefront's, not whichever tab was open before.
+	useEffect(() => {
+		if (product?.storefront?.id) setActiveStorefront(product.storefront);
+	}, [product, setActiveStorefront]);
 
 	// Each loaded product restarts at its own minimum order quantity.
 	useEffect(() => {
@@ -49,6 +56,7 @@ const ProductDetailPage = () => {
 	const step = (delta) => setQuantity((q) => clamp((Number.parseInt(q, 10) || 0) + delta));
 
 	if (status === 'loading') return <DetailSkeleton />;
+	if (status === 'gated') return <GatedStorefrontView error={error} onAccessChanged={retry} />;
 	if (status === 'notfound') {
 		return <NotFoundPage message="Sản phẩm không tồn tại hoặc đã ngừng bán" />;
 	}
@@ -65,7 +73,10 @@ const ProductDetailPage = () => {
 
 	return (
 		<div className="container mx-auto px-4 py-8">
-			<Link to="/" className="inline-block text-blue-700 hover:underline mb-4">
+			<Link
+				to={product.storefront?.slug ? storefrontPath(product.storefront.slug) : '/'}
+				className="inline-block text-blue-700 hover:underline mb-4"
+			>
 				← Về cửa hàng
 			</Link>
 			<div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -129,7 +140,9 @@ const ProductDetailPage = () => {
 						{product.available && (
 							<button
 								type="button"
-								className="btn btn-primary"
+								className="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+								disabled={!canOrder}
+								title={canOrder ? undefined : 'Chế độ xem trước: không thể đặt hàng'}
 								onClick={() => addToCart(product, clamp(quantity))}
 							>
 								<i className="fas fa-plus mr-2"></i>

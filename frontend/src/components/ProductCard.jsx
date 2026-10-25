@@ -14,7 +14,8 @@ const ProductCard = ({ product }) => {
 		increaseQuantity,
 		decreaseQuantity,
 		getItemQuantity,
-		formatCurrency
+		formatCurrency,
+		canOrder
 	} = useCart();
 
 	const quantity = getItemQuantity(product._id);
@@ -77,7 +78,9 @@ const ProductCard = ({ product }) => {
 						{quantity === 0 ? (
 							<button
 								onClick={handleAddToCart}
-								className="btn-primary w-full"
+								disabled={!canOrder}
+								title={canOrder ? undefined : 'Chế độ xem trước: không thể đặt hàng'}
+								className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
 							>
 								<i className="fas fa-plus mr-2"></i>
 								Thêm vào giỏ

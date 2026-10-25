@@ -120,6 +120,7 @@ describe.skipIf(!POSTGRES)('private storefront leak', () => {
 			const byCode = await get(`/api/products/by-code/${openProduct.publicCode}`);
 			expect(byCode.status).toBe(200);
 			expect(byCode.headers['cache-control']).toBe('public, max-age=60');
+			expect(byCode.body.data.storefront).toEqual({ id: DEFAULT_STOREFRONT_ID, slug: openSlug, name: expect.any(String), visibility: 'PUBLIC', canOrder: true });
 
 			const catalog = await get(`/api/storefronts/${openSlug}/catalog`);
 			expect(catalog.status).toBe(200);
@@ -149,6 +150,7 @@ describe.skipIf(!POSTGRES)('private storefront leak', () => {
 			expect(res.status).toBe(200);
 			const names = res.body.data.requirements.flatMap((requirement) => requirement.products.map((product) => product.name));
 			expect(names).toEqual(['Open Plush']);
+			expect(res.body.data.storefront).toMatchObject({ id: DEFAULT_STOREFRONT_ID, visibility: 'PUBLIC', canOrder: true });
 			expectNoSecrets(res);
 		});
 
@@ -181,6 +183,8 @@ describe.skipIf(!POSTGRES)('private storefront leak', () => {
 
 			expect(byCode.status).toBe(200);
 			expect(byCode.headers['cache-control']).toBe('private, no-store');
+			// An anonymous visitor is sent to the open storefront, never to the private one the combo is also linked to.
+			expect(byCode.body.data.storefront).toMatchObject({ id: DEFAULT_STOREFRONT_ID, visibility: 'PUBLIC' });
 			expect(active.body.data.combos.map((combo) => combo.name)).toContain('Shared Bundle');
 			expect(meta.status).toBe(200);
 			for (const res of [byCode, active, meta]) expectNoSecrets(res);
@@ -320,8 +324,11 @@ describe.skipIf(!POSTGRES)('private storefront leak', () => {
 			const byCode = await get(`/api/products/by-code/${privProduct.publicCode}`, member.cookies);
 			expect(byCode.status).toBe(200);
 			expect(byCode.headers['cache-control']).toBe('private, no-store');
+			expect(byCode.body.data.storefront).toEqual({ id: priv._id, slug: 'private-shop', name: 'Private Shop', visibility: 'PRIVATE', canOrder: true });
 			expect((await get(`/api/products/${privProduct._id}`, member.cookies)).status).toBe(200);
-			expect((await get(`/api/combos/by-code/${privCombo.publicCode}`, member.cookies)).status).toBe(200);
+			const comboByCode = await get(`/api/combos/by-code/${privCombo.publicCode}`, member.cookies);
+			expect(comboByCode.status).toBe(200);
+			expect(comboByCode.body.data.storefront).toMatchObject({ id: priv._id, visibility: 'PRIVATE', canOrder: true });
 
 			const list = await get('/api/storefronts', member.cookies);
 			expect(list.body.data.storefronts.find((storefront) => storefront.slug === 'private-shop'))
@@ -417,7 +424,9 @@ describe.skipIf(!POSTGRES)('private storefront leak', () => {
 			const preview = await get(catalogUrl(), staff.cookies);
 			expect(preview.status).toBe(200);
 			expect(preview.body.data.canOrder).toBe(false);
-			expect((await get(`/api/products/by-code/${privProduct.publicCode}`, staff.cookies)).status).toBe(200);
+			const byCode = await get(`/api/products/by-code/${privProduct.publicCode}`, staff.cookies);
+			expect(byCode.status).toBe(200);
+			expect(byCode.body.data.storefront).toMatchObject({ slug: 'private-shop', canOrder: false });
 
 			const list = await get('/api/storefronts', staff.cookies);
 			expect(list.body.data.storefronts.find((storefront) => storefront.slug === 'private-shop'))

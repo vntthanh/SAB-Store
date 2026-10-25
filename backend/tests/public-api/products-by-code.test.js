@@ -4,7 +4,7 @@ const { makeProduct } = require('../helpers/factories');
 
 const PUBLIC_KEYS = [
 	'_id', 'publicCode', 'slug', 'path', 'name', 'description', 'price', 'imageUrl',
-	'category', 'available', 'minOrderQuantity', 'maxOrderQuantity'
+	'category', 'available', 'minOrderQuantity', 'maxOrderQuantity', 'storefront'
 ].sort();
 const FORBIDDEN_KEYS = [
 	'salePrice', 'tags', 'weight', 'dimensions', 'sku', 'stockQuantity', 'inStock', 'isActive', 'currentPrice', 'onSale'
@@ -34,6 +34,7 @@ describe('GET /api/products/by-code/:code and /api/products/:id', () => {
 		expect(res.body.success).toBe(true);
 		expect(Object.keys(res.body.data).sort()).toEqual(PUBLIC_KEYS);
 		expect(res.body.data.path).toBe(`/p/${product.publicCode}/${product.slug}`);
+		expect(Object.keys(res.body.data.storefront).sort()).toEqual(['canOrder', 'id', 'name', 'slug', 'visibility']);
 		expect(res.headers['cache-control']).toBe('public, max-age=60');
 	});
 

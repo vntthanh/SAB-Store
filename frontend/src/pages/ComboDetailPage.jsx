@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { comboService } from '../services/api';
 import usePublicDetail from '../hooks/use-public-detail';
 import ProductCard from '../components/ProductCard';
 import ShareButton from '../components/ShareButton';
+import GatedStorefrontView from '../components/shop/GatedStorefrontView';
+import { storefrontPath } from '../lib/storefront-tabs';
 import NotFoundPage from './NotFoundPage';
 
 const DetailSkeleton = () => (
@@ -21,11 +23,17 @@ const DetailSkeleton = () => (
 
 const ComboDetailPage = () => {
 	const { code } = useParams();
-	const { cart, formatCurrency } = useCart();
+	const { cart, formatCurrency, setActiveStorefront } = useCart();
 
-	const { data: combo, status, retry } = usePublicDetail(comboService.getByCode, code);
+	const { data: combo, status, retry, error } = usePublicDetail(comboService.getByCode, code);
+
+	// The picks go into the cart of the storefront the combo is shown under.
+	useEffect(() => {
+		if (combo?.storefront?.id) setActiveStorefront(combo.storefront);
+	}, [combo, setActiveStorefront]);
 
 	if (status === 'loading') return <DetailSkeleton />;
+	if (status === 'gated') return <GatedStorefrontView error={error} onAccessChanged={retry} />;
 	if (status === 'notfound') {
 		return <NotFoundPage message="Combo không tồn tại hoặc đã ngừng bán" />;
 	}
@@ -50,7 +58,10 @@ const ComboDetailPage = () => {
 
 	return (
 		<div className="container mx-auto px-4 py-8">
-			<Link to="/" className="inline-block text-blue-700 hover:underline mb-4">
+			<Link
+				to={combo.storefront?.slug ? storefrontPath(combo.storefront.slug) : '/'}
+				className="inline-block text-blue-700 hover:underline mb-4"
+			>
 				← Về cửa hàng
 			</Link>
 			<div className="mb-6">

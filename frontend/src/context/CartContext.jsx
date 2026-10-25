@@ -1,6 +1,18 @@
 import React, { createContext, useContext, useReducer, useEffect, useState, useCallback, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { comboService } from '../services/api';
+import { useSession } from '../lib/auth-client';
+import {
+	DEFAULT_STOREFRONT_ID,
+	clearPrivateCarts,
+	loadCart,
+	migrateLegacyCart,
+	normalizeStorefront,
+	readActiveStorefront,
+	sameStorefront,
+	saveCart,
+	writeActiveStorefront
+} from '../lib/cart-storage';
 
 // Cart Context
 const CartContext = createContext();
@@ -14,14 +26,17 @@ const CART_ACTIONS = {
 	REMOVE_ITEM: 'REMOVE_ITEM',
 	UPDATE_QUANTITY: 'UPDATE_QUANTITY',
 	CLEAR_CART: 'CLEAR_CART',
-	LOAD_CART: 'LOAD_CART'
+	SWITCH_STOREFRONT: 'SWITCH_STOREFRONT'
 };
 
 // Cart Reducer
 const cartReducer = (state, action) => {
 	switch (action.type) {
-		case CART_ACTIONS.LOAD_CART:
-			return action.payload;
+		// One cart per storefront: switching swaps the lines, it never merges them.
+		case CART_ACTIONS.SWITCH_STOREFRONT:
+			return action.payload.storefrontId === state.storefrontId
+				? state
+				: { storefrontId: action.payload.storefrontId, items: action.payload.items };
 
 		case CART_ACTIONS.ADD_ITEM: {
 			const { quantity = 1, ...line } = action.payload;
@@ -70,23 +85,27 @@ const cartReducer = (state, action) => {
 		}
 
 		case CART_ACTIONS.CLEAR_CART:
-			return {
-				items: []
-			};
+			return { ...state, items: [] };
 
 		default:
 			return state;
 	}
 };
 
-// Initial Cart State
-const initialCartState = {
-	items: []
+// The storefront and cart a page load starts from: the one last visited, so a refresh on
+// /checkout still has its cart. The one-time migration of the old single cart runs here,
+// before anything reads the per-storefront keys.
+const bootstrapCart = () => {
+	migrateLegacyCart(localStorage);
+	const storefront = readActiveStorefront(localStorage) ?? normalizeStorefront({ id: DEFAULT_STOREFRONT_ID });
+	return { storefront, cart: { storefrontId: storefront.id, items: loadCart(localStorage, storefront.id) } };
 };
 
 // Cart Provider Component
 export const CartProvider = ({ children }) => {
-	const [cart, dispatch] = useReducer(cartReducer, initialCartState);
+	const [initial] = useState(bootstrapCart);
+	const [cart, dispatch] = useReducer(cartReducer, initial.cart);
+	const [activeStorefront, setActiveStorefrontState] = useState(initial.storefront);
 	const [comboDetection, setComboDetection] = useState({
 		hasCombo: false,
 		combo: null,
@@ -111,23 +130,43 @@ export const CartProvider = ({ children }) => {
 		totalSavings: 0
 	});
 
-	// Load cart from localStorage on component mount
 	useEffect(() => {
-		const savedCart = localStorage.getItem('minipreorder_cart');
-		if (savedCart) {
-			try {
-				const parsedCart = JSON.parse(savedCart);
-				dispatch({ type: CART_ACTIONS.LOAD_CART, payload: parsedCart });
-			} catch (error) {
-				console.error('Error loading cart from localStorage:', error);
-				localStorage.removeItem('minipreorder_cart');
-			}
-		}
+		writeActiveStorefront(localStorage, activeStorefront);
+	}, [activeStorefront]);
+
+	// A page declares which storefront it shows; the cart, the add buttons and checkout
+	// follow it. The cart is saved under the id it belongs to, so a switch never writes
+	// one storefront's lines into another's key.
+	const setActiveStorefront = useCallback((storefront) => {
+		if (!storefront?.id) return;
+		const next = normalizeStorefront(storefront);
+		setActiveStorefrontState((current) => (sameStorefront(current, next) ? current : next));
+		dispatch({
+			type: CART_ACTIONS.SWITCH_STOREFRONT,
+			payload: { storefrontId: next.id, items: loadCart(localStorage, next.id) }
+		});
 	}, []);
+
+	// No signed-in user (signed out, or a session that expired while the tab was closed) ends
+	// the customer's private-storefront carts (shared computers); public carts belong to no
+	// account and stay. This also runs on the first resolved lookup, not only on a transition.
+	const { data: session, isPending: sessionPending } = useSession();
+	const signedInUserId = session?.user?.id ?? null;
+	useEffect(() => {
+		if (sessionPending || signedInUserId) return;
+		clearPrivateCarts(localStorage);
+		if (activeStorefront.visibility === 'PRIVATE') dispatch({ type: CART_ACTIONS.CLEAR_CART });
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [signedInUserId, sessionPending]);
 
 	// Save cart to localStorage whenever cart changes
 	useEffect(() => {
-		localStorage.setItem('minipreorder_cart', JSON.stringify(cart));
+		saveCart(
+			localStorage,
+			cart.storefrontId,
+			cart.items,
+			activeStorefront.id === cart.storefrontId ? activeStorefront.visibility : 'PUBLIC'
+		);
 
 		// Check for combos when cart changes
 		if (cart.items.length > 0) {
@@ -296,9 +335,15 @@ export const CartProvider = ({ children }) => {
 
 	// Cart Actions
 	const addToCart = (product, quantity = 1) => {
+		// A staff preview of a private storefront may look, not order; the server refuses the order too.
+		if (!activeStorefront.canOrder) {
+			toast.warning('Tài khoản này không nằm trong danh sách được đặt hàng của gian hàng');
+			return;
+		}
 		dispatch({
 			type: CART_ACTIONS.ADD_ITEM,
 			payload: {
+				storefrontId: cart.storefrontId,
 				productId: product._id,
 				productName: product.name,
 				price: product.price,
@@ -407,6 +452,9 @@ export const CartProvider = ({ children }) => {
 
 	const value = {
 		cart,
+		activeStorefront,
+		setActiveStorefront,
+		canOrder: activeStorefront.canOrder,
 		addToCart,
 		removeFromCart,
 		updateQuantity,
