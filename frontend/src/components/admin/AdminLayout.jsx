@@ -88,6 +88,26 @@ const AdminLayout = ({ children }) => {
 								<i className="fas fa-boxes mr-2"></i>
 								Combo
 							</Link>
+								<Link
+									to="/admin/storefronts"
+									className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${isActiveRoute('/admin/storefronts')
+										? 'bg-primary-100 text-primary-700'
+										: 'text-gray-700 hover:text-primary-600'
+										}`}
+								>
+									<i className="fas fa-store mr-2"></i>
+									Gian hàng
+								</Link>
+								<Link
+									to="/admin/email-lists"
+									className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${isActiveRoute('/admin/email-lists')
+										? 'bg-primary-100 text-primary-700'
+										: 'text-gray-700 hover:text-primary-600'
+										}`}
+								>
+									<i className="fas fa-envelope-open-text mr-2"></i>
+									Danh sách email
+								</Link>
 							<Link
 								to="/admin/sellers"
 								className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${isActiveRoute('/admin/sellers')
@@ -179,6 +199,26 @@ const AdminLayout = ({ children }) => {
 							<i className="fas fa-box mr-2"></i>
 							Sản phẩm
 						</Link>
+							<Link
+								to="/admin/storefronts"
+								className={`block px-3 py-2 rounded-md text-base font-medium transition-colors ${isActiveRoute('/admin/storefronts')
+									? 'bg-primary-100 text-primary-700'
+									: 'text-gray-700 hover:text-primary-600'
+									}`}
+							>
+								<i className="fas fa-store mr-2"></i>
+								Gian hàng
+							</Link>
+							<Link
+								to="/admin/email-lists"
+								className={`block px-3 py-2 rounded-md text-base font-medium transition-colors ${isActiveRoute('/admin/email-lists')
+									? 'bg-primary-100 text-primary-700'
+									: 'text-gray-700 hover:text-primary-600'
+									}`}
+							>
+								<i className="fas fa-envelope-open-text mr-2"></i>
+								Danh sách email
+							</Link>
 						<Link
 							to="/admin/sellers"
 							className={`block px-3 py-2 rounded-md text-base font-medium transition-colors ${isActiveRoute('/admin/sellers')

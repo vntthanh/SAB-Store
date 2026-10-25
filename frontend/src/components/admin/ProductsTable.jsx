@@ -4,7 +4,7 @@ import { SALES_CHANNEL_LABELS, normalizeSalesChannel } from '../../utils/sales-c
 import { productPath } from '../../utils/share-links';
 import ShareButton from '../ShareButton';
 
-const ProductsTable = ({ products, onEdit, onDelete, onManageStock }) => {
+const ProductsTable = ({ products, onEdit, onDelete, onManageStock, storefrontName }) => {
 	if (products.length === 0) {
 		return (
 			<div className="text-center py-12">
@@ -28,6 +28,9 @@ const ProductsTable = ({ products, onEdit, onDelete, onManageStock }) => {
 						</th>
 						<th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
 							Danh mục
+						</th>
+						<th className="hidden md:table-cell px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+							Gian hàng
 						</th>
 						<th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
 							Giá
@@ -71,6 +74,9 @@ const ProductsTable = ({ products, onEdit, onDelete, onManageStock }) => {
 							</td>
 							<td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
 								{product.category}
+							</td>
+							<td className="hidden md:table-cell px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+								{storefrontName(product.storefrontId)}
 							</td>
 							<td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">
 								{formatCurrency(product.price)}

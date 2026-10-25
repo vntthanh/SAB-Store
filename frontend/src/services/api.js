@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { authClient } from '../lib/auth-client';
+import { canUseAdmin, canUseSeller } from '../lib/auth-flow';
 
 // Same-origin relative path: frontend nginx proxies /api/ to the backend,
 // so the bundle never needs to know the domain (AD-3).
@@ -11,6 +12,8 @@ const api = axios.create({
 	},
 	withCredentials: true, // Important for better-auth session cookies
 });
+
+const STOREFRONT_LOGIN_REQUIRED = 'STOREFRONT_LOGIN_REQUIRED';
 
 // Request interceptor to add session cookies
 api.interceptors.request.use(
@@ -30,7 +33,9 @@ api.interceptors.response.use(
 		return response;
 	},
 	async (error) => {
-		if (error.response?.status === 401) {
+		// A private storefront answers 401 to an anonymous viewer; the page shows its sign-in
+		// panel, so the session is not "expired" and must not be signed out or redirected.
+		if (error.response?.status === 401 && error.response?.data?.code !== STOREFRONT_LOGIN_REQUIRED) {
 			// Session expired or invalid - sign out user
 			try {
 				await authClient.signOut();
@@ -54,6 +59,8 @@ const toApiError = (error, fallback) => {
 	apiError.details = error.response?.data?.details;
 	// Validation 400s: [{ field, message }] so forms can show each reason under its input.
 	apiError.fieldErrors = error.response?.data?.errors;
+	// Storefront access errors (401/403) name the storefront so the page can offer sign-in for it.
+	apiError.storefront = error.response?.data?.storefront;
 	return apiError;
 };
 
@@ -141,7 +148,7 @@ export const adminService = {
 	isLoggedIn: async () => {
 		try {
 			const { data: session } = await authClient.getSession();
-			return session && session.user && session.user.role === 'admin';
+			return Boolean(session?.user) && canUseAdmin(session.user);
 		} catch (error) {
 			return false;
 		}
@@ -336,9 +343,9 @@ export const adminService = {
 	},
 
 	// Combo management
-	getCombos: async () => {
+	getCombos: async (params = {}) => {
 		try {
-			const response = await api.get('/combos');
+			const response = await api.get('/combos', { params });
 			return response.data;
 		} catch (error) {
 			throw new Error(error.response?.data?.message || 'Lỗi khi lấy danh sách combo');
@@ -402,7 +409,7 @@ export const sellerService = {
 	isLoggedIn: async () => {
 		try {
 			const { data: session } = await authClient.getSession();
-			return session && session.user && (session.user.role === 'seller' || session.user.role === 'admin');
+			return Boolean(session?.user) && canUseSeller(session.user);
 		} catch (error) {
 			return false;
 		}
@@ -688,6 +695,60 @@ export const mailSettingsService = {
 			throw toApiError(error, 'Lỗi khi gửi email thử');
 		}
 	}
+};
+
+// Public storefront tabs. A private storefront the viewer may not open rejects with
+// `code` (STOREFRONT_LOGIN_REQUIRED / STOREFRONT_FORBIDDEN) and `storefront` kept on the error.
+export const getStorefronts = async () => {
+	try {
+		const response = await api.get('/storefronts');
+		return response.data.data;
+	} catch (error) {
+		throw toApiError(error, 'Lỗi khi tải danh sách gian hàng');
+	}
+};
+
+export const getStorefrontCatalog = async (slug, params = {}) => {
+	try {
+		const response = await api.get(`/storefronts/${encodeURIComponent(slug)}/catalog`, { params });
+		return response.data.data;
+	} catch (error) {
+		throw toApiError(error, 'Lỗi khi tải gian hàng');
+	}
+};
+
+// Admin storefronts, access rules and email lists. Every method resolves `response.data`
+// (`{ success, data, meta?, message? }`) and rejects with the server's message and `code`.
+const adminCall = (fallback, request) => async (...args) => {
+	try {
+		const response = await request(...args);
+		return response.data;
+	} catch (error) {
+		throw toApiError(error, fallback);
+	}
+};
+
+export const storefrontAdminService = {
+	list: adminCall('Lỗi khi tải danh sách gian hàng', () => api.get('/admin/storefronts')),
+	create: adminCall('Lỗi khi tạo gian hàng', (payload) => api.post('/admin/storefronts', payload)),
+	update: adminCall('Lỗi khi cập nhật gian hàng', (id, payload) => api.put(`/admin/storefronts/${id}`, payload)),
+	remove: adminCall('Lỗi khi xóa gian hàng', (id) => api.delete(`/admin/storefronts/${id}`)),
+	reorder: adminCall('Lỗi khi sắp xếp gian hàng', (ids) => api.put('/admin/storefronts/reorder', { ids })),
+	listRules: adminCall('Lỗi khi tải quy tắc truy cập', (id) => api.get(`/admin/storefronts/${id}/rules`)),
+	addRule: adminCall('Lỗi khi thêm quy tắc truy cập', (id, rule) => api.post(`/admin/storefronts/${id}/rules`, rule)),
+	removeRule: adminCall('Lỗi khi xóa quy tắc truy cập', (id, ruleId) => api.delete(`/admin/storefronts/${id}/rules/${ruleId}`))
+};
+
+export const emailListService = {
+	list: adminCall('Lỗi khi tải danh sách email', () => api.get('/admin/email-lists')),
+	create: adminCall('Lỗi khi tạo danh sách email', (payload) => api.post('/admin/email-lists', payload)),
+	update: adminCall('Lỗi khi cập nhật danh sách email', (id, payload) => api.put(`/admin/email-lists/${id}`, payload)),
+	remove: adminCall('Lỗi khi xóa danh sách email', (id) => api.delete(`/admin/email-lists/${id}`)),
+	listEntries: adminCall('Lỗi khi tải email trong danh sách', (id, params) => api.get(`/admin/email-lists/${id}/entries`, { params })),
+	// Up to EMAIL_LIST_ENTRIES_MAX per call; resolves `{ data: { added, skipped } }`.
+	addEntries: adminCall('Lỗi khi thêm email', (id, emails) => api.post(`/admin/email-lists/${id}/entries`, { emails }, { timeout: 30000 })),
+	removeEntry: adminCall('Lỗi khi xóa email', (id, entryId) => api.delete(`/admin/email-lists/${id}/entries/${entryId}`)),
+	clear: adminCall('Lỗi khi xóa toàn bộ email', (id) => api.delete(`/admin/email-lists/${id}/entries`))
 };
 
 export default api;

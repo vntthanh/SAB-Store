@@ -32,14 +32,17 @@ const PRODUCT_RULES = {
 		const n = Number(value);
 		return Number.isInteger(n) && n >= 0 ? null : 'Số lượng tồn kho không hợp lệ';
 	},
-	description: (value) => (value.length > 500 ? 'Mô tả không được vượt quá 500 ký tự' : null)
+	description: (value) => (value.length > 500 ? 'Mô tả không được vượt quá 500 ký tự' : null),
+	storefrontId: (value) => (value ? null : 'Gian hàng là bắt buộc')
 };
 
 const ProductForm = ({
 	product,
 	onSubmit,
 	onCancel,
-	onUploadImage
+	onUploadImage,
+	storefronts = [],
+	defaultStorefrontId = ''
 }) => {
 	const [formData, setFormData] = useState({
 		name: product?.name || '',
@@ -49,6 +52,7 @@ const ProductForm = ({
 		category: product?.category || '',
 		available: product?.available ?? true,
 		salesChannel: normalizeSalesChannel(product?.salesChannel),
+		storefrontId: product?.storefrontId || defaultStorefrontId,
 		stockQuantity: ''
 	});
 
@@ -243,6 +247,21 @@ const ProductForm = ({
 						onBlur={handleBlur}
 						className="form-input"
 					/>
+				</FormField>
+
+				<FormField id="product-storefrontId" label="Gian hàng" required error={errors.storefrontId}>
+					<select
+						name="storefrontId"
+						value={formData.storefrontId}
+						onChange={handleInputChange}
+						onBlur={handleBlur}
+						className="form-input"
+					>
+						<option value="">Chọn gian hàng</option>
+						{storefronts.map((storefront) => (
+							<option key={storefront._id} value={storefront._id}>{storefront.name}</option>
+						))}
+					</select>
 				</FormField>
 
 				<FormField id="product-price" label="Giá (VND)" required error={errors.price}>

@@ -9,6 +9,9 @@ import { SALES_CHANNELS, SALES_CHANNEL_LABELS, normalizeSalesChannel } from '../
 import { comboPath } from '../../utils/share-links';
 import useFieldErrors from '../../hooks/use-field-errors';
 import FormField from '../../components/form/FormField';
+import StorefrontFilter from '../../components/admin/StorefrontFilter';
+import useAdminStorefronts from '../../components/admin/use-admin-storefronts';
+import { pickDefaultStorefrontId } from '../../components/admin/default-storefront';
 
 // Client rules mirror POST /api/combos and the Combo schema (the server stays authoritative).
 const COMBO_RULES = {
@@ -25,6 +28,7 @@ const COMBO_RULES = {
 		return Number.isInteger(n) ? null : 'Giá phải là số nguyên (VND)';
 	},
 	description: (value) => (value.length > 500 ? 'Mô tả không được vượt quá 500 ký tự' : null),
+	storefrontIds: (ids) => (ids.length === 0 ? 'Combo phải thuộc ít nhất một gian hàng' : null),
 	categoryRequirements: (rows) => {
 		if (rows.length === 0) return 'Combo phải có ít nhất một yêu cầu danh mục';
 		return rows.some((row) => !row.category || !(row.quantity >= 1))
@@ -37,7 +41,7 @@ const INPUT_CLASS = 'w-full px-3 py-2 border border-gray-300 rounded-lg focus:ri
 const ROW_ERROR_CLASS = ' border-danger-500 ring-1 ring-danger-500 focus:border-danger-500 focus:ring-danger-500';
 
 // Lives inside the Modal so every open starts with fresh values and no stale errors.
-const ComboForm = ({ combo, categories, submitting, onSubmit, onCancel }) => {
+const ComboForm = ({ combo, categories, storefronts, defaultStorefrontId, submitting, onSubmit, onCancel }) => {
 	const [formData, setFormData] = useState(() => combo ? {
 		name: combo.name,
 		description: combo.description || '',
@@ -48,6 +52,7 @@ const ComboForm = ({ combo, categories, submitting, onSubmit, onCancel }) => {
 			quantity: req.quantity
 		})),
 		isActive: combo.isActive,
+		storefrontIds: combo.storefrontIds || [],
 		salesChannel: normalizeSalesChannel(combo.salesChannel)
 	} : {
 		name: '',
@@ -56,6 +61,7 @@ const ComboForm = ({ combo, categories, submitting, onSubmit, onCancel }) => {
 		priority: 0,
 		categoryRequirements: [{ category: '', quantity: 1 }],
 		isActive: true,
+		storefrontIds: defaultStorefrontId ? [defaultStorefrontId] : [],
 		salesChannel: 'all'
 	});
 	const { errors, validateField, onFieldChange, validateAll, focusFirstError } = useFieldErrors(COMBO_RULES);
@@ -64,6 +70,13 @@ const ComboForm = ({ combo, categories, submitting, onSubmit, onCancel }) => {
 	const setField = (name, value) => {
 		setFormData(prev => ({ ...prev, [name]: value }));
 		onFieldChange(name, value, { ...formData, [name]: value });
+	};
+
+	const toggleStorefront = (id) => {
+		const ids = formData.storefrontIds.includes(id)
+			? formData.storefrontIds.filter((current) => current !== id)
+			: [...formData.storefrontIds, id];
+		setField('storefrontIds', ids);
 	};
 
 	const handleBlur = (e) => {
@@ -182,6 +195,33 @@ const ComboForm = ({ combo, categories, submitting, onSubmit, onCancel }) => {
 				</div>
 			</div>
 
+			<fieldset aria-describedby={errors.storefrontIds ? 'combo-storefronts-error' : undefined}>
+				<legend className="block text-sm font-medium text-gray-700 mb-1">
+					Gian hàng áp dụng
+					<span className="text-danger-500 ms-1" aria-hidden="true">*</span>
+				</legend>
+				<div className="flex flex-col sm:flex-row sm:flex-wrap gap-2 sm:gap-x-6">
+					{storefronts.map((storefront) => (
+						<label key={storefront._id} className="inline-flex items-center min-h-[2rem] text-sm text-gray-700">
+							<input
+								type="checkbox"
+								checked={formData.storefrontIds.includes(storefront._id)}
+								onChange={() => toggleStorefront(storefront._id)}
+								aria-invalid={errors.storefrontIds ? 'true' : undefined}
+								className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+							/>
+							<span className="ml-2">{storefront.name}</span>
+						</label>
+					))}
+				</div>
+				{errors.storefrontIds && (
+					<p id="combo-storefronts-error" role="alert" className="mt-1 text-sm text-danger-500">
+						<i className="fas fa-exclamation-circle mr-1" aria-hidden="true"></i>
+						{errors.storefrontIds}
+					</p>
+				)}
+			</fieldset>
+
 			<FormField id="combo-salesChannel" label="Kênh áp dụng">
 				<select
 					value={formData.salesChannel}
@@ -287,27 +327,40 @@ const ComboManagement = () => {
 	const [showModal, setShowModal] = useState(false);
 	const [editingCombo, setEditingCombo] = useState(null);
 	const [submitting, setSubmitting] = useState(false);
+	const [storefrontId, setStorefrontId] = useState('');
+	const { storefronts, nameOf } = useAdminStorefronts();
+	// A slow response for a previous filter must not overwrite the current one.
+	const fetchSeqRef = useRef(0);
+	const loadedRef = useRef(false);
 
 	// Fetch combos and categories
 	useEffect(() => {
-		fetchCombos();
 		fetchCategories();
 	}, []);
 
+	useEffect(() => {
+		fetchCombos();
+	}, [storefrontId]);
+
 	const fetchCombos = async () => {
+		const seq = ++fetchSeqRef.current;
 		try {
 			console.log('[COMBO] Fetching combos...');
-			setLoading(true);
-			const response = await adminService.getCombos();
+			// Only the first load replaces the page; a filter change keeps the dropdown on screen.
+			if (!loadedRef.current) setLoading(true);
+			const response = await adminService.getCombos(storefrontId ? { storefrontId } : {});
 			console.log('[COMBO] Combos response:', response);
+			if (seq !== fetchSeqRef.current) return;
 			if (response.success) {
 				setCombos(response.data.combos);
+				loadedRef.current = true;
 			}
 		} catch (error) {
+			if (seq !== fetchSeqRef.current) return;
 			console.error('[COMBO] Error fetching combos:', error);
 			toast.error('Lỗi khi tải danh sách combo');
 		} finally {
-			setLoading(false);
+			if (seq === fetchSeqRef.current) setLoading(false);
 		}
 	};
 
@@ -443,9 +496,12 @@ const ComboManagement = () => {
 				{/* Combos List */}
 				<div className="card">
 					<div className="p-6">
-						<h2 className="text-xl font-semibold text-gray-900 mb-4">
-							Danh sách combo ({combos.length})
-						</h2>
+						<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+							<h2 className="text-xl font-semibold text-gray-900">
+								Danh sách combo ({combos.length})
+							</h2>
+							<StorefrontFilter storefronts={storefronts} value={storefrontId} onChange={setStorefrontId} />
+						</div>
 
 						{combos.length === 0 ? (
 							<div className="text-center py-12">
@@ -486,6 +542,9 @@ const ComboManagement = () => {
 											</th>
 											<th className="text-left py-3 px-4 font-semibold text-gray-900">
 												Ưu tiên
+											</th>
+											<th className="text-left py-3 px-4 font-semibold text-gray-900">
+												Gian hàng
 											</th>
 											<th className="text-left py-3 px-4 font-semibold text-gray-900">
 												Kênh áp dụng
@@ -536,6 +595,13 @@ const ComboManagement = () => {
 													<span className="text-gray-600">
 														{combo.priority}
 													</span>
+												</td>
+												<td className="py-3 px-4">
+													{(combo.storefrontIds || []).map((id) => (
+														<span key={id} className="inline-block bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs mr-1 mb-1 whitespace-nowrap">
+															{nameOf(id)}
+														</span>
+													))}
 												</td>
 												<td className="py-3 px-4">
 													<span className="inline-block bg-blue-50 text-blue-800 px-2 py-1 rounded text-xs whitespace-nowrap">
@@ -595,6 +661,8 @@ const ComboManagement = () => {
 					<ComboForm
 						combo={editingCombo}
 						categories={categories}
+						storefronts={storefronts}
+						defaultStorefrontId={storefrontId || pickDefaultStorefrontId(storefronts)}
 						submitting={submitting}
 						onSubmit={handleSubmit}
 						onCancel={() => setShowModal(false)}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { toast } from 'react-toastify';
 import Swal from 'sweetalert2';
 import { adminService } from '../../services/api';
@@ -8,6 +8,9 @@ import ProductModal from '../../components/admin/ProductModal';
 import StockAdjustPanel from '../../components/admin/StockAdjustPanel';
 import StockMovementsTable from '../../components/admin/StockMovementsTable';
 import StockReconcileModal from '../../components/admin/StockReconcileModal';
+import StorefrontFilter from '../../components/admin/StorefrontFilter';
+import useAdminStorefronts from '../../components/admin/use-admin-storefronts';
+import { pickDefaultStorefrontId } from '../../components/admin/default-storefront';
 import { describePage } from '../../utils/pagination';
 
 const PAGE_SIZE = 20;
@@ -90,19 +93,25 @@ const ProductsManagement = () => {
 	const [page, setPage] = useState(1);
 	const [meta, setMeta] = useState(null);
 	const [paging, setPaging] = useState(false);
+	const [storefrontId, setStorefrontId] = useState('');
+	const { storefronts, nameOf } = useAdminStorefronts();
+	// A slow response for a previous page or filter must not overwrite the current one.
+	const fetchSeqRef = useRef(0);
 
 	// Fetch products
 	// Turning a page keeps the table and the (disabled) controls on screen; only the first load shows the full spinner.
 	useEffect(() => {
 		fetchProducts({ silent: meta !== null });
-	}, [page]);
+	}, [page, storefrontId]);
 
 	const fetchProducts = async ({ silent = false } = {}) => {
 		let steppedBack = false;
+		const seq = ++fetchSeqRef.current;
 		try {
 			if (!silent) setLoading(true);
 			setPaging(true);
-			const response = await adminService.getProducts({ page, limit: PAGE_SIZE });
+			const response = await adminService.getProducts({ page, limit: PAGE_SIZE, ...(storefrontId && { storefrontId }) });
+			if (seq !== fetchSeqRef.current) return;
 			if (response.success) {
 				// The last row of the last page was deleted or moved: step back to a page that exists.
 				if (response.data.length === 0 && page > 1 && response.meta.totalPages > 0) {
@@ -115,10 +124,11 @@ const ProductsManagement = () => {
 				setMeta(response.meta);
 			}
 		} catch (error) {
+			if (seq !== fetchSeqRef.current) return;
 			console.error('Error fetching products:', error);
 			toast.error('Lỗi khi tải danh sách sản phẩm');
 		} finally {
-			if (!steppedBack) {
+			if (!steppedBack && seq === fetchSeqRef.current) {
 				setLoading(false);
 				setPaging(false);
 			}
@@ -156,7 +166,7 @@ const ProductsManagement = () => {
 			}
 		} catch (error) {
 			console.error('Error saving product:', error);
-			toast.error('Lỗi khi lưu sản phẩm');
+			toast.error(error.message || 'Lỗi khi lưu sản phẩm');
 		}
 	};
 
@@ -210,6 +220,14 @@ const ProductsManagement = () => {
 					<p className="text-gray-600">Thêm, sửa, xóa và quản lý sản phẩm</p>
 				</div>
 				<div className="flex items-center gap-3">
+					<StorefrontFilter
+						storefronts={storefronts}
+						value={storefrontId}
+						onChange={(value) => {
+							setStorefrontId(value);
+							setPage(1);
+						}}
+					/>
 					<button
 						onClick={() => setShowReconcile(true)}
 						className="btn-secondary"
@@ -231,6 +249,7 @@ const ProductsManagement = () => {
 			<div className="card">
 				<ProductsTable
 					products={products}
+					storefrontName={nameOf}
 					onEdit={handleEdit}
 					onDelete={handleDelete}
 					onManageStock={(product) => setStockProductId(product._id)}
@@ -245,6 +264,8 @@ const ProductsManagement = () => {
 				product={editingProduct}
 				onSubmit={handleSubmitProduct}
 				onUploadImage={handleUploadImage}
+				storefronts={storefronts}
+				defaultStorefrontId={storefrontId || pickDefaultStorefrontId(storefronts)}
 			/>
 
 			{stockProduct && (
