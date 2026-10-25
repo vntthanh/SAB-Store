@@ -3,6 +3,7 @@
  * limit, and the log line a retry leaves. Skipped on the mongo backend.
  */
 const { v7: uuidv7 } = require('uuid');
+const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 
 const POSTGRES = process.env.DATA_BACKEND === 'postgres';
 
@@ -84,7 +85,7 @@ describe.skipIf(!POSTGRES)('postgres withTransaction', () => {
 		const a = uuidv7();
 		const b = uuidv7();
 		for (const id of [a, b]) {
-			await prisma.product.create({ data: { id, name: id, price: 1, category: 'c', publicCode: id, slug: id } });
+			await prisma.product.create({ data: { id, name: id, price: 1, category: 'c', publicCode: id, slug: id, storefrontId: DEFAULT_STOREFRONT_ID } });
 		}
 		const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 		const lock = (tx, id) => tx.$queryRaw`SELECT 1 FROM products WHERE id = ${id}::uuid FOR UPDATE`;

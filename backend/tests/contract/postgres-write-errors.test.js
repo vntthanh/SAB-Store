@@ -5,6 +5,7 @@
  * mongo backend, whose errors data/mongo/errors.js translates.
  */
 const { v7: uuidv7 } = require('uuid');
+const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 const { DuplicateKeyError, RecordValidationError, InvalidIdError, isDuplicateKeyOn } = require('../../data/errors');
 
 const POSTGRES = process.env.DATA_BACKEND === 'postgres';
@@ -28,7 +29,7 @@ describe.skipIf(!POSTGRES)('postgres translateWriteError', () => {
 		() => { throw new Error('expected the operation to fail'); },
 		(err) => err
 	);
-	const product = (overrides = {}) => ({ id: uuidv7(), name: 'p', price: 1, category: 'c', publicCode: uuidv7(), slug: 's', ...overrides });
+	const product = (overrides = {}) => ({ id: uuidv7(), name: 'p', price: 1, category: 'c', publicCode: uuidv7(), slug: 's', storefrontId: DEFAULT_STOREFRONT_ID, ...overrides });
 	const movement = (overrides = {}) => ({ id: uuidv7(), productId: uuidv7(), type: 'adjust', delta: 1, idempotencyKey: uuidv7(), ...overrides });
 
 	it('turns a unique violation into a DuplicateKeyError naming the record field', async () => {
@@ -62,8 +63,8 @@ describe.skipIf(!POSTGRES)('postgres translateWriteError', () => {
 	it('reports a CHECK raised by raw SQL the same way', async () => {
 		const id = uuidv7();
 		const raw = await failure(() => prisma.$executeRaw`
-			INSERT INTO products (id, name, price, category, public_code, slug, min_order_quantity, updated_at)
-			VALUES (${id}::uuid, 'p', 1, 'c', ${uuidv7()}, 's', 0, now())`);
+			INSERT INTO products (id, name, price, category, public_code, slug, storefront_id, min_order_quantity, updated_at)
+			VALUES (${id}::uuid, 'p', 1, 'c', ${uuidv7()}, 's', ${DEFAULT_STOREFRONT_ID}::uuid, 0, now())`);
 
 		const error = translateWriteError(raw);
 

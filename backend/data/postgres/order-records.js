@@ -25,7 +25,7 @@ function includeFor(omit = []) {
 
 // Columns a Mongo document simply lacks when they were never set.
 const ABSENT_WHEN_NULL = new Set([
-	'orderNumber', 'phoneNumber', 'studentId', 'fullName', 'email', 'additionalNote', 'transactionCode', 'cancelReason', 'createdBy'
+	'orderNumber', 'phoneNumber', 'studentId', 'fullName', 'email', 'additionalNote', 'transactionCode', 'cancelReason', 'createdBy', 'storefrontId'
 ]);
 
 const present = (entries) => Object.fromEntries(entries.filter(([, value]) => value !== null));

@@ -4,10 +4,15 @@
  * `combo_category_requirements`, read back in `position` order, and the nested
  * `_id` of a requirement is that row's uuid string.
  *
+ * A record carries `storefrontIds`, the storefronts the combo is offered in,
+ * sorted. `create` links the default storefront when the caller names none.
+ *
  * Every list orders priority first, then newest, then id, so two reads of a tie
  * never come back in different orders.
  */
 const { prisma } = require('../../lib/prisma');
+const { DEFAULT_STOREFRONT_ID } = require('../default-storefront');
+const { InvalidIdError } = require('../errors');
 const { SALES_CHANNELS, assertSaleChannel } = require('../sale-channels');
 const { PUBLIC_CODE_PATTERN, withPublicCodeRetry } = require('../../utils/public-code');
 const { translating } = require('./errors');
@@ -20,16 +25,19 @@ const EDITABLE_FIELDS = ['name', 'description', 'price', 'categoryRequirements',
 
 const OFFERED_ORDER = [{ priority: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }];
 const REQUIREMENT_SELECT = { select: { id: true, category: true, quantity: true }, orderBy: { position: 'asc' } };
+const STOREFRONT_SELECT = { select: { storefrontId: true }, orderBy: { storefrontId: 'asc' } };
+const RECORD_INCLUDE = { requirements: REQUIREMENT_SELECT, storefronts: STOREFRONT_SELECT };
 
 const clientOf = (tx) => tx || prisma;
 
 /** A stored combo (with its requirements loaded, when asked for) as a plain record. */
 function toRecord(row) {
-	const { id, requirements, ...rest } = row;
+	const { id, requirements, storefronts, ...rest } = row;
 	const record = { _id: id };
 	for (const [key, value] of Object.entries(rest)) {
 		if (value !== null || key !== 'description') record[key] = value;
 	}
+	if (storefronts) record.storefrontIds = storefronts.map((link) => link.storefrontId);
 	if (requirements) record.categoryRequirements = requirements.map(({ id: requirementId, category, quantity }) => ({ category, quantity, _id: requirementId }));
 	return record;
 }
@@ -39,6 +47,7 @@ function selectOf(fields) {
 	const select = { id: true };
 	for (const field of fields) {
 		if (field === 'categoryRequirements') select.requirements = REQUIREMENT_SELECT;
+		else if (field === 'storefrontIds') select.storefronts = STOREFRONT_SELECT;
 		else if (field !== '_id') select[field] = true;
 	}
 	return select;
@@ -102,6 +111,18 @@ function valuesOf(fields, { creating }) {
 	return { columns: Object.fromEntries(Object.entries(columns).filter(([, value]) => value !== undefined)), requirements };
 }
 
+/** The storefront ids a new combo is linked to: the given ones (deduplicated, as uuids) or the default storefront. */
+function storefrontIdsOf(ids) {
+	if (ids === undefined || ids === null) return [DEFAULT_STOREFRONT_ID];
+	if (!Array.isArray(ids)) throw new InvalidIdError('Invalid value for storefrontIds', { path: 'storefrontIds', value: ids });
+	if (ids.length === 0) {
+		const problems = new Problems();
+		problems.add('storefrontIds', 'Combo phải thuộc ít nhất một cửa hàng');
+		problems.throwIfAny();
+	}
+	return [...new Set(ids.map((id) => recordId(id, 'storefrontIds')))];
+}
+
 const requirementRows = (requirements) => requirements.map((entry, position) => ({ position, category: entry.category, quantity: entry.quantity }));
 
 /**
@@ -116,7 +137,7 @@ const requirementRows = (requirements) => requirements.map((entry, position) => 
  */
 function findSellable(channel, { publicCode } = {}) {
 	const where = { ...sellableWhere(channel), ...(publicCode !== undefined && { publicCode }) };
-	return prisma.combo.findMany({ where, orderBy: OFFERED_ORDER, include: { requirements: REQUIREMENT_SELECT } }).then((rows) => rows.map(toRecord));
+	return prisma.combo.findMany({ where, orderBy: OFFERED_ORDER, include: RECORD_INCLUDE }).then((rows) => rows.map(toRecord));
 }
 
 /**
@@ -135,7 +156,7 @@ async function findSellableForPricing(channel, fields, tx) {
 
 /** Every combo, offered order first, optionally only the active or only the stopped ones. */
 async function list({ active } = {}) {
-	const rows = await prisma.combo.findMany({ where: active === undefined ? {} : { isActive: active }, orderBy: OFFERED_ORDER, include: { requirements: REQUIREMENT_SELECT } });
+	const rows = await prisma.combo.findMany({ where: active === undefined ? {} : { isActive: active }, orderBy: OFFERED_ORDER, include: RECORD_INCLUDE });
 	return rows.map(toRecord);
 }
 
@@ -158,7 +179,7 @@ async function exists(id) {
 /** The combo with this id, or null. @throws {InvalidIdError} */
 function findById(id) {
 	return translating(async () => {
-		const row = await prisma.combo.findUnique({ where: { id: recordId(id) }, include: { requirements: REQUIREMENT_SELECT } });
+		const row = await prisma.combo.findUnique({ where: { id: recordId(id) }, include: RECORD_INCLUDE });
 		return row ? toRecord(row) : null;
 	});
 }
@@ -175,14 +196,16 @@ function findById(id) {
 function create(data) {
 	const attempt = () => translating(async () => {
 		const { columns: { publicCode: supplied, ...columns }, requirements } = valuesOf(data, { creating: true });
+		const storefrontIds = storefrontIdsOf(data.storefrontIds);
 		const row = await prisma.combo.create({
 			data: {
 				...columns,
 				...drawCodeAndSlug(columns.name, supplied),
 				...(data._id !== undefined && { id: recordId(data._id) }),
-				requirements: { create: requirementRows(requirements) }
+				requirements: { create: requirementRows(requirements) },
+				storefronts: { create: storefrontIds.map((storefrontId) => ({ storefrontId })) }
 			},
-			include: { requirements: REQUIREMENT_SELECT }
+			include: RECORD_INCLUDE
 		});
 		return toRecord(row);
 	});
@@ -215,7 +238,7 @@ function update(id, changes) {
 				await tx.comboCategoryRequirement.deleteMany({ where: { comboId } });
 				data.requirements = { create: requirementRows(requirements) };
 			}
-			return toRecord(await tx.combo.update({ where: { id: comboId }, data, include: { requirements: REQUIREMENT_SELECT } }));
+			return toRecord(await tx.combo.update({ where: { id: comboId }, data, include: RECORD_INCLUDE }));
 		});
 	});
 }

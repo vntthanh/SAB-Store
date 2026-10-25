@@ -221,6 +221,7 @@ function newOrder(fields) {
 		itemsRevision: number('itemsRevision', fields.itemsRevision ?? undefined, { min: 0, minMessage: invalid('itemsRevision'), integer: true, integerMessage: invalid('itemsRevision') }),
 		isDirectSale: checkBoolean(problems, 'isDirectSale', fields.isDirectSale ?? undefined),
 		createdBy: id('createdBy', fields.createdBy),
+		storefrontId: id('storefrontId', fields.storefrontId),
 		comboInfo: jsonOrNull(fields.comboInfo)
 	});
 

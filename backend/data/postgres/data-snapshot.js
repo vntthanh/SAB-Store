@@ -23,11 +23,16 @@
  * the sequence for them (the sequence only moves forward, so a restore that rolls
  * back leaves a gap and never a collision) and numbers them in file order.
  *
+ * The file carries no storefront fields: an export leaves them out, and a restore
+ * puts every product, every combo and every online order in the default storefront
+ * (the one row a restore never deletes). Direct sales never get a storefront.
+ *
  * An export from here holds uuid ids; the Mongo backend's id check accepts only
  * 24-hex, so it cannot be restored onto Mongo.
  */
 const { prisma } = require('../../lib/prisma');
 const { normalizeRecordId } = require('../ids');
+const { DEFAULT_STOREFRONT_ID } = require('../default-storefront');
 const { translating } = require('./errors');
 const { withSnapshotTransaction, withTransaction } = require('./tx');
 const { toRecord: productRecord } = require('./products');
@@ -50,6 +55,9 @@ function toWire(value) {
 	if (value === null || typeof value !== 'object') return value;
 	return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, toWire(inner)]));
 }
+
+/** The wire form has no storefront fields. */
+const withoutStorefront = ({ storefrontId: _storefrontId, ...record }) => record;
 
 /** A movement row as a wire record: `seq` stays internal, an unset column is an absent key. */
 function movementWire(row) {
@@ -74,9 +82,9 @@ function exportAll(outer) {
 			await tx.settings.findMany({ orderBy: { id: 'asc' } })
 		];
 		return {
-			products: products.map((row) => toWire(productRecord(row))),
+			products: products.map((row) => toWire(withoutStorefront(productRecord(row)))),
 			combos: combos.map((row) => toWire(comboRecord(row))),
-			orders: orders.map((row) => toWire(orderRecord(row))),
+			orders: orders.map((row) => toWire(withoutStorefront(orderRecord(row)))),
 			stockMovements: movements.map((row) => toWire(movementWire(row))),
 			settings: settings.map((row) => toWire(settingsRecord(row, { defaults: false })))
 		};
@@ -127,6 +135,7 @@ function productRow(product) {
 	return {
 		...cleaned(rest, ['createdAt', 'updatedAt', 'saleStartDate', 'saleEndDate']),
 		id: normalizeRecordId(_id),
+		storefrontId: DEFAULT_STOREFRONT_ID,
 		...(publicCode ? { publicCode, slug: slug ?? slugFor(rest.name, publicCode) } : drawCodeAndSlug(rest.name)),
 		...(dimensions && present({ dimensionLength: dimensions.length, dimensionWidth: dimensions.width, dimensionHeight: dimensions.height }))
 	};
@@ -136,6 +145,7 @@ function comboRows(combo) {
 	const { _id, __v, categoryRequirements = [], publicCode, slug, ...rest } = combo;
 	const id = normalizeRecordId(_id);
 	return {
+		link: { comboId: id, storefrontId: DEFAULT_STOREFRONT_ID },
 		combo: {
 			...cleaned(rest, ['createdAt', 'updatedAt']),
 			id,
@@ -157,7 +167,9 @@ function orderRows(order) {
 			// An empty phone is not a phone: the column's CHECK refuses '' where Mongo stored it.
 			...(phoneNumber ? { phoneNumber } : {}),
 			...(createdBy ? { createdBy: normalizeRecordId(createdBy) } : {}),
-			...(comboInfo ? { comboInfo: mapJsonIds(comboInfo) } : {})
+			...(comboInfo ? { comboInfo: mapJsonIds(comboInfo) } : {}),
+			// Always set here: nothing the file carries may name a storefront.
+			storefrontId: rest.isDirectSale === true ? null : DEFAULT_STOREFRONT_ID
 		},
 		items: items.map((item, position) => ({
 			...present({ ...item, _id: undefined, productId: undefined, comboId: undefined }),
@@ -254,6 +266,7 @@ function replaceAll(snapshot, tx) {
 		await insertAll(tx.product, products);
 		await insertAll(tx.combo, combos.map((entry) => entry.combo));
 		await insertAll(tx.comboCategoryRequirement, combos.flatMap((entry) => entry.requirements));
+		await insertAll(tx.comboStorefront, combos.map((entry) => entry.link));
 		await insertAll(tx.order, orders.map((entry) => entry.order));
 		await insertAll(tx.orderItem, orders.flatMap((entry) => entry.items));
 		await insertAll(tx.orderStatusEntry, orders.flatMap((entry) => entry.statusHistory));

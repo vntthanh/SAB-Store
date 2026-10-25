@@ -56,6 +56,13 @@
  *   for missing/NULL fields and never for `''`. Another backend substitutes defaults
  *   with a null check, never `||`. Partial `upsertConfig` and the layer that enforces
  *   length/trim rules: see data/mongo/settings.js.
+ * - Storefronts (postgres only): a product record carries `storefrontId`, a combo record
+ *   `storefrontIds` (sorted; a combo is offered in one or more storefronts) and an order
+ *   record `storefrontId` only when set (absent for a direct sale). `products.create`
+ *   defaults `storefrontId`, and `combos.create` defaults `storefrontIds`, to the default
+ *   storefront of data/default-storefront.js when the caller names none. `bootstrap.hasStorefront`
+ *   tells the seed whether the migration's default storefront is there. The mongo
+ *   rollback store has no storefronts: its records carry none of these fields.
  * - `mailSettings.findConfig` returns the SMTP row (password as its encrypted envelope) or
  *   null; `upsertConfig` applies the given fields. Mongo holds none: null on read, an Error on write.
  * - `dashboard.stats` returns the dashboard's figures; `topSelling[].productId` is a

@@ -22,4 +22,14 @@ async function hasAdmin() {
 	return (await prisma.user.findFirst({ where: { role: 'admin' }, select: { id: true } })) !== null;
 }
 
-module.exports = { databaseName, hasLoginUsers, hasAdmin };
+/**
+ * True when at least one storefront exists. The storefronts migration inserts the
+ * default one, so a migrated database always has it; a false here means the
+ * migration did not run or the table was emptied by hand, and products cannot
+ * be created until a storefront is put back.
+ */
+async function hasStorefront() {
+	return (await prisma.storefront.findFirst({ select: { id: true } })) !== null;
+}
+
+module.exports = { databaseName, hasLoginUsers, hasAdmin, hasStorefront };

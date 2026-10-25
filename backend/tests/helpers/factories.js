@@ -18,6 +18,7 @@ const { randomUUID } = require('crypto');
 const request = require('supertest');
 const mongoose = require('mongoose');
 const data = require('../../data');
+const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 const { insertRawProduct, insertRawSettings, patchProduct, patchCombo, patchOrder } = require('./db');
 const Product = require('../../models/Product');
 const Combo = require('../../models/Combo');
@@ -63,6 +64,7 @@ async function makeProduct(overrides = {}) {
 	// The repository takes the opening balance apart from the fields and, like the
 	// model, writes it to the cache without a movement: the fixture is stock-neutral.
 	const { stockQuantity, ...rest } = fields;
+	rest.storefrontId ??= DEFAULT_STOREFRONT_ID;
 	return createStamped((own) => data.products.create(own, stockQuantity), patchProduct, data.products.findById, rest);
 }
 
@@ -81,7 +83,9 @@ async function makeCombo(overrides = {}) {
 		isActive: true,
 		...overrides,
 	};
-	return POSTGRES ? createStamped(data.combos.create, patchCombo, data.combos.findById, fields) : Combo.create(fields);
+	if (!POSTGRES) return Combo.create(fields);
+	fields.storefrontIds ??= [DEFAULT_STOREFRONT_ID];
+	return createStamped(data.combos.create, patchCombo, data.combos.findById, fields);
 }
 
 /**
@@ -116,6 +120,7 @@ async function makeOrder(overrides = {}) {
 		statusHistory: [{ status: 'confirmed', updatedBy: 'system', updatedAt: new Date() }],
 		...overrides,
 	};
+	if (POSTGRES && !fields.isDirectSale) fields.storefrontId ??= DEFAULT_STOREFRONT_ID;
 	return POSTGRES ? createStamped((own) => data.orders.create(own), patchOrder, (id) => data.orders.findById(id), fields) : Order.create(fields);
 }
 

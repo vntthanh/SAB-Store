@@ -11,12 +11,15 @@
  * - `findSellable` returns oldest first and every list orders by its key and then
  *   by id, so a tie never reorders between two reads.
  * - `findSellableForPricing` returns `_id` as a lowercase uuid string.
+ * - A record carries `storefrontId` (every product belongs to one storefront).
+ *   `create` defaults it to the default storefront when the caller names none.
  *
  * `stock_quantity` is written by `create` alone (the opening balance, which the
  * caller records as an applied `opening` movement in the same transaction) and
  * otherwise only by the stock ledger.
  */
 const { prisma } = require('../../lib/prisma');
+const { DEFAULT_STOREFRONT_ID } = require('../default-storefront');
 const { toSkipTake, buildPaginationMeta } = require('@sab/shared');
 const { SALES_CHANNELS, assertSaleChannel } = require('../sale-channels');
 const { PUBLIC_CODE_PATTERN } = require('../../utils/public-code');
@@ -136,6 +139,7 @@ function columnsOf(fields, { creating }) {
 		}),
 		maxOrderQuantity: checkNumber(problems, 'maxOrderQuantity', fields.maxOrderQuantity, { integer: true, integerMessage: 'Số lượng đặt hàng tối đa phải là số nguyên' }),
 		sku: checkText(problems, 'sku', fields.sku, {}),
+		storefrontId: fields.storefrontId === undefined || fields.storefrontId === null ? undefined : recordId(fields.storefrontId, 'storefrontId'),
 		tags,
 		weight: checkNumber(problems, 'weight', fields.weight, { min: 0, minMessage: 'Trọng lượng không được âm' }),
 		featured: checkBoolean(problems, 'featured', dropNull(fields.featured)),
@@ -322,6 +326,7 @@ function create(fields, openingStock, tx) {
 		const row = await clientOf(tx).product.create({
 			data: {
 				...columns,
+				storefrontId: columns.storefrontId ?? DEFAULT_STOREFRONT_ID,
 				...drawCodeAndSlug(columns.name, supplied),
 				...(fields._id !== undefined && { id: recordId(fields._id) }),
 				stockQuantity: opening ?? undefined
