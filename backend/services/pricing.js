@@ -20,7 +20,7 @@ const { ERROR_CODES } = require('../constants/errorCodes');
  */
 class PricingError extends Error {
 	/**
-	 * @param {'EMPTY_CART'|'PRODUCT_UNAVAILABLE'|'PRODUCT_CHANNEL_MISMATCH'|'INVALID_QUANTITY'|'CART_TOO_MANY_UNITS'|'CART_TOO_COMPLEX'|'PRICE_CHANGED'|'QUANTITY_OUT_OF_RANGE'|'QUANTITY_OVER_MAX'} code
+	 * @param {'EMPTY_CART'|'PRODUCT_UNAVAILABLE'|'PRODUCT_CHANNEL_MISMATCH'|'ORDER_MIXED_STOREFRONTS'|'INVALID_QUANTITY'|'CART_TOO_MANY_UNITS'|'CART_TOO_COMPLEX'|'PRICE_CHANGED'|'QUANTITY_OUT_OF_RANGE'|'QUANTITY_OVER_MAX'} code
 	 * @param {{missingIds?: string[], productId?: string, productNames?: string[], channel?: string,
 	 *          expectedTotal?: number, totalAmount?: number, productName?: string, quantity?: number,
 	 *          min?: number, max?: number|null, reason?: 'below_min'|'above_max',
@@ -39,8 +39,8 @@ class PricingError extends Error {
 // loaded. The combo search itself stays in Node: a dynamic program as an
 // aggregation pipeline would run on the small mongod (512 MB, 0.25 GB cache)
 // and be slower than this in-memory one.
-const PRODUCT_FIELDS = ['_id', 'name', 'price', 'category', 'minOrderQuantity', 'maxOrderQuantity', 'available', 'salesChannel'];
-const COMBO_FIELDS = ['_id', 'name', 'price', 'categoryRequirements', 'priority', 'salesChannel', 'isActive'];
+const PRODUCT_FIELDS = ['_id', 'name', 'price', 'category', 'minOrderQuantity', 'maxOrderQuantity', 'available', 'salesChannel', 'storefrontId'];
+const COMBO_FIELDS = ['_id', 'name', 'price', 'categoryRequirements', 'priority', 'salesChannel', 'isActive', 'storefrontIds'];
 
 const CHANNEL_LABELS = { online: 'online', offline: 'tại quầy' };
 
@@ -56,6 +56,7 @@ const PRICING_ERROR_MESSAGES = {
 	EMPTY_CART: 'Danh sách sản phẩm không hợp lệ',
 	PRODUCT_UNAVAILABLE: 'Một hoặc nhiều sản phẩm không tồn tại hoặc không khả dụng',
 	INVALID_QUANTITY: 'Số lượng sản phẩm không hợp lệ',
+	[ERROR_CODES.ORDER_MIXED_STOREFRONTS]: 'Đơn hàng chỉ được gồm sản phẩm của một gian hàng',
 };
 
 /** JSON body every route returns for a PricingError, so clients can branch on `code`. */
@@ -153,6 +154,63 @@ function checkQuantityLimits(lines, { channel, allowOverMax }) {
 	return overMax;
 }
 
+/** The storefront a loaded product belongs to; null on a store or a legacy row that has none. */
+const storefrontOf = (product) => (product.storefrontId == null ? null : String(product.storefrontId));
+
+/**
+ * @param {'single'|'any'|{storefrontId: string|null}} scope
+ * @returns {{mode: 'single'|'any'|'scoped', storefrontId?: string}}
+ * @throws {TypeError} anything else, so a typo cannot silently widen a price scope
+ */
+function parseScope(scope) {
+	if (scope === 'single' || scope === 'any') return { mode: scope };
+	if (scope && typeof scope === 'object' && 'storefrontId' in scope) {
+		return scope.storefrontId == null ? { mode: 'any' } : { mode: 'scoped', storefrontId: String(scope.storefrontId) };
+	}
+	throw new TypeError(`Unknown pricing scope: ${JSON.stringify(scope)}`);
+}
+
+/**
+ * Split the cart into groups that are priced independently. A combo may only
+ * consume units of the storefronts it is linked to, and the optimizer takes one
+ * pool of units per category, so a cart spanning storefronts is split into
+ * groups of storefronts joined by a shared combo; inside a group a combo is kept
+ * only when it covers every storefront of the group, otherwise it could eat units
+ * it is not linked to. A partially overlapping combo therefore does not apply to
+ * a mixed counter cart: it under-discounts, it never over-discounts.
+ *
+ * @returns {Array<{lines: object[], combos: object[]}>}
+ */
+function groupByStorefront(lines, present, sellableCombos) {
+	if (present.length === 1) return [{ lines, combos: sellableCombos }];
+
+	const parent = new Map(present.map((id) => [id, id]));
+	const root = (id) => {
+		while (parent.get(id) !== id) id = parent.get(id);
+		return id;
+	};
+	const linksOf = (combo) => (combo.storefrontIds || []).map(String).filter((id) => parent.has(id));
+	for (const combo of sellableCombos) {
+		const [first, ...rest] = linksOf(combo);
+		for (const other of rest) parent.set(root(other), root(first));
+	}
+
+	const groups = new Map();
+	for (const id of present) {
+		const key = root(id);
+		if (!groups.has(key)) groups.set(key, { storefronts: new Set(), lines: [], combos: [] });
+		groups.get(key).storefronts.add(id);
+	}
+	for (const line of lines) groups.get(root(storefrontOf(line.product))).lines.push(line);
+	for (const combo of sellableCombos) {
+		const linked = new Set(linksOf(combo));
+		if (linked.size === 0) continue;
+		const group = groups.get(root([...linked][0]));
+		if ([...group.storefronts].every((id) => linked.has(id))) group.combos.push(combo);
+	}
+	return [...groups.values()];
+}
+
 /**
  * Compute an order's totals from the database, ignoring any client-supplied price.
  *
@@ -184,11 +242,19 @@ function checkQuantityLimits(lines, { channel, allowOverMax }) {
  *        min/max order quantity. Order routes set it; the read-only previews
  *        do not, so a counter cart over a maximum still shows its total and the
  *        cashier gets to the confirmation instead of a blank price.
+ * @param {'single'|'any'|{storefrontId: string|null}} [opts.scope='single']
+ *        Which storefronts the cart may span. 'single' (the default, so an online
+ *        caller that forgets it fails closed) derives the storefront from the
+ *        products and refuses a mix with ORDER_MIXED_STOREFRONTS. 'any' is for
+ *        the counter: a mix is priced, each combo counting only the lines of its
+ *        own storefronts. `{storefrontId}` prices inside that storefront and
+ *        refuses a product of another; a null id behaves as 'any'.
  * @param {boolean} [opts.allowOverMax=false] Counter sales only: the cashier
  *        confirmed selling above a maximum. Ignored on the online channel.
  * @param {number} [opts.stateBudget] Combo search limit; tests lower it to
  *        reach CART_TOO_COMPLEX cheaply. Defaults to the optimizer's own.
  * @returns {Promise<{
+ *   storefrontId: string|null,
  *   originalTotal: number,
  *   totalAmount: number,
  *   savings: number,
@@ -223,7 +289,7 @@ function checkQuantityLimits(lines, { channel, allowOverMax }) {
  *        confirmation; empty otherwise.
  *        `products` is keyed by `productId.toString()` so callers can reuse the
  *        already-loaded objects instead of querying again.
- * @throws {TypeError} `opts.channel` is missing or not 'online'/'offline'.
+ * @throws {TypeError} `opts.channel` is missing or not 'online'/'offline', or `opts.scope` is unknown.
  * @throws {PricingError} An empty cart throws EMPTY_CART; it never returns a
  *        zero total, which would otherwise be indistinguishable from a free order.
  */
@@ -233,6 +299,7 @@ async function computeOrderPricing(items, opts = {}) {
 	// Fail before any query: this is the check that makes a forgotten channel
 	// impossible to ship, and it must not depend on the cart being valid.
 	products.assertSaleChannel(channel);
+	const scope = parseScope(opts.scope === undefined ? 'single' : opts.scope);
 
 	if (!Array.isArray(items) || items.length === 0) {
 		throw new PricingError('EMPTY_CART');
@@ -270,88 +337,101 @@ async function computeOrderPricing(items, opts = {}) {
 	// Query 1/2 — products, filtered by the single sellable-on-channel rule.
 	const productMap = await loadSellableProducts(ids, channel, tx);
 	const lines = ids.map((id) => ({ id, product: productMap.get(id), quantity: qtyByProductId.get(id) }));
+	const present = [...new Set(lines.map((line) => storefrontOf(line.product)))];
+	const outsideScope = scope.mode === 'scoped' ? present.some((id) => id !== scope.storefrontId) : scope.mode === 'single' && present.length > 1;
+	if (outsideScope) {
+		// No product names: the caller may not be allowed to see one of the storefronts, and a name here would show them.
+		throw new PricingError(ERROR_CODES.ORDER_MIXED_STOREFRONTS);
+	}
 	const overMaxLines = opts.enforceQuantityLimits
 		? checkQuantityLimits(lines, { channel, allowOverMax: opts.allowOverMax === true })
 		: [];
 
-	// Query 2/2 — combos that apply on this channel.
-	const sellableCombos = await combos.findSellableForPricing(channel, COMBO_FIELDS, tx);
+	// Query 2/2 — combos that apply on this channel. One storefront in the cart:
+	// only its combos. A mixed counter cart loads them all and splits them below.
+	const sellableCombos = await combos.findSellableForPricing(
+		channel, COMBO_FIELDS, tx, present.length === 1 && present[0] !== null ? { storefrontId: present[0] } : {}
+	);
 
-	// Units of one category, dearest first; equal prices fall back to product id.
-	const unitsByCategory = new Map();
-	for (const line of lines) {
-		const { category, price } = line.product;
-		if (!unitsByCategory.has(category)) unitsByCategory.set(category, []);
-		for (let i = 0; i < line.quantity; i++) unitsByCategory.get(category).push({ productId: line.id, price });
-	}
-	for (const units of unitsByCategory.values()) {
-		units.sort((a, b) => b.price - a.price || (a.productId < b.productId ? -1 : a.productId > b.productId ? 1 : 0));
-	}
-
-	let solved;
-	try {
-		solved = solve(
-			Object.fromEntries([...unitsByCategory].map(([category, units]) => [category, units.map((unit) => unit.price)])),
-			sellableCombos.map((combo) => ({
-				id: combo._id.toString(),
-				price: combo.price,
-				priority: combo.priority,
-				requirements: combo.categoryRequirements.map((requirement) => ({
-					category: requirement.category,
-					quantity: requirement.quantity,
-				})),
-			})),
-			opts.stateBudget === undefined ? undefined : { stateBudget: opts.stateBudget }
-		);
-	} catch (error) {
-		if (error instanceof StateBudgetExceededError) throw new PricingError(ERROR_CODES.CART_TOO_COMPLEX);
-		throw error;
-	}
-
-	// Hand the dearest units of each category to the applications, in the
-	// optimizer's combo order, so the same cart always yields the same lines.
 	const comboById = new Map(sellableCombos.map((combo) => [combo._id.toString(), combo]));
-	const nextUnit = new Map();
 	const inComboByProduct = new Map();
 	const orderItems = [];
 	const comboSummaries = [];
 	let comboRetailValue = 0;
 	let comboCharged = 0;
+	let optimizerSavings = 0;
 
-	for (const { id: comboId, count } of solved.applications) {
-		const combo = comboById.get(comboId);
-		const taken = new Map();
-		for (const [category, quantity] of mergeRequirements(combo.categoryRequirements)) {
-			const units = unitsByCategory.get(category);
-			const start = nextUnit.get(category) || 0;
-			const end = start + quantity * count;
-			for (let i = start; i < end; i++) {
-				taken.set(units[i].productId, (taken.get(units[i].productId) || 0) + 1);
+	for (const group of groupByStorefront(lines, present, sellableCombos)) {
+		// Units of one category, dearest first; equal prices fall back to product id.
+		const unitsByCategory = new Map();
+		for (const line of group.lines) {
+			const { category, price } = line.product;
+			if (!unitsByCategory.has(category)) unitsByCategory.set(category, []);
+			for (let i = 0; i < line.quantity; i++) unitsByCategory.get(category).push({ productId: line.id, price });
+		}
+		for (const units of unitsByCategory.values()) {
+			units.sort((a, b) => b.price - a.price || (a.productId < b.productId ? -1 : a.productId > b.productId ? 1 : 0));
+		}
+
+		let solved;
+		try {
+			solved = solve(
+				Object.fromEntries([...unitsByCategory].map(([category, units]) => [category, units.map((unit) => unit.price)])),
+				group.combos.map((combo) => ({
+					id: combo._id.toString(),
+					price: combo.price,
+					priority: combo.priority,
+					requirements: combo.categoryRequirements.map((requirement) => ({
+						category: requirement.category,
+						quantity: requirement.quantity,
+					})),
+				})),
+				opts.stateBudget === undefined ? undefined : { stateBudget: opts.stateBudget }
+			);
+		} catch (error) {
+			if (error instanceof StateBudgetExceededError) throw new PricingError(ERROR_CODES.CART_TOO_COMPLEX);
+			throw error;
+		}
+		optimizerSavings += solved.savings;
+
+		// Hand the dearest units of each category to the applications, in the
+		// optimizer's combo order, so the same cart always yields the same lines.
+		const nextUnit = new Map();
+		for (const { id: comboId, count } of solved.applications) {
+			const combo = comboById.get(comboId);
+			const taken = new Map();
+			for (const [category, quantity] of mergeRequirements(combo.categoryRequirements)) {
+				const units = unitsByCategory.get(category);
+				const start = nextUnit.get(category) || 0;
+				const end = start + quantity * count;
+				for (let i = start; i < end; i++) {
+					taken.set(units[i].productId, (taken.get(units[i].productId) || 0) + 1);
+				}
+				nextUnit.set(category, end);
 			}
-			nextUnit.set(category, end);
-		}
 
-		let retailValue = 0;
-		for (const productId of [...taken.keys()].sort()) {
-			const product = productMap.get(productId);
-			const quantity = taken.get(productId);
-			retailValue += product.price * quantity;
-			inComboByProduct.set(productId, (inComboByProduct.get(productId) || 0) + quantity);
-			orderItems.push({
-				productId: product._id,
-				productName: product.name,
-				price: product.price,
-				quantity,
-				fromCombo: true,
-				comboId: combo._id,
-				comboName: combo.name,
-			});
-		}
+			let retailValue = 0;
+			for (const productId of [...taken.keys()].sort()) {
+				const product = productMap.get(productId);
+				const quantity = taken.get(productId);
+				retailValue += product.price * quantity;
+				inComboByProduct.set(productId, (inComboByProduct.get(productId) || 0) + quantity);
+				orderItems.push({
+					productId: product._id,
+					productName: product.name,
+					price: product.price,
+					quantity,
+					fromCombo: true,
+					comboId: combo._id,
+					comboName: combo.name,
+				});
+			}
 
-		const charged = count * combo.price;
-		comboRetailValue += retailValue;
-		comboCharged += charged;
-		comboSummaries.push({ comboId: combo._id, comboName: combo.name, applications: count, savings: retailValue - charged });
+			const charged = count * combo.price;
+			comboRetailValue += retailValue;
+			comboCharged += charged;
+			comboSummaries.push({ comboId: combo._id, comboName: combo.name, applications: count, savings: retailValue - charged });
+		}
 	}
 
 	let retailTotal = 0;
@@ -376,8 +456,8 @@ async function computeOrderPricing(items, opts = {}) {
 
 	// Unreachable while the optimizer and the unit allocation agree; it exists
 	// so a drift between them fails loudly instead of mis-charging.
-	if (savings !== solved.savings) {
-		throw new Error(`pricing saving ${savings} differs from optimizer saving ${solved.savings}`);
+	if (savings !== optimizerSavings) {
+		throw new Error(`pricing saving ${savings} differs from optimizer saving ${optimizerSavings}`);
 	}
 
 	const comboInfo = comboSummaries.length === 0 ? null : {
@@ -387,7 +467,10 @@ async function computeOrderPricing(items, opts = {}) {
 		combos: comboSummaries,
 	};
 
-	return { originalTotal, totalAmount, savings, orderItems, comboInfo, overMaxLines, products: productMap };
+	return {
+		storefrontId: present.length === 1 ? present[0] : null,
+		originalTotal, totalAmount, savings, orderItems, comboInfo, overMaxLines, products: productMap
+	};
 }
 
 /**

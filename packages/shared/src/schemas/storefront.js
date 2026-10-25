@@ -59,6 +59,11 @@ export const storefrontReorder = z.object({ ids: storefrontIdList(100) });
 // record id; a combo spans several and uses storefrontIdList.
 export const productStorefrontId = recordId('Gian hàng không hợp lệ');
 
+// Only the storefront link of a product or combo body: the rest of those bodies is
+// still checked by their handlers. Absent is valid (create defaults it, update keeps it).
+export const productStorefrontLink = z.object({ storefrontId: productStorefrontId.optional() });
+export const comboStorefrontLinks = z.object({ storefrontIds: storefrontIdList(100).optional() });
+
 // Lowercase labels of letters, digits and inner hyphens, at least two labels:
 // "edu" alone would match every address ending in ".edu" only by accident.
 const DOMAIN_PATTERN = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i;

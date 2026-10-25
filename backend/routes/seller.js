@@ -374,6 +374,8 @@ router.post('/orders/direct', validateDirectOrder, gated(async (req, res) => {
 					const pricing = await computeOrderPricing(items, {
 						channel: 'offline',
 						session: tx,
+						// The seller decides what to ring up: a cart may span storefronts.
+						scope: 'any',
 						enforceQuantityLimits: true,
 						allowOverMax: req.body.allowOverMax === true
 					});
@@ -395,6 +397,7 @@ router.post('/orders/direct', validateDirectOrder, gated(async (req, res) => {
 						totalAmount: pricing.totalAmount,
 						status: 'confirmed',
 						isDirectSale: true,
+						storefrontId: pricing.storefrontId,
 						stockDeducted: true,
 						createdBy: req.seller?.id || null,
 						lastUpdatedBy: username,

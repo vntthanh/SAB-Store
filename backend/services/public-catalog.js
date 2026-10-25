@@ -1,12 +1,15 @@
 /**
  * The one place that decides what the public may see by code, and in what shape.
  *
- * "Public" means sellable online (`findSellable('online')`), the same rule the
- * storefront list uses. Every DTO is an explicit allow-list: online customers
+ * "Public" means sellable online (`findSellable('online')`) in a storefront open to
+ * everyone; the `view*` functions widen that to what one viewer may see. Every DTO is an explicit allow-list: online customers
  * never see stock, so no stock field (nor the `inStock` virtual) is ever added.
  */
 const crypto = require('crypto');
-const { products, combos } = require('../data');
+const { products, combos, storefronts } = require('../data');
+const { DEFAULT_STOREFRONT_ID } = require('../data/default-storefront');
+const { ERROR_CODES } = require('../constants/errorCodes');
+const { StorefrontAccessError, assertCanView, canView } = require('./storefront-access');
 const { mergeRequirements } = require('./combo-optimizer');
 const { normalizePublicCode } = require('../utils/public-code');
 
@@ -21,9 +24,10 @@ const pathSegment = (thing) => thing.slug || thing.publicCode.toLowerCase();
 const productPath = (product) => `/p/${product.publicCode}/${pathSegment(product)}`;
 const comboPath = (combo) => `/c/${combo.publicCode}/${pathSegment(combo)}`;
 
-// Exactly what toPublicProduct reads: stock and other internals are never loaded.
+// Exactly what toPublicProduct reads, plus the storefront used to filter by access (never
+// output): stock and other internals are never loaded.
 const PUBLIC_PRODUCT_FIELDS = [
-	'publicCode', 'slug', 'name', 'description', 'price', 'imageUrl', 'category', 'available', 'minOrderQuantity', 'maxOrderQuantity'
+	'storefrontId', 'publicCode', 'slug', 'name', 'description', 'price', 'imageUrl', 'category', 'available', 'minOrderQuantity', 'maxOrderQuantity'
 ];
 
 function toPublicProduct(doc) {
@@ -71,24 +75,122 @@ function toPublicCombo(doc, eligible) {
 	};
 }
 
-async function findPublicProductByCode(code) {
+const storefrontIdOf = (product) => product.storefrontId || DEFAULT_STOREFRONT_ID;
+// The rollback store keeps no links: its combos sell from the one synthetic storefront.
+const linkedIdsOf = (combo) => combo.storefrontIds || [DEFAULT_STOREFRONT_ID];
+
+// Open to everyone, signed in or not.
+const isOpen = (storefront) => Boolean(storefront && storefront.isActive && storefront.visibility === 'PUBLIC');
+
+/** Ids of the active PUBLIC storefronts: the only ones an anonymous request may read. */
+async function openStorefrontIds() {
+	return new Set((await storefronts.listActive()).filter(isOpen).map((storefront) => storefront._id));
+}
+
+/** Only the products that belong to an open storefront. */
+async function onlyOpenProducts(records) {
+	const open = await openStorefrontIds();
+	return records.filter((product) => open.has(storefrontIdOf(product)));
+}
+
+/** A combo as listed to customers; the storefront links stay server-side. */
+function toCatalogCombo(combo) {
+	const { storefrontIds, ...rest } = combo;
+	return rest;
+}
+
+/** Only the combos linked to at least one open storefront. */
+async function onlyOpenCombos(records) {
+	const open = await openStorefrontIds();
+	return records.filter((combo) => linkedIdsOf(combo).some((id) => open.has(id))).map(toCatalogCombo);
+}
+
+// Products a combo can take are those of the storefronts it is linked to and the
+// viewer may see: a same-category product elsewhere must not leak through its list.
+async function toPublicComboIn(combo, visibleStorefrontIds) {
+	const categories = [...new Set(combo.categoryRequirements.map((r) => r.category))];
+	const eligible = await products.listSellableInCategories(CHANNEL, categories, PUBLIC_PRODUCT_FIELDS);
+	return toPublicCombo(combo, eligible.filter((product) => visibleStorefrontIds.has(storefrontIdOf(product))));
+}
+
+async function findSellableProductByCode(code) {
 	const publicCode = normalizePublicCode(code);
 	if (!publicCode) return null;
 	const [product] = await products.findSellable(CHANNEL, { publicCode });
-	return product ? toPublicProduct(product) : null;
+	return product || null;
 }
 
 // A combo that is on sale online but has no online product in a required
 // category is still public: it shows its price with empty product lists.
-async function findPublicComboByCode(code) {
+async function findSellableComboByCode(code) {
 	const publicCode = normalizePublicCode(code);
 	if (!publicCode) return null;
 	const [combo] = await combos.findSellable(CHANNEL, { publicCode });
-	if (!combo) return null;
+	return combo || null;
+}
 
-	const categories = [...new Set(combo.categoryRequirements.map((r) => r.category))];
-	const eligible = await products.listSellableInCategories(CHANNEL, categories, PUBLIC_PRODUCT_FIELDS);
-	return toPublicCombo(combo, eligible);
+/** The product when its storefront is open to everyone, else null (share previews, caches). */
+async function findPublicProductByCode(code) {
+	const product = await findSellableProductByCode(code);
+	if (!product || !(await openStorefrontIds()).has(storefrontIdOf(product))) return null;
+	return toPublicProduct(product);
+}
+
+/** The combo when at least one of its storefronts is open to everyone, else null. */
+async function findPublicComboByCode(code) {
+	const combo = await findSellableComboByCode(code);
+	if (!combo) return null;
+	const open = await openStorefrontIds();
+	const visible = new Set(linkedIdsOf(combo).filter((id) => open.has(id)));
+	return visible.size === 0 ? null : toPublicComboIn(combo, visible);
+}
+
+/**
+ * The product as `viewer` may see it.
+ *
+ * @returns {Promise<{data: object, cacheable: boolean}>} `cacheable`: the same body for every visitor
+ * @throws {StorefrontAccessError}
+ */
+async function viewProduct(product, viewer) {
+	const storefront = await storefronts.findById(storefrontIdOf(product));
+	await assertCanView(storefront, viewer);
+	return { data: toPublicProduct(product), cacheable: isOpen(storefront) };
+}
+
+/**
+ * The combo as `viewer` may see it: any one viewable storefront is enough, and the
+ * product lists only draw on the viewable ones.
+ *
+ * @returns {Promise<{data: object, cacheable: boolean}>} `cacheable`: the same body for every visitor
+ * @throws {StorefrontAccessError}
+ */
+async function viewCombo(combo, viewer) {
+	const linked = (await Promise.all(linkedIdsOf(combo).map((id) => storefronts.findById(id)))).filter(Boolean);
+	const visible = [];
+	for (const storefront of linked) {
+		if (await canView(storefront, viewer)) visible.push(storefront);
+	}
+	if (visible.length === 0) {
+		// Explains the refusal with the first live storefront (sign in, or not admitted).
+		await assertCanView(linked.find((storefront) => storefront.isActive) || null, viewer);
+		throw new StorefrontAccessError(ERROR_CODES.STOREFRONT_NOT_FOUND);
+	}
+	return {
+		data: await toPublicComboIn(combo, new Set(visible.map((storefront) => storefront._id))),
+		cacheable: linked.every(isOpen)
+	};
+}
+
+/** @returns {Promise<{data: object, cacheable: boolean}|null>} null when nothing sells under that code @throws {StorefrontAccessError} */
+async function findViewableProductByCode(code, viewer) {
+	const product = await findSellableProductByCode(code);
+	return product ? viewProduct(product, viewer) : null;
+}
+
+/** @returns {Promise<{data: object, cacheable: boolean}|null>} null when nothing sells under that code @throws {StorefrontAccessError} */
+async function findViewableComboByCode(code, viewer) {
+	const combo = await findSellableComboByCode(code);
+	return combo ? viewCombo(combo, viewer) : null;
 }
 
 /** The images that represent a combo in a share preview: sorted so the pick is stable. */
@@ -111,6 +213,12 @@ function ogVersion(publicThing) {
 module.exports = {
 	findPublicProductByCode,
 	findPublicComboByCode,
+	findViewableProductByCode,
+	findViewableComboByCode,
+	viewProduct,
+	onlyOpenProducts,
+	onlyOpenCombos,
+	toCatalogCombo,
 	toPublicProduct,
 	comboImageUrls,
 	ogVersion

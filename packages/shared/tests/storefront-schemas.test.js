@@ -6,6 +6,8 @@ import {
 	storefrontUpdate,
 	storefrontReorder,
 	storefrontIdList,
+	productStorefrontLink,
+	comboStorefrontLinks,
 	accessRuleCreate,
 	emailListCreate,
 	emailListUpdate,
@@ -68,6 +70,23 @@ describe('storefrontReorder / storefrontIdList', () => {
 		const many = Array.from({ length: 101 }, (_, i) => `0195f3a0-7b2c-7d4e-8a1b-${String(i).padStart(12, '0')}`);
 		expect(ok(storefrontReorder, { ids: many })).toBe(false);
 		expect(ok(storefrontIdList(200), many)).toBe(true);
+	});
+});
+
+describe('productStorefrontLink / comboStorefrontLinks', () => {
+	it('accept a body that leaves the link out, whatever else it carries', () => {
+		expect(ok(productStorefrontLink, { name: 'x' })).toBe(true);
+		expect(ok(comboStorefrontLinks, {})).toBe(true);
+	});
+	it('accept record ids', () => {
+		expect(ok(productStorefrontLink, { storefrontId: ID_A })).toBe(true);
+		expect(ok(comboStorefrontLinks, { storefrontIds: [ID_A, ID_B] })).toBe(true);
+	});
+	it.each([null, '', 'nope', 7, {}])('productStorefrontLink rejects storefrontId %j', (storefrontId) => {
+		expect(ok(productStorefrontLink, { storefrontId })).toBe(false);
+	});
+	it.each([null, [], 'nope', ['nope'], [ID_A, ID_A.toUpperCase()]])('comboStorefrontLinks rejects storefrontIds %j', (storefrontIds) => {
+		expect(ok(comboStorefrontLinks, { storefrontIds })).toBe(false);
 	});
 });
 

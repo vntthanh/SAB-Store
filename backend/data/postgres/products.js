@@ -82,6 +82,15 @@ function storefrontWhere(storefrontId) {
 	return storefrontId === undefined || storefrontId === null ? {} : { storefrontId: recordId(storefrontId, 'storefrontId') };
 }
 
+/** The admin list's storefront filter; an id that cannot name a storefront matches nothing, as on the order list. */
+function listStorefrontWhere(storefrontId) {
+	try {
+		return storefrontWhere(storefrontId);
+	} catch {
+		return { id: { in: [] } };
+	}
+}
+
 /** "Contains `search`" over name or description, as a filter. No search, no filter. */
 function searchWhere(search) {
 	const text = asString(search, SEARCH_MAX_LENGTH);
@@ -192,7 +201,7 @@ function findSellable(channel, { publicCode, id, storefrontId } = {}) {
  * @throws {TypeError} channel missing or unknown
  */
 async function listSellable(channel, { category, search, forCustomers = false, storefrontId } = {}) {
-	const where = { ...sellableWhere(channel), ...storefrontWhere(storefrontId), ...(category && { category }), ...searchWhere(search) };
+	const where = { ...sellableWhere(channel), ...listStorefrontWhere(storefrontId), ...(category && { category }), ...searchWhere(search) };
 	const rows = await prisma.product.findMany({
 		where,
 		...(forCustomers && { omit: CUSTOMER_HIDDEN }),
@@ -217,6 +226,26 @@ function findSellableForPricing(channel, ids, fields, tx, { storefrontId } = {})
 		const where = { id: { in: ids.map((id) => recordId(id)) }, ...sellableWhere(channel), ...storefrontWhere(storefrontId) };
 		const rows = await clientOf(tx).product.findMany({ where, select: selectOf(fields) });
 		return rows.map(toRecord);
+	});
+}
+
+/**
+ * The distinct storefronts of the existing products with these ids, whatever their
+ * channel or availability, so an access check can run before any price or product
+ * name is worked out. Ids that match no product add nothing.
+ *
+ * @param {string[]} ids record ids, uuid or legacy hex
+ * @param {object|null} [tx]
+ * @returns {Promise<Array<string|null>>} lowercase storefront ids (null for a row that has none)
+ */
+function storefrontIdsOf(ids, tx) {
+	return translating(async () => {
+		const rows = await clientOf(tx).product.findMany({
+			where: { id: { in: ids.map((id) => recordId(id)) } },
+			select: { storefrontId: true },
+			distinct: ['storefrontId']
+		});
+		return rows.map((row) => row.storefrontId);
 	});
 }
 
@@ -252,13 +281,13 @@ async function listCategories() {
  * `total` and `data` are read in parallel, not from one snapshot, so a concurrent
  * write can make them disagree by a row. Accepted: the list is advisory.
  *
- * @param {{page: number, limit: number, search?: string, category?: string, available?: boolean, salesChannel?: string}} query
+ * @param {{page: number, limit: number, search?: string, category?: string, available?: boolean, salesChannel?: string, storefrontId?: string}} query
  * @returns {Promise<{data: object[], meta: {page: number, limit: number, total: number, totalPages: number}}>}
  */
-async function listPage({ page, limit, search, category, available, salesChannel }) {
+async function listPage({ page, limit, search, category, available, salesChannel, storefrontId }) {
 	// A channel the enum does not have matches nothing, as it does on Mongo.
 	const channel = !salesChannel ? {} : SALES_CHANNELS.includes(salesChannel) ? { salesChannel } : { id: { in: [] } };
-	const where = { ...searchWhere(search), ...channel, ...(category && { category }), ...(available !== undefined && { available }) };
+	const where = { ...searchWhere(search), ...channel, ...listStorefrontWhere(storefrontId), ...(category && { category }), ...(available !== undefined && { available }) };
 
 	const { skip, take } = toSkipTake(page, limit);
 	const [rows, total] = await Promise.all([
@@ -399,6 +428,7 @@ module.exports = {
 	update,
 	remove,
 	findSellableForPricing,
+	storefrontIdsOf,
 	findAvailableNames,
 	listSellableInCategories
 };

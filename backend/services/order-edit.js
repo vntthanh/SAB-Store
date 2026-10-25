@@ -60,6 +60,9 @@ function editOrderItems({ orderId, items, expectedRevision, reason, actor }) {
 		const pricing = await computeOrderPricing(items, {
 			channel: existing.isDirectSale ? 'offline' : 'online',
 			session: tx,
+			// An order with a storefront is re-priced inside it; a legacy or mixed
+			// counter order (null) keeps the unrestricted scope it was sold under.
+			scope: { storefrontId: existing.storefrontId ?? null },
 			// The admin is amending an order that already exists, not selling to a customer.
 			enforceQuantityLimits: false
 		});

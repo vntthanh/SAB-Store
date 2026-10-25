@@ -51,6 +51,8 @@ export {
 	storefrontIdList,
 	storefrontReorder,
 	productStorefrontId,
+	productStorefrontLink,
+	comboStorefrontLinks,
 	accessRuleCreate,
 	emailListCreate,
 	emailListUpdate,

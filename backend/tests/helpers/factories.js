@@ -159,9 +159,9 @@ const TEST_PASSWORD = 'factory-test-password-1';
  * accounts come from the server-side admin API (init-database seeding uses the
  * same call) with the role set at creation.
  */
-async function createAccount({ role, prefix = 'user', password = TEST_PASSWORD } = {}) {
+async function createAccount({ role, prefix = 'user', password = TEST_PASSWORD, domain = 'test.local' } = {}) {
 	const n = nextSequence();
-	const email = `${prefix}-${n}-${randomUUID()}@test.local`;
+	const email = `${prefix}-${n}-${randomUUID()}@${domain}`;
 	const username = `${prefix}_${n}_${randomUUID().slice(0, 8)}`;
 	// Loaded on use: pulling lib/auth in at import time would load the app's
 	// dependency graph before a test that spies on a module the routes destructure.

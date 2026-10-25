@@ -221,15 +221,20 @@ const COMBO_DEFAULTS = () => ({ name: `Test Combo ${uuidv7()}`, price: 0, public
 
 /**
  * Inserts a combo exactly as given plus defaults for the columns that must exist,
- * and one requirements row per `categoryRequirements` entry.
+ * one requirements row per `categoryRequirements` entry and one storefront link per
+ * `storefrontIds` entry (the default storefront when none is named: a combo with no
+ * link is offered nowhere).
  */
-async function insertRawCombo({ categoryRequirements = [], ...fields }) {
+async function insertRawCombo({ categoryRequirements = [], storefrontIds = [DEFAULT_STOREFRONT_ID], ...fields }) {
 	const row = { id: uuidv7(), ...COMBO_DEFAULTS(), ...fields };
 	const columns = Object.keys(row).map(columnOf);
 	await db().query(
 		`INSERT INTO combos (${columns.map(quote).join(', ')}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')})`,
 		Object.values(row)
 	);
+	for (const storefrontId of storefrontIds) {
+		await db().query('INSERT INTO combo_storefronts (id, combo_id, storefront_id) VALUES ($1::uuid, $2::uuid, $3::uuid)', [uuidv7(), row.id, storefrontId]);
+	}
 	// Written last position first, so a read without ORDER BY position comes back in the wrong order.
 	for (const [position, requirement] of [...categoryRequirements.entries()].reverse()) {
 		await db().query(

@@ -1,5 +1,6 @@
 const express = require('express');
 const { settings: settingsRepo } = require('../data');
+const mailer = require('../services/mailer');
 const { DEFAULT_STORE_TITLE, DEFAULT_NOTICES, NOTICE_FIELDS, DEFAULT_CONTACT, CONTACT_FIELDS } = require('../constants/settings');
 // Free-text storefront fields: a missing one falls back to its default, an
 // admin-saved empty string means "hide it".
@@ -15,7 +16,11 @@ const router = express.Router();
  */
 router.get('/', async (req, res) => {
 	try {
-		const settings = await settingsRepo.findStorefront();
+		const [settings, otpAvailable] = await Promise.all([settingsRepo.findStorefront(), mailer.isMailAvailable().catch((error) => {
+			// Settings still render when the mail row is unreadable; sign-in by code is simply off.
+			console.error('Error reading mail availability:', error);
+			return false;
+		})]);
 
 		res.json({
 			success: true,
@@ -27,7 +32,11 @@ router.get('/', async (req, res) => {
 				...Object.fromEntries(TEXT_FIELDS.map((field) => [
 					field,
 					settings?.[field] ?? TEXT_DEFAULTS[field]
-				]))
+				])),
+				// Public by design (the One Tap button needs it); not a secret.
+				googleClientId: process.env.GOOGLE_CLIENT_ID || null,
+				// Whether the sign-in-by-code form can work; the SMTP details stay private.
+				otpAvailable: otpAvailable === true
 			}
 		});
 	} catch (error) {
