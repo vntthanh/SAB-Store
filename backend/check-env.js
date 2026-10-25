@@ -29,7 +29,6 @@ const OPTIONAL = [
 	'NODE_ENV',
 	'PORT',
 	'BASE_URL',
-	'APPSCRIPT_URL',
 	'INIT_EMPTY_DATABASE',
 	// Read only to create the first admin in an empty database.
 	'ADMIN_EMAIL',

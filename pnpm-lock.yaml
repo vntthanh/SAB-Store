@@ -31,9 +31,6 @@ importers:
       '@sab/shared':
         specifier: workspace:*
         version: link:../packages/shared
-      axios:
-        specifier: ^1.20.0
-        version: 1.20.0
       better-auth:
         specifier: 1.7.7
         version: 1.7.7(@prisma/client@7.10.0)(mongodb@6.21.0)(mysql2@3.15.3)(pg@8.23.1)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -76,6 +73,9 @@ importers:
       multer:
         specifier: 1.4.5-lts.2
         version: 1.4.5-lts.2
+      mustache:
+        specifier: ^4.2.0
+        version: 4.2.0
       nodemailer:
         specifier: ^10.1.0
         version: 10.1.0
@@ -3233,6 +3233,10 @@ packages:
     resolution: {integrity: sha512-VzGiVigcG9zUAoCNU+xShztrlr1auZOlurXynNvO9GiWD1/mTBbUljOKY+qMeazBqXgRnjzeEgJI/wyjJUHg9A==}
     engines: {node: '>= 6.0.0'}
     deprecated: Multer 1.x is impacted by a number of vulnerabilities, which have been patched in 2.x. You should upgrade to the latest 2.x version.
+
+  mustache@4.2.0:
+    resolution: {integrity: sha512-71ippSywq5Yb7/tVYyGbkBggbU8H3u5Rz56fH60jGFgr8uHwxs+aSKeqmluIVzM0m0kB7xQjKS6qPfd0b2ZoqQ==}
+    hasBin: true
 
   mysql2@3.15.3:
     resolution: {integrity: sha512-FBrGau0IXmuqg4haEZRBfHNWB5mUARw6hNwPDXXGg0XzVJ50mr/9hb267lvpVMnhZ1FON3qNd4Xfcez1rbFwSg==}
@@ -7469,6 +7473,8 @@ snapshots:
       object-assign: 4.1.1
       type-is: 1.6.18
       xtend: 4.0.2
+
+  mustache@4.2.0: {}
 
   mysql2@3.15.3:
     dependencies:

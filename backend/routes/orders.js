@@ -1,7 +1,6 @@
 const express = require('express');
 const { validateOrder, trimText } = require('../middleware/validation');
 const { generateOrderCode } = require('../utils/helpers');
-const { sendOrderToAppScript } = require('../utils/appscript');
 const { sendOrderMail } = require('../services/mailer');
 const { generateOrderPaymentQR, formatOrderPaymentDescription } = require('../utils/paymentHelper');
 const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError } = require('../services/pricing');
@@ -123,30 +122,16 @@ router.post('/', validateOrder, gated(async (req, res) => {
 			console.error('❌ Failed to generate QR URL:', qrError.message);
 		}
 
-		// Log dữ liệu gửi App Script
-		const appscriptData = {
-			orderCode: order.orderCode,
-			studentId,
-			fullName,
-			email,
-			phoneNumber,
-			additionalNote,
-			items: orderItems,
-			totalAmount
-		};
-		// Gửi lên App Script sau, không chờ kết quả
-		setImmediate(() => {
-			sendOrderToAppScript(appscriptData).catch(err => {
-				console.error('Gửi đơn hàng lên App Script thất bại:', err.message);
-			});
-		});
-
 		// Confirmation mail to the customer; the mailer skips it unless an admin turned it on.
 		setImmediate(() => {
 			sendOrderMail('order_created', {
 				orderCode: order.orderCode,
+				studentId,
 				fullName,
 				email,
+				phoneNumber,
+				additionalNote,
+				createdAt: order.createdAt,
 				items: orderItems,
 				totalAmount,
 				paymentDescription

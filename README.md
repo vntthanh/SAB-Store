@@ -140,7 +140,7 @@ Không biến nào ở trên từng đúng với code hiện tại — `BETTER_A
 
 Danh sách biến thật, có chú thích tại chỗ giải thích từng biến: [`.env.example`](.env.example) (đọc bởi `docker compose`, ở **root** repo) và [`backend/.env.example`](backend/.env.example) (chỉ dùng khi chạy backend trực tiếp, không qua Docker). Chi tiết + lý do gộp/không gộp: [`docs/ENV_SETUP.md`](docs/ENV_SETUP.md).
 
-Tóm tắt các biến bắt buộc (production, thiếu 1 biến là container **không boot**): `PUBLIC_URL`, `JWT_SECRET`, `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB` (PostgreSQL; `DATABASE_URL` ghép từ chúng cho release và backend), `REDIS_PASSWORD`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD` (MongoDB: Coolify chỉ giữ nó với dữ liệu lúc cutover để rollback; `MONGODB_URI` chỉ `prod.compose.yml` còn cần, vì backend ở đó vẫn chạy trên MongoDB), `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` (tên `MINIO_*` giữ nguyên vì backend dùng SDK `minio`; giá trị là credential của SeaweedFS, ≥ 16 ký tự, không phải `minioadmin`), `APPSCRIPT_URL`. `ADMIN_EMAIL`/`ADMIN_USERNAME`/`ADMIN_PASSWORD` chỉ đọc để tạo admin đầu tiên khi database chưa có admin (cần đủ cả ba; database chưa có user nào thì thiếu chúng là backend không boot). `CORS_ORIGIN`/`BASE_URL` không set riêng — cả hai nội suy từ `PUBLIC_URL`. Coolify bơm **mọi** biến của app vào **mọi** container (kể cả frontend, redis), nên quyền shell vào bất kỳ container nào cũng đọc được mọi secret — xem `docs/ENV_SETUP.md`.
+Tóm tắt các biến bắt buộc (production, thiếu 1 biến là container **không boot**): `PUBLIC_URL`, `JWT_SECRET`, `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB` (PostgreSQL; `DATABASE_URL` ghép từ chúng cho release và backend), `REDIS_PASSWORD`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD` (MongoDB: Coolify chỉ giữ nó với dữ liệu lúc cutover để rollback; `MONGODB_URI` chỉ `prod.compose.yml` còn cần, vì backend ở đó vẫn chạy trên MongoDB), `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` (tên `MINIO_*` giữ nguyên vì backend dùng SDK `minio`; giá trị là credential của SeaweedFS, ≥ 16 ký tự, không phải `minioadmin`). `ADMIN_EMAIL`/`ADMIN_USERNAME`/`ADMIN_PASSWORD` chỉ đọc để tạo admin đầu tiên khi database chưa có admin (cần đủ cả ba; database chưa có user nào thì thiếu chúng là backend không boot). `CORS_ORIGIN`/`BASE_URL` không set riêng — cả hai nội suy từ `PUBLIC_URL`. Coolify bơm **mọi** biến của app vào **mọi** container (kể cả frontend, redis), nên quyền shell vào bất kỳ container nào cũng đọc được mọi secret — xem `docs/ENV_SETUP.md`.
 
 ## 🐳 Docker Configuration
 
@@ -228,7 +228,7 @@ docker compose -f prod.compose.yml up -d
 ### Environment Variables cho Production
 - Set `PUBLIC_URL=https://store.sabies.vn` — `CORS_ORIGIN`/`BASE_URL` tự nội suy theo, không set riêng
 - Dùng secret dài, ngẫu nhiên cho `JWT_SECRET` (không có `BETTER_AUTH_SECRET` trong code)
-- Mọi secret khác (`SAB_PG_PASSWORD`, `REDIS_PASSWORD`, `MONGODB_URI` (chỉ `prod.compose.yml`), `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_PASSWORD`, `APPSCRIPT_URL`) đều bắt buộc — thiếu 1 là container không boot; `ADMIN_*` chỉ cần cho lần tạo admin đầu tiên
+- Mọi secret khác (`SAB_PG_PASSWORD`, `REDIS_PASSWORD`, `MONGODB_URI` (chỉ `prod.compose.yml`), `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_PASSWORD`) đều bắt buộc — thiếu 1 là container không boot; `ADMIN_*` chỉ cần cho lần tạo admin đầu tiên
 - HTTPS do NPM (Nginx Proxy Manager) đứng trước xử lý, ngoài phạm vi compose file này
 
 ## 🤝 Contributing

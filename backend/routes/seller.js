@@ -3,7 +3,7 @@ const { ORDER_STATUSES } = require('@sab/shared');
 const { authenticateSeller } = require('../middleware/better-auth');
 const { validatePasswordChange, validateOrderUpdate, validateDirectOrder, trimStatusText } = require('../middleware/validation');
 const { formatDate, formatCurrency } = require('../utils/helpers');
-const { sendOrderToAppScript } = require('../utils/appscript');
+const { sendOrderMail } = require('../services/mailer');
 const { generateDirectSalePaymentQR } = require('../utils/paymentHelper');
 const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError } = require('../services/pricing');
 const { auth } = require('../lib/auth');
@@ -256,22 +256,8 @@ router.put('/orders/:id/status', validateOrderUpdate, gated(async (req, res) => 
 
 		const transitioned = await orders.attachProducts(result.order, ['name', 'imageUrl', 'price']);
 
-		const appscriptData = {
-			orderCode: transitioned.orderCode,
-			studentId: transitioned.studentId,
-			fullName: transitioned.fullName,
-			email: transitioned.email,
-			additionalNote: transitioned.additionalNote,
-			items: transitioned.items,
-			totalAmount: transitioned.totalAmount,
-			transactionCode: transitioned.transactionCode,
-			cancelReason: transitioned.cancelReason,
-			status: transitioned.status
-		};
 		setImmediate(() => {
-			sendOrderToAppScript(appscriptData).catch(err => {
-				console.error('Gửi đơn hàng lên App Script thất bại:', err.message);
-			});
+			sendOrderMail('status_changed', transitioned);
 		});
 
 		const { internalNotes: _adminOnly, itemsHistory: _adminHistory, ...visibleOrder } = transitioned;

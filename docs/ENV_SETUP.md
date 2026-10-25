@@ -82,6 +82,10 @@ switch is turned on. The password is stored encrypted and is never shown again; 
 blank on a later save keeps it. The settings live in their own table, so the admin database
 export never contains them.
 
+The order confirmation is rendered from `backend/templates/order-created.html`; the tracking link
+in it is `BASE_URL` (derived from `PUBLIC_URL`) plus `/order-tracking?code=<orderCode>`. The two
+banner images in that template are Google Drive thumbnails.
+
 ## `ADMIN_*` and `INIT_EMPTY_DATABASE`
 
 `ADMIN_EMAIL`, `ADMIN_USERNAME` and `ADMIN_PASSWORD` are read only when the database has no

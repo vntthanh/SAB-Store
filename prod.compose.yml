@@ -327,7 +327,6 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      APPSCRIPT_URL: ${APPSCRIPT_URL:?APPSCRIPT_URL is required}
       CORS_ORIGIN: ${PUBLIC_URL}
       # The MINIO_* names are kept for the minio SDK; the server behind them is
       # SeaweedFS. The endpoint is fixed because the platform environment store

@@ -329,7 +329,6 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-sab@fit.hcmus.edu.vn}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
-      APPSCRIPT_URL: ${APPSCRIPT_URL:-your-appscript-url-here}
       CORS_ORIGIN: ${PUBLIC_URL:-http://localhost}
       # The MINIO_* names are kept for the minio SDK; the server behind them is
       # SeaweedFS. The dev defaults are long enough to pass its key checks.

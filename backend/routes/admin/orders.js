@@ -6,7 +6,6 @@ const { ERROR_CODES, ERROR_MESSAGES } = require('../../constants/errorCodes');
 const { validateOrderUpdate, validateOrderNotes, validateOrderItemsEdit, trimText, trimStatusText } = require('../../middleware/validation');
 const { editOrderItems } = require('../../services/order-edit');
 const { PricingError, pricingErrorBody } = require('../../services/pricing');
-const { sendOrderToAppScript } = require('../../utils/appscript');
 const { sendOrderMail } = require('../../services/mailer');
 const { transitionOrderWithStock } = require('../../services/stock');
 const { enqueueMovements } = require('../../services/stock-ledger');
@@ -166,25 +165,6 @@ router.put('/:id', validateOrderUpdate, gated(async (req, res) => {
 
 		await enqueueMovements(result.movements);
 		const transitioned = result.order;
-
-		// Tự động push lên App Script mỗi lần cập nhật trạng thái
-		const appscriptData = {
-			orderCode: transitioned.orderCode,
-			studentId: transitioned.studentId,
-			fullName: transitioned.fullName,
-			email: transitioned.email,
-			additionalNote: transitioned.additionalNote,
-			items: transitioned.items,
-			totalAmount: transitioned.totalAmount,
-			transactionCode: transitioned.transactionCode,
-			cancelReason: transitioned.cancelReason,
-			status: transitioned.status
-		};
-		setImmediate(() => {
-			sendOrderToAppScript(appscriptData).catch(err => {
-				console.error('AppScript push error:', err.message);
-			});
-		});
 
 		// Only a real transition reaches here (the refusals above returned already).
 		setImmediate(() => {

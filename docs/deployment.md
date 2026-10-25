@@ -181,7 +181,7 @@ MongoDB, unlike `coolify.compose.yml`). `backend/server.js:48` sets
 1. **`.env` must be complete before `up -d`.** Every secret in `prod.compose.yml` uses
    `${VAR:?message}` (`PUBLIC_URL`, `JWT_SECRET`, `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB`,
    `MONGODB_URI`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_USER`,
-   `MINIO_ROOT_PASSWORD`, `REDIS_PASSWORD`, `APPSCRIPT_URL`; `ADMIN_*` are optional, read only to
+   `MINIO_ROOT_PASSWORD`, `REDIS_PASSWORD`; `ADMIN_*` are optional, read only to
    create the first admin). A missing one means the container
    **will not boot** — this is by design (fail-fast), not a bug to work around. Same is true
    inside the backend process itself: `backend/lib/auth.js` throws at `require()` time if

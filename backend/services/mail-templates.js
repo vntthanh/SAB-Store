@@ -3,11 +3,21 @@
  * (names, product names, the cancel reason and the store title are all free text);
  * the plain-text part carries the same facts without markup.
  */
+const fs = require('fs');
+const path = require('path');
+// Mustache over Handlebars or string replace: escapes by default, no helpers needed, no dependencies.
+const Mustache = require('mustache');
 const { ORDER_STATUSES } = require('@sab/shared');
 const { formatCurrency } = require('../utils/helpers');
 const { escapeHtml } = require('../utils/escape-html');
 
 const FALLBACK_STORE_TITLE = 'SAB Store';
+const DISPLAY_TIME_ZONE = 'Asia/Ho_Chi_Minh';
+// Same fallback as lib/auth.js, for a development run without BASE_URL.
+const DEFAULT_PUBLIC_URL = 'http://localhost:5000';
+
+// Read once at load: a missing template must stop the boot, not silently degrade to a text-only mail.
+const ORDER_CREATED_TEMPLATE = fs.readFileSync(path.join(__dirname, '..', 'templates', 'order-created.html'), 'utf8');
 
 const STATUS_LABELS = {
 	confirmed: 'Đã xác nhận',
@@ -43,23 +53,47 @@ function greeting(order) {
 	return order.fullName ? `Chào ${order.fullName},` : 'Xin chào,';
 }
 
+function formatOrderDate(value) {
+	return new Intl.DateTimeFormat('en-GB', {
+		timeZone: DISPLAY_TIME_ZONE,
+		day: '2-digit',
+		month: '2-digit',
+		year: 'numeric',
+		hour: '2-digit',
+		minute: '2-digit',
+		hourCycle: 'h23'
+	}).format(new Date(value)).replace(',', '');
+}
+
+// The one raw slot of the template: every cell is escaped here, before it is joined.
+function itemsTable(lines) {
+	const rows = lines
+		.map((line) => `<tr><td style="padding:2px 12px 2px 0">${escapeHtml(line.name)} × ${escapeHtml(line.quantity)}</td><td style="padding:2px 0;text-align:right">${escapeHtml(line.amount)}</td></tr>`)
+		.join('');
+	return `<table style="border-collapse:collapse">${rows}</table>`;
+}
+
+function trackingUrl(orderCode) {
+	const base = (process.env.BASE_URL || DEFAULT_PUBLIC_URL).replace(/\/+$/, '');
+	return `${base}/order-tracking?code=${encodeURIComponent(orderCode)}`;
+}
+
 function renderOrderCreated(order, storeTitle) {
 	const lines = itemLines(order);
 	const total = formatCurrency(order.totalAmount);
-	const heading = `Xác nhận đơn hàng ${order.orderCode}`;
 
-	const rows = lines
-		.map((line) => `<tr><td style="padding:4px 12px 4px 0">${escapeHtml(line.name)} × ${escapeHtml(line.quantity)}</td><td style="padding:4px 0;text-align:right">${escapeHtml(line.amount)}</td></tr>`)
-		.join('');
-	const html = shell(storeTitle, heading, [
-		`<p>${escapeHtml(greeting(order))}</p>`,
-		`<p>Cảm ơn bạn đã đặt hàng. Mã đơn hàng của bạn là <strong>${escapeHtml(order.orderCode)}</strong>.</p>`,
-		`<table style="border-collapse:collapse;width:100%">${rows}`,
-		`<tr><td style="padding:8px 12px 4px 0;border-top:1px solid #ddd"><strong>Tổng cộng</strong></td><td style="padding:8px 0 4px;border-top:1px solid #ddd;text-align:right"><strong>${escapeHtml(total)}</strong></td></tr></table>`,
-		order.paymentDescription
-			? `<p>Nội dung chuyển khoản: <strong>${escapeHtml(order.paymentDescription)}</strong></p>`
-			: ''
-	].join(''));
+	const html = Mustache.render(ORDER_CREATED_TEMPLATE, {
+		fullName: order.fullName,
+		orderCode: order.orderCode,
+		studentId: order.studentId,
+		phoneNumber: order.phoneNumber,
+		date: formatOrderDate(order.createdAt || Date.now()),
+		itemsHtml: itemsTable(lines),
+		totalAmount: total,
+		paymentDescription: order.paymentDescription,
+		additionalNote: order.additionalNote || 'Không có',
+		trackingUrl: trackingUrl(order.orderCode)
+	}, {}, { escape: escapeHtml });
 
 	const text = [
 		greeting(order),
@@ -68,6 +102,8 @@ function renderOrderCreated(order, storeTitle) {
 		...lines.map((line) => `- ${line.name} × ${line.quantity}: ${line.amount}`),
 		`Tổng cộng: ${total}`,
 		...(order.paymentDescription ? ['', `Nội dung chuyển khoản: ${order.paymentDescription}`] : []),
+		'',
+		`Tra cứu đơn hàng: ${trackingUrl(order.orderCode)}`,
 		'',
 		storeTitle
 	].join('\n');
