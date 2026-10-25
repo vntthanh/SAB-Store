@@ -1,5 +1,9 @@
 const express = require('express');
-const { products: productRepo } = require('../../data');
+const { products: productRepo, storefronts: storefrontRepo } = require('../../data');
+const { productStorefrontLink } = require('@sab/shared');
+const { ERROR_CODES } = require('../../constants/errorCodes');
+const { readStorefrontFilter, invalidStorefrontFilter, sendCoded } = require('./storefront-params');
+const { validateBody } = require('../../middleware/validation');
 const { RecordValidationError, DuplicateKeyError, InvalidIdError } = require('../../data/errors');
 const { asString, asEnum, asPageLimit } = require('../../utils/query-guard');
 const { recordAppliedOpening, countPendingByProduct } = require('../../services/stock-ledger');
@@ -22,6 +26,8 @@ const INVALID_SALES_CHANNEL_MESSAGE = 'Kênh bán không hợp lệ';
 router.get('/', async (req, res) => {
 	try {
 		const { page, limit, search, category, status, channel } = req.query;
+		const storefront = readStorefrontFilter(req.query.storefrontId);
+		if (storefront.invalid) return invalidStorefrontFilter(res);
 		const safeCategory = asString(category, 100);
 		// `status` used to compare against the *string* 'true': anything else —
 		// including the UI's own 'all' — fell through to `false`, inverting the
@@ -35,7 +41,8 @@ router.get('/', async (req, res) => {
 			search: asString(search, 100),
 			category: safeCategory && safeCategory !== 'all' ? safeCategory : undefined,
 			available: availableFilter === undefined ? undefined : availableFilter === 'true',
-			salesChannel: asEnum(channel, productRepo.SALES_CHANNELS)
+			salesChannel: asEnum(channel, productRepo.SALES_CHANNELS),
+			storefrontId: storefront.value
 		});
 
 		// Stock changes apply asynchronously; the count lets the UI flag a stock
@@ -58,7 +65,7 @@ router.get('/', async (req, res) => {
  * @desc    Create new product
  * @access  Private (Admin)
  */
-router.post('/', gated(async (req, res) => {
+router.post('/', validateBody(productStorefrontLink), gated(async (req, res) => {
 	try {
 		// stockQuantity is only the opening balance of a product that did not exist
 		// until now; it is recorded as an `opening` movement below. Every later
@@ -72,11 +79,16 @@ router.post('/', gated(async (req, res) => {
 			available,
 			salesChannel,
 			minOrderQuantity,
-			stockQuantity
+			stockQuantity,
+			storefrontId
 		} = req.body;
 
 		if (!isValidSalesChannel(salesChannel)) {
 			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
+		}
+
+		if (storefrontId !== undefined && !(await storefrontRepo.findById(storefrontId))) {
+			return sendCoded(res, ERROR_CODES.STOREFRONT_NOT_FOUND);
 		}
 
 		// Validate required fields
@@ -109,6 +121,7 @@ router.post('/', gated(async (req, res) => {
 				imageUrl: imageUrl || undefined, // Let the schema default handle it
 				available: available !== undefined ? available : true,
 				...(salesChannel !== undefined && { salesChannel }),
+				...(storefrontId !== undefined && { storefrontId }),
 				minOrderQuantity: minOrderQuantity || 1
 			}, openingStock, session);
 			if (openingStock > 0) {
@@ -156,7 +169,7 @@ router.post('/', gated(async (req, res) => {
  * @desc    Update product
  * @access  Private (Admin)
  */
-router.put('/:id', gated(async (req, res) => {
+router.put('/:id', validateBody(productStorefrontLink), gated(async (req, res) => {
 	try {
 		const { id } = req.params;
 
@@ -166,10 +179,14 @@ router.put('/:id', gated(async (req, res) => {
 		// product's own future update) and `createdAt` — was still writable.
 		// `stockQuantity` is deliberately absent: it is a cache of the stock
 		// ledger and changes only through POST /:id/stock-adjustments.
-		const { name, description, price, category, imageUrl, available, salesChannel, minOrderQuantity } = req.body;
+		const { name, description, price, category, imageUrl, available, salesChannel, minOrderQuantity, storefrontId } = req.body;
 
 		if (!isValidSalesChannel(salesChannel)) {
 			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
+		}
+
+		if (storefrontId !== undefined && !(await storefrontRepo.findById(storefrontId))) {
+			return sendCoded(res, ERROR_CODES.STOREFRONT_NOT_FOUND);
 		}
 
 		const existing = await productRepo.findById(id);
@@ -188,7 +205,8 @@ router.put('/:id', gated(async (req, res) => {
 			...(imageUrl && { imageUrl }), // empty string: let existing value remain
 			...(available !== undefined && { available }),
 			...(salesChannel !== undefined && { salesChannel }),
-			...(minOrderQuantity !== undefined && { minOrderQuantity })
+			...(minOrderQuantity !== undefined && { minOrderQuantity }),
+			...(storefrontId !== undefined && { storefrontId })
 		};
 
 		let product = existing;

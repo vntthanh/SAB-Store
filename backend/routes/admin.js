@@ -6,6 +6,7 @@ const dashboardRoutes = require('./admin/dashboard');
 const ordersRoutes = require('./admin/orders');
 const productsRoutes = require('./admin/products');
 const stockRoutes = require('./admin/stock');
+const storefrontRoutes = require('./admin/storefronts');
 const exportsRoutes = require('./admin/exports');
 const databaseRoutes = require('./admin/database');
 
@@ -20,6 +21,8 @@ router.use('/orders', ordersRoutes);
 router.use('/products', productsRoutes);
 // Declares its own /products/:id/... and /stock/... paths.
 router.use(stockRoutes);
+// Declares its own /storefronts/... and /email-lists/... paths.
+router.use(storefrontRoutes);
 router.use('/orders/export', exportsRoutes);
 router.use('/database', databaseRoutes);
 

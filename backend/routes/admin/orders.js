@@ -12,6 +12,7 @@ const { enqueueMovements } = require('../../services/stock-ledger');
 const { gated } = require('../../services/write-gate');
 const { asEnum, asSort, asPageLimit } = require('../../utils/query-guard');
 const ErrorLogger = require('../../utils/errorLogger');
+const { readStorefrontFilter, invalidStorefrontFilter } = require('./storefront-params');
 const router = express.Router();
 
 const ORDER_SORTABLE_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode'];
@@ -25,11 +26,14 @@ const SEARCH_FIELDS = ['orderCode', 'studentId', 'fullName', 'email'];
 router.get('/', async (req, res) => {
 	try {
 		const { page, limit, search, status, sortBy, sortOrder } = req.query;
+		const storefront = readStorefrontFilter(req.query.storefrontId);
+		if (storefront.invalid) return invalidStorefrontFilter(res);
 
 		const { data, meta } = await orders.listPage({
 			...asPageLimit(page, limit),
 			sort: asSort(sortBy, sortOrder, ORDER_SORTABLE_FIELDS),
 			status: asEnum(status, ORDER_STATUSES),
+			storefrontId: storefront.value,
 			search,
 			searchFields: SEARCH_FIELDS,
 			omit: ['itemsHistory']

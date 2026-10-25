@@ -1,8 +1,9 @@
 const express = require('express');
 const ExcelJS = require('exceljs');
-const { orders: orderRepo } = require('../../data');
+const { orders: orderRepo, storefronts: storefrontRepo } = require('../../data');
 const { formatDate, formatCurrency } = require('../../utils/helpers');
 const { asEnum, asString, asDate } = require('../../utils/query-guard');
+const { readStorefrontFilter, invalidStorefrontFilter } = require('./storefront-params');
 const router = express.Router();
 
 // Taken from the store rather than hardcoded so the filter follows the status enum.
@@ -51,13 +52,17 @@ router.get('/excel', async (req, res) => {
 		const startDate = asDate(req.query.startDate);
 		const endDate = asDate(req.query.endDate);
 
-		const orders = await orderRepo.listAll({
+		const storefront = readStorefrontFilter(req.query.storefrontId);
+		if (storefront.invalid) return invalidStorefrontFilter(res);
+
+		const [orders, storefrontNames] = await Promise.all([orderRepo.listAll({
 			status: status === 'all' ? undefined : status,
+			storefrontId: storefront.value,
 			search,
 			searchFields: SEARCH_FIELDS,
 			createdFrom: startDate,
 			createdTo: endDate
-		});
+		}), storefrontRepo.listAll().then((all) => new Map(all.map((s) => [s._id, s.name])))]);
 
 		// Create workbook
 		const workbook = new ExcelJS.Workbook();
@@ -77,7 +82,9 @@ router.get('/excel', async (req, res) => {
 			{ header: 'Mã giao dịch', key: 'transactionCode', width: 15 },
 			{ header: 'Lý do hủy', key: 'cancelReason', width: 30 },
 			{ header: 'Ghi chú', key: 'additionalNote', width: 30 },
-			{ header: 'Chi tiết sản phẩm', key: 'itemDetails', width: 50 }
+			{ header: 'Chi tiết sản phẩm', key: 'itemDetails', width: 50 },
+			// Last, so the letters of the columns before it do not move.
+			{ header: 'Gian hàng', key: 'storefront', width: 20 }
 		];
 
 		// Style header row
@@ -107,7 +114,9 @@ router.get('/excel', async (req, res) => {
 				transactionCode: sanitizeCell(order.transactionCode || ''),
 				cancelReason: sanitizeCell(order.cancelReason || ''),
 				additionalNote: sanitizeCell(order.additionalNote || ''),
-				itemDetails: sanitizeCell(itemDetails)
+				itemDetails: sanitizeCell(itemDetails),
+				// A counter sale carries no storefront.
+				storefront: sanitizeCell(storefrontNames.get(order.storefrontId) || '')
 			});
 		});
 
