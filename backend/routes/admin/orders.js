@@ -6,13 +6,13 @@ const { ERROR_CODES, ERROR_MESSAGES } = require('../../constants/errorCodes');
 const { validateOrderUpdate, validateOrderNotes, validateOrderItemsEdit, trimText, trimStatusText } = require('../../middleware/validation');
 const { editOrderItems } = require('../../services/order-edit');
 const { PricingError, pricingErrorBody } = require('../../services/pricing');
-const { sendOrderToAppScript } = require('../../utils/appscript');
 const { sendOrderMail } = require('../../services/mailer');
 const { transitionOrderWithStock } = require('../../services/stock');
 const { enqueueMovements } = require('../../services/stock-ledger');
 const { gated } = require('../../services/write-gate');
 const { asEnum, asSort, asPageLimit } = require('../../utils/query-guard');
 const ErrorLogger = require('../../utils/errorLogger');
+const { readStorefrontFilter, invalidStorefrontFilter } = require('./storefront-params');
 const router = express.Router();
 
 const ORDER_SORTABLE_FIELDS = ['createdAt', 'totalAmount', 'status', 'orderCode'];
@@ -26,11 +26,14 @@ const SEARCH_FIELDS = ['orderCode', 'studentId', 'fullName', 'email'];
 router.get('/', async (req, res) => {
 	try {
 		const { page, limit, search, status, sortBy, sortOrder } = req.query;
+		const storefront = readStorefrontFilter(req.query.storefrontId);
+		if (storefront.invalid) return invalidStorefrontFilter(res);
 
 		const { data, meta } = await orders.listPage({
 			...asPageLimit(page, limit),
 			sort: asSort(sortBy, sortOrder, ORDER_SORTABLE_FIELDS),
 			status: asEnum(status, ORDER_STATUSES),
+			storefrontId: storefront.value,
 			search,
 			searchFields: SEARCH_FIELDS,
 			omit: ['itemsHistory']
@@ -166,25 +169,6 @@ router.put('/:id', validateOrderUpdate, gated(async (req, res) => {
 
 		await enqueueMovements(result.movements);
 		const transitioned = result.order;
-
-		// Tự động push lên App Script mỗi lần cập nhật trạng thái
-		const appscriptData = {
-			orderCode: transitioned.orderCode,
-			studentId: transitioned.studentId,
-			fullName: transitioned.fullName,
-			email: transitioned.email,
-			additionalNote: transitioned.additionalNote,
-			items: transitioned.items,
-			totalAmount: transitioned.totalAmount,
-			transactionCode: transitioned.transactionCode,
-			cancelReason: transitioned.cancelReason,
-			status: transitioned.status
-		};
-		setImmediate(() => {
-			sendOrderToAppScript(appscriptData).catch(err => {
-				console.error('AppScript push error:', err.message);
-			});
-		});
 
 		// Only a real transition reaches here (the refusals above returned already).
 		setImmediate(() => {

@@ -5,12 +5,15 @@
  * Field names follow the record (camelCase), which is also what Mongo reports,
  * so a retry loop asking `isDuplicateKeyOn(err, 'orderCode')` works on both.
  */
-const { InvalidIdError, DuplicateKeyError, RecordValidationError } = require('../errors');
+const { InvalidIdError, DuplicateKeyError, RecordValidationError, ConflictError, CONFLICT_CODES } = require('../errors');
 
 const camelCase = (name) => name.replace(/_([a-z0-9])/g, (_, char) => char.toUpperCase());
 
 // Check constraints are named `<table>_<column>_check`; the column is the field.
-const TABLE_PREFIXES = ['products_', 'combos_', 'combo_category_requirements_', 'orders_', 'order_items_', 'stock_movements_'];
+const TABLE_PREFIXES = [
+	'products_', 'combos_', 'combo_category_requirements_', 'orders_', 'order_items_', 'stock_movements_',
+	'storefronts_', 'storefront_access_rules_', 'email_lists_', 'email_list_entries_'
+];
 
 const SQLSTATE_CHECK_VIOLATION = '23514';
 const SQLSTATE_INVALID_TEXT = '22P02';
@@ -68,6 +71,14 @@ function translateWriteError(err) {
 	const message = messageOf(err);
 
 	if (err.code === 'P2002') return new DuplicateKeyError(duplicateFields(err), { cause: err });
+
+	// A foreign key: a parent that is missing on insert, or a child that still exists
+	// on a RESTRICT delete. Prisma gives the same code for both; a caller that knows
+	// which one it attempted (storefronts.remove) refines the code.
+	if (err.code === 'P2003') {
+		const constraint = String((err.meta || {}).constraint || (err.meta || {}).field_name || 'reference');
+		return new ConflictError(CONFLICT_CODES.REFERENCE_VIOLATION, 'A referenced record is missing or still in use', { details: { constraint }, cause: err });
+	}
 
 	// A value that is not a uuid, either rejected by the driver (P2023) or by the
 	// server (22P02 "type uuid"). The enum flavour of 22P02 is a validation error.

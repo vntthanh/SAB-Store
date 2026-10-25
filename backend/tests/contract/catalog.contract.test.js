@@ -462,7 +462,7 @@ describe('product writes and reads', () => {
 		}
 		expect(withoutVersion(created)).toEqual([
 			'_id', 'available', 'category', 'createdAt', 'description', 'featured', 'imageUrl', 'isActive', 'maxOrderQuantity', 'minOrderQuantity',
-			'name', 'price', 'publicCode', 'salesChannel', 'slug', 'stockQuantity', 'tags', 'updatedAt',
+			'name', 'price', 'publicCode', 'salesChannel', 'slug', 'stockQuantity', ...(POSTGRES ? ['storefrontId'] : []), 'tags', 'updatedAt',
 		]);
 		expect(await products.findById(created._id)).toEqual(created);
 		expect((await findProduct(created._id)).stockQuantity).toBe(3);
@@ -606,7 +606,7 @@ describe('combo writes and reads', () => {
 		const ids = created.categoryRequirements.map((requirement) => String(requirement._id));
 		expect(new Set(ids).size).toBe(2);
 		expect(withoutVersion(created)).toEqual([
-			'_id', 'categoryRequirements', 'createdAt', 'description', 'isActive', 'name', 'price', 'priority', 'publicCode', 'salesChannel', 'slug', 'updatedAt',
+			'_id', 'categoryRequirements', 'createdAt', 'description', 'isActive', 'name', 'price', 'priority', 'publicCode', 'salesChannel', 'slug', ...(POSTGRES ? ['storefrontIds'] : []), 'updatedAt',
 		]);
 		expect(created).not.toHaveProperty('totalRequiredQuantity');
 		expect(created).not.toHaveProperty('id');

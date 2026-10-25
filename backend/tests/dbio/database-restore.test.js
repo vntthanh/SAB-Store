@@ -7,10 +7,13 @@ const {
 } = require('../helpers/db');
 const stockQueue = require('../../queues/stock-queue');
 const databaseRoutes = require('../../routes/admin/database');
+const { POSTGRES } = require('../helpers/backend');
 const { seedStore, readStore } = require('./snapshot-fixture');
 
 const PHRASE = 'KHOI PHUC';
-const SECTIONS = ['products', 'combos', 'orders', 'stockMovements', 'settings'];
+// Postgres exports the storefront sections too; its empty store still holds the default storefront.
+const SECTIONS = ['products', 'combos', 'orders', 'stockMovements', 'settings', ...(POSTGRES ? ['storefronts', 'storefrontAccessRules', 'emailLists', 'emailListEntries'] : [])];
+const EMPTY_STORE_COUNTS = Object.fromEntries(SECTIONS.map((s) => [s, s === 'storefronts' ? 1 : 0]));
 
 const exportFile = async (app, cookies) => {
 	const res = await request(app).get('/api/admin/database/export').set('Cookie', cookies);
@@ -47,7 +50,7 @@ describe('POST /api/admin/database/restore', () => {
 			const seeded = await seedStore('a');
 			const first = await exportFile(app, cookies);
 			const rowsBefore = await readStore();
-			expect(first.metadata.collections).toEqual({ products: 3, combos: 2, orders: 4, stockMovements: 8, settings: 1 });
+			expect(first.metadata.collections).toEqual({ products: 3, combos: 2, orders: 4, stockMovements: 8, settings: 1, ...(POSTGRES && { storefronts: 1, storefrontAccessRules: 0, emailLists: 0, emailListEntries: 0 }) });
 
 			await emptyStore();
 			expect(await countRows('order')).toBe(0);
@@ -56,7 +59,7 @@ describe('POST /api/admin/database/restore', () => {
 
 			expect(res.status).toBe(200);
 			expect(res.body.ok).toBe(true);
-			expect(res.body.restored).toEqual({ products: 3, combos: 2, orders: 4, stockMovements: 8, settings: 1 });
+			expect(res.body.restored).toEqual({ products: 3, combos: 2, orders: 4, stockMovements: 8, settings: 1, ...(POSTGRES && { storefronts: 1, storefrontAccessRules: 0, emailLists: 0, emailListEntries: 0 }) });
 			const second = await exportFile(app, cookies);
 			expect(withoutExportedAt(second)).toEqual(withoutExportedAt(first));
 			expect(await readStore()).toEqual(rowsBefore);
@@ -423,7 +426,7 @@ describe('POST /api/admin/database/restore', () => {
 
 	it('restores an empty store file and leaves an empty store', async () => {
 		const file = await exportFile(app, cookies);
-		expect(file.metadata.collections).toEqual(Object.fromEntries(SECTIONS.map((s) => [s, 0])));
+		expect(file.metadata.collections).toEqual(EMPTY_STORE_COUNTS);
 		await seedStore('a');
 
 		const res = await restore(app, cookies, file);

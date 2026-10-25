@@ -9,7 +9,8 @@
 // history, settings and orders.last_updated_by hold "system", an admin email or a
 // username, not an id, so they stay text.
 // The CHECK constraints, the partial index pending_by_age and anything else
-// Prisma cannot express are appended by hand to the init migration.
+// Prisma cannot express are appended by hand to the migration that creates the
+// table (the storefront rule CHECKs and partial unique live in the storefronts one).
 
 enum SalesChannel {
   all
@@ -46,6 +47,102 @@ enum MovementStatus {
   @@map("movement_status")
 }
 
+enum StorefrontVisibility {
+  PUBLIC
+  PRIVATE
+
+  @@map("storefront_visibility")
+}
+
+enum StorefrontRuleType {
+  EMAIL
+  DOMAIN
+  LIST
+
+  @@map("storefront_rule_type")
+}
+
+// A separately browsable shop front. PRIVATE ones are visible only to viewers a
+// rule admits. The default row is inserted by its migration with a fixed id
+// (backend/data/default-storefront.js); products must belong to exactly one.
+model Storefront {
+  id          String                 @id @default(uuid(7)) @db.Uuid
+  slug        String                 @unique @db.VarChar(60)
+  name        String                 @db.VarChar(80)
+  description String?                @db.VarChar(500)
+  visibility  StorefrontVisibility   @default(PUBLIC)
+  sortOrder   Int                    @default(0) @map("sort_order")
+  isActive    Boolean                @default(true) @map("is_active")
+  createdAt   DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  products    Product[]
+  combos      ComboStorefront[]
+  orders      Order[]
+  rules       StorefrontAccessRule[]
+
+  @@index([isActive, sortOrder, id])
+  @@map("storefronts")
+}
+
+// EMAIL: value is a lowercase address; DOMAIN: a lowercase domain; LIST: value is
+// NULL and emailListId points at the list. The CHECKs and the partial unique for
+// LIST rules are in the migration.
+model StorefrontAccessRule {
+  id           String             @id @default(uuid(7)) @db.Uuid
+  storefrontId String             @map("storefront_id") @db.Uuid
+  storefront   Storefront         @relation(fields: [storefrontId], references: [id], onDelete: Cascade)
+  type         StorefrontRuleType
+  value        String?            @db.VarChar(254)
+  emailListId  String?            @map("email_list_id") @db.Uuid
+  emailList    EmailList?         @relation(fields: [emailListId], references: [id], onDelete: Cascade)
+  createdBy    String?            @map("created_by") @db.Uuid
+  createdAt    DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([storefrontId, type, value])
+  @@index([storefrontId])
+  @@index([emailListId])
+  @@map("storefront_access_rules")
+}
+
+model EmailList {
+  id          String                 @id @default(uuid(7)) @db.Uuid
+  name        String                 @unique @db.VarChar(80)
+  description String?                @db.VarChar(500)
+  createdAt   DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  entries     EmailListEntry[]
+  rules       StorefrontAccessRule[]
+
+  @@map("email_lists")
+}
+
+model EmailListEntry {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  emailListId String    @map("email_list_id") @db.Uuid
+  emailList   EmailList @relation(fields: [emailListId], references: [id], onDelete: Cascade)
+  email       String    @db.VarChar(254)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@unique([emailListId, email])
+  @@index([email])
+  @@map("email_list_entries")
+}
+
+// A combo can be offered in several storefronts; it matches products by category,
+// so a link table is all it needs. A combo with no link is unreachable, which the
+// repository refuses (the database cannot express "at least one" without a trigger).
+model ComboStorefront {
+  id           String     @id @default(uuid(7)) @db.Uuid
+  comboId      String     @map("combo_id") @db.Uuid
+  combo        Combo      @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  storefrontId String     @map("storefront_id") @db.Uuid
+  storefront   Storefront @relation(fields: [storefrontId], references: [id], onDelete: Restrict)
+
+  @@unique([comboId, storefrontId])
+  @@index([storefrontId])
+  @@map("combo_storefronts")
+}
+
 model Product {
   id               String       @id @default(uuid(7)) @db.Uuid
   name             String
@@ -71,10 +168,13 @@ model Product {
   saleEndDate      DateTime?    @map("sale_end_date") @db.Timestamptz(3)
   publicCode       String       @unique @map("public_code")
   slug             String
+  storefrontId     String       @map("storefront_id") @db.Uuid
+  storefront       Storefront   @relation(fields: [storefrontId], references: [id], onDelete: Restrict)
   createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@index([category])
+  @@index([storefrontId])
   @@index([available])
   @@index([salesChannel])
   @@index([featured])
@@ -95,6 +195,7 @@ model Combo {
   createdAt    DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt    DateTime                   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   requirements ComboCategoryRequirement[]
+  storefronts  ComboStorefront[]
 
   @@index([isActive, priority(sort: Desc), createdAt(sort: Desc)])
   @@map("combos")
@@ -132,6 +233,8 @@ model Order {
   isDirectSale    Boolean             @default(false) @map("is_direct_sale")
   createdBy       String?             @map("created_by") @db.Uuid
   comboInfo       Json?               @map("combo_info")
+  storefrontId    String?             @map("storefront_id") @db.Uuid
+  storefront      Storefront?         @relation(fields: [storefrontId], references: [id], onDelete: Restrict)
   createdAt       DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime            @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
   items           OrderItem[]
@@ -144,6 +247,7 @@ model Order {
   @@index([status])
   @@index([createdAt(sort: Desc)])
   @@index([isDirectSale])
+  @@index([storefrontId])
   @@map("orders")
 }
 

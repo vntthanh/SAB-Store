@@ -3,7 +3,8 @@ const { products: productRepo } = require('../data');
 const { isRecordId } = require('../data/ids');
 const { asString } = require('../utils/query-guard');
 const { authenticateSeller } = require('../middleware/better-auth');
-const { findPublicProductByCode, toPublicProduct } = require('../services/public-catalog');
+const { findViewableProductByCode, viewProduct, onlyOpenProducts } = require('../services/public-catalog');
+const { resolveViewer, isStaff, StorefrontAccessError, sendAccessError } = require('../services/storefront-access');
 const { ErrorResponse } = require('../utils/errorResponse');
 const ErrorLogger = require('../utils/errorLogger');
 const router = express.Router();
@@ -27,13 +28,15 @@ router.get('/', async (req, res) => {
 
 		// The public storefront is the online channel; no query parameter
 		// widens it (a stopped product must never be listed publicly).
-		const products = await productRepo.listSellable('online', {
+		// Only storefronts open to everyone: a private storefront is read through
+		// /api/storefronts/:slug/catalog, behind its access check.
+		const products = await onlyOpenProducts(await productRepo.listSellable('online', {
 			category: safeCategory,
 			search: asString(search, 100),
 			// Online customers never learn stock levels: out of stock never blocks
 			// an order, so the number would only mislead.
 			forCustomers: true
-		});
+		}));
 
 		// Group products by category
 		const categories = [...new Set(products.map(p => p.category))];
@@ -111,12 +114,14 @@ router.get('/direct-sales', authenticateSeller, async (req, res) => {
  */
 router.get('/by-code/:code', async (req, res) => {
 	try {
-		const product = await findPublicProductByCode(req.params.code);
-		if (!product) return sendProductNotFound(req, res);
+		const found = await findViewableProductByCode(req.params.code, await resolveViewer(req));
+		if (!found) return sendProductNotFound(req, res);
 
-		res.set('Cache-Control', 'public, max-age=60');
-		res.json({ success: true, data: product });
+		// A private storefront's product depends on who asks, so a shared cache must not keep it.
+		res.set('Cache-Control', found.cacheable ? 'public, max-age=60' : 'private, no-store');
+		res.json({ success: true, data: found.data });
 	} catch (error) {
+		if (error instanceof StorefrontAccessError) return sendAccessError(res, error);
 		ErrorLogger.logRoute('GET /products/by-code/:code', error, req);
 		res.status(500).json({
 			success: false,
@@ -137,8 +142,11 @@ router.get('/:id', async (req, res) => {
 		const [product] = await productRepo.findSellable('online', { id: req.params.id });
 		if (!product) return sendProductNotFound(req, res);
 
-		res.json({ success: true, data: toPublicProduct(product) });
+		const { data, cacheable } = await viewProduct(product, await resolveViewer(req));
+		if (!cacheable) res.set('Cache-Control', 'private, no-store');
+		res.json({ success: true, data });
 	} catch (error) {
+		if (error instanceof StorefrontAccessError) return sendAccessError(res, error);
 		ErrorLogger.logRoute('GET /products/:id', error, req);
 		res.status(500).json({
 			success: false,
@@ -154,8 +162,18 @@ router.get('/:id', async (req, res) => {
  */
 router.get('/categories/list', async (req, res) => {
 	try {
-		const categories = await productRepo.listCategories();
+		// The admin product form picks from every category in use. Everyone else gets
+		// the open storefronts' categories only: a category name can give away a private item.
+		let categories;
+		if (isStaff(await resolveViewer(req))) {
+			categories = await productRepo.listCategories();
+		} else {
+			const products = await onlyOpenProducts(await productRepo.listSellable('online', { forCustomers: true }));
+			categories = [...new Set(products.map((product) => product.category))];
+		}
 
+		// Staff and everyone else get different lists, so no shared cache may keep one.
+		res.set('Cache-Control', 'private, no-store');
 		res.json({
 			success: true,
 			data: categories.sort()

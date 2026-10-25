@@ -56,6 +56,27 @@
  *   for missing/NULL fields and never for `''`. Another backend substitutes defaults
  *   with a null check, never `||`. Partial `upsertConfig` and the layer that enforces
  *   length/trim rules: see data/mongo/settings.js.
+ * - Storefronts (postgres only): a product record carries `storefrontId`, a combo record
+ *   `storefrontIds` (sorted; a combo is offered in one or more storefronts) and an order
+ *   record `storefrontId` only when set (absent for a direct sale). `products.create`
+ *   defaults `storefrontId`, and `combos.create` defaults `storefrontIds`, to the default
+ *   storefront of data/default-storefront.js when the caller names none. `bootstrap.hasStorefront`
+ *   tells the seed whether the migration's default storefront is there. The mongo
+ *   rollback store has no storefronts: its records carry none of these fields.
+ * - `storefronts` (access and display) and `emailLists`: records with a `_id` uuid, an unset
+ *   description absent. `products.listSellable`, `products.findSellable`,
+ *   `products.findSellableForPricing(channel, ids, fields, tx, {storefrontId})`, `combos.listSellable(channel,
+ *   {storefrontId})`, `combos.findSellable` and `combos.findSellableForPricing(channel, fields, tx, {storefrontId})`
+ *   take an optional `storefrontId` (mongo ignores it). `combos.update` replaces the
+ *   link set when given `storefrontIds` and refuses an empty one. `storefronts.viewerCanAccess(id, email)`
+ *   and `accessibleIds(email)` only evaluate the access rules (a PUBLIC storefront has none; the
+ *   caller decides what that means) and fold the address to lowercase themselves.
+ *   `storefronts.remove` and a deactivation raise `ConflictError` (data/errors.js) with code
+ *   STOREFRONT_IN_USE or LAST_ACTIVE_STOREFRONT, and any other foreign-key failure on a write is a
+ *   `ConflictError` REFERENCE_VIOLATION. A duplicate rule is `DuplicateKeyError` on `value`
+ *   (EMAIL, DOMAIN) or `emailListId` (LIST). The mongo rollback store has one synthetic PUBLIC
+ *   storefront (DEFAULT_STOREFRONT_ID), admits nobody, holds no lists and throws
+ *   Error('not supported on the rollback store') from every write.
  * - `mailSettings.findConfig` returns the SMTP row (password as its encrypted envelope) or
  *   null; `upsertConfig` applies the given fields. Mongo holds none: null on read, an Error on write.
  * - `dashboard.stats` returns the dashboard's figures; `topSelling[].productId` is a
@@ -103,6 +124,8 @@ const BACKENDS = {
 		orders: require('./mongo/orders'),
 		products: require('./mongo/products'),
 		combos: require('./mongo/combos'),
+		storefronts: require('./mongo/storefronts'),
+		emailLists: require('./mongo/email-lists'),
 		settings: require('./mongo/settings'),
 		mailSettings: require('./mongo/mail-settings'),
 		dataSnapshot: require('./mongo/data-snapshot'),
@@ -116,6 +139,8 @@ const BACKENDS = {
 		orders: require('./postgres/orders'),
 		products: require('./postgres/products'),
 		combos: require('./postgres/combos'),
+		storefronts: require('./postgres/storefronts'),
+		emailLists: require('./postgres/email-lists'),
 		settings: require('./postgres/settings'),
 		mailSettings: require('./postgres/mail-settings'),
 		dataSnapshot: require('./postgres/data-snapshot'),

@@ -74,6 +74,7 @@ const validateMailSettings = validateBody(mailSettingsUpdate);
 const validateMailTest = validateBody(mailTestRequest);
 
 module.exports = {
+	validateBody,
 	trimText,
 	trimStatusText,
 	validateOrder,

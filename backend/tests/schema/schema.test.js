@@ -8,6 +8,7 @@ const { Client } = require('pg');
 const { v7: uuidv7 } = require('uuid');
 const { objectIdToUuidV7 } = require('@sab/shared');
 const postgres = require('../helpers/postgres');
+const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const UNIQUE_VIOLATION = '23505';
@@ -53,6 +54,7 @@ const product = (overrides = {}) =>
 		category: 'food',
 		public_code: `PC${String(next()).padStart(6, '0')}`,
 		slug: 'banh-mi',
+		storefront_id: DEFAULT_STOREFRONT_ID,
 		...overrides,
 	});
 
@@ -93,7 +95,7 @@ describe('migration ledger', () => {
 describe('ids', () => {
 	it('gives no database default: a raw insert without an id is refused', async () => {
 		await expect(
-			db.query(`INSERT INTO products (name, price, category, public_code, slug) VALUES ('x', 1, 'food', 'NOID01', 'x')`)
+			db.query(`INSERT INTO products (name, price, category, public_code, slug, storefront_id) VALUES ('x', 1, 'food', 'NOID01', 'x', '${DEFAULT_STOREFRONT_ID}')`)
 		).rejects.toMatchObject({ code: NOT_NULL_VIOLATION });
 		await expect(
 			db.query(`INSERT INTO "user" (name, email, username) VALUES ('x', 'noid@example.invalid', 'noid')`)
@@ -116,18 +118,23 @@ describe('ids', () => {
 		const expected = [
 			'account.id', 'account.userId',
 			'combo_category_requirements.combo_id', 'combo_category_requirements.id',
+			'combo_storefronts.combo_id', 'combo_storefronts.id', 'combo_storefronts.storefront_id',
 			'combos.id',
+			'email_list_entries.email_list_id', 'email_list_entries.id',
+			'email_lists.id',
 			'jwks.id',
 			'mail_settings.id',
 			'order_internal_notes.id', 'order_internal_notes.order_id',
 			'order_items.combo_id', 'order_items.id', 'order_items.order_id', 'order_items.product_id',
 			'order_items_edits.id', 'order_items_edits.order_id',
 			'order_status_history.id', 'order_status_history.order_id',
-			'orders.created_by', 'orders.id',
-			'products.id',
+			'orders.created_by', 'orders.id', 'orders.storefront_id',
+			'products.id', 'products.storefront_id',
 			'session.id', 'session.impersonatedBy', 'session.userId',
 			'settings.id',
 			'stock_movements.id', 'stock_movements.order_id', 'stock_movements.product_id',
+			'storefront_access_rules.created_by', 'storefront_access_rules.email_list_id', 'storefront_access_rules.id', 'storefront_access_rules.storefront_id',
+			'storefronts.id',
 			'user.id',
 			'verification.id',
 		];
@@ -276,6 +283,7 @@ describe('check constraints', () => {
 		expect(rows.map((r) => r.conname).sort()).toEqual([
 			'combo_category_requirements_quantity_check',
 			'combos_price_check',
+			'email_list_entries_email_lower_check',
 			'order_items_price_check',
 			'order_items_quantity_check',
 			'orders_phone_number_check',
@@ -285,6 +293,10 @@ describe('check constraints', () => {
 			'products_sale_price_check',
 			'products_weight_check',
 			'stock_movements_set_target_shape_check',
+			'storefront_access_rules_list_ref_check',
+			'storefront_access_rules_list_value_check',
+			'storefront_access_rules_value_lower_check',
+			'storefronts_slug_check',
 		]);
 	});
 
@@ -482,7 +494,7 @@ describe('lib/prisma', () => {
 	it('stores a Date at the right instant, read back through SQL rather than the client', async () => {
 		const at = new Date('2026-10-11T03:04:05.678Z');
 		const created = await lib.prisma.product.create({
-			data: { name: 'x', price: 1000, category: 'food', publicCode: 'PRISMA01', slug: 'x', saleStartDate: at },
+			data: { name: 'x', price: 1000, category: 'food', publicCode: 'PRISMA01', slug: 'x', storefrontId: DEFAULT_STOREFRONT_ID, saleStartDate: at },
 		});
 		expect(created.id).toMatch(UUID_V7);
 

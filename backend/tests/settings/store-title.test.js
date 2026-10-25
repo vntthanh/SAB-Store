@@ -28,13 +28,13 @@ describe('store title setting', () => {
 			expect(res.body.data.storeTitle).toBe('SAB Store');
 		});
 
-		it('exposes only storefront fields, never payment details', async () => {
+		it('exposes only storefront and sign-in fields, never payment details', async () => {
 			await makeSettings({ ...PAYMENT_FIELDS, storeTitle: 'Shop' });
 
 			const res = await request(app).get('/api/settings');
 
 			expect(Object.keys(res.body.data).sort()).toEqual(
-				['checkoutNotice', 'contactEmail', 'contactFacebookUrl', 'eventNotice', 'paymentNotice', 'storeTitle']
+				['checkoutNotice', 'contactEmail', 'contactFacebookUrl', 'eventNotice', 'googleClientId', 'otpAvailable', 'paymentNotice', 'storeTitle']
 			);
 			expect(res.body.data.storeTitle).toBe('Shop');
 		});

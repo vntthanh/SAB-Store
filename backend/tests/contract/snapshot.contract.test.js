@@ -9,6 +9,7 @@ const { objectIdToUuidV7 } = require('@sab/shared');
 const data = require('../../data');
 const { validateSnapshot, buildMetadata } = require('../../data/snapshot');
 const { isDuplicateKeyError } = require('../../data/errors');
+const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 const { recordMovement, recordAppliedOpening, applyMovement, reconcile } = require('../../services/stock-ledger');
 const { recordOrderMovements } = require('../../services/stock');
 const { generatePublicCode } = require('../../utils/public-code');
@@ -21,6 +22,9 @@ const { dataSnapshot, orders } = data;
 const POSTGRES = process.env.DATA_BACKEND === 'postgres';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SECTIONS = ['products', 'combos', 'orders', 'stockMovements', 'settings'];
+// Postgres adds the storefront sections; a store with none of its own holds the default storefront.
+const STOREFRONT_COUNTS = POSTGRES ? { storefronts: 1, storefrontAccessRules: 0, emailLists: 0, emailListEntries: 0 } : {};
+const EXPORTED_SECTIONS = [...SECTIONS, ...Object.keys(STOREFRONT_COUNTS)];
 
 afterAll(async () => {
 	if (POSTGRES) await require('../../lib/prisma').closeDb();
@@ -113,7 +117,7 @@ describe('dataSnapshot.exportAll', () => {
 
 		const snapshot = await dataSnapshot.exportAll();
 
-		expect(Object.keys(snapshot).sort()).toEqual([...SECTIONS].sort());
+		expect(Object.keys(snapshot).sort()).toEqual([...EXPORTED_SECTIONS].sort());
 		expect(snapshot.products).toHaveLength(3);
 		expect(snapshot.combos).toHaveLength(1);
 		expect(snapshot.orders).toHaveLength(4);
@@ -212,7 +216,7 @@ describe('dataSnapshot.exportAll', () => {
 
 		const counts = await dataSnapshot.countRows();
 
-		expect(counts).toEqual({ users: 0, products: 3, orders: 4, accounts: 0, combos: 1 });
+		expect(counts).toMatchObject({ users: 0, products: 3, orders: 4, accounts: 0, combos: 1 });
 		expect(() => JSON.stringify(counts)).not.toThrow();
 	});
 });
@@ -229,7 +233,7 @@ describe('dataSnapshot.replaceAll', () => {
 
 		const written = await restore(first);
 
-		expect(written).toEqual({ products: 3, combos: 1, orders: 4, stockMovements: first.stockMovements.length, settings: 1 });
+		expect(written).toEqual({ products: 3, combos: 1, orders: 4, stockMovements: first.stockMovements.length, settings: 1, ...STOREFRONT_COUNTS });
 		expect(await dataSnapshot.exportAll()).toEqual(first);
 		expect(await countRows('product')).toBe(3);
 		expect(await countRows('order')).toBe(4);
@@ -298,7 +302,10 @@ describe('dataSnapshot.replaceAll', () => {
 
 		await restore(empty);
 
-		expect(await dataSnapshot.exportAll()).toEqual(empty);
+		expect(await dataSnapshot.exportAll()).toEqual({
+			...empty,
+			...(POSTGRES && { storefronts: [expect.objectContaining({ _id: DEFAULT_STOREFRONT_ID })], storefrontAccessRules: [], emailLists: [], emailListEntries: [] })
+		});
 		expect(await countRows('movement')).toBe(0);
 		const product = await data.withTransaction((tx) => data.products.create({ name: 'Fresh', price: 1, category: 'c' }, 0, tx));
 		const movement = await recordMovement({ productId: product._id, type: 'adjust', delta: 2, idempotencyKey: 'fresh', createdBy: 'a', reason: 'r' });
@@ -398,7 +405,7 @@ describe('a backup made before the migration', () => {
 
 		const written = await restore(file);
 
-		expect(written).toEqual({ products: 2, combos: 1, orders: 2, stockMovements: 3, settings: 1 });
+		expect(written).toEqual({ products: 2, combos: 1, orders: 2, stockMovements: 3, settings: 1, ...STOREFRONT_COUNTS });
 		expect((await findProduct(mapped(H.p1))).stockQuantity).toBe(4);
 		expect((await findCombo(mapped(H.c1))).categoryRequirements[0]._id).toBe(mapped(H.r1));
 

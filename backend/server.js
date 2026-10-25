@@ -169,6 +169,7 @@ function createApp() {
 	const { authenticateAdmin } = require('./middleware/better-auth');
 	app.use('/api/upload', authenticateAdmin, require('./routes/upload'));
 	app.use('/api/products', require('./routes/products'));
+	app.use('/api/storefronts', require('./routes/storefronts'));
 	app.use('/api/share', require('./routes/share'));
 	app.use('/api/orders', require('./routes/orders'));
 	app.use('/api/combos', require('./routes/combos'));

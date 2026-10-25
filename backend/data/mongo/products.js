@@ -83,6 +83,16 @@ async function findSellableForPricing(channel, ids, fields, tx) {
 }
 
 /**
+ * The storefronts of the products with these ids. Mongo products have no storefront,
+ * so every cart is in the one storefront-less shop.
+ *
+ * @returns {Promise<[null]>}
+ */
+async function storefrontIdsOf() {
+	return [null];
+}
+
+/**
  * Names of the products with these ids that are switched on, whatever channel
  * they sell on.
  *
@@ -121,9 +131,10 @@ function listCategories() {
  * The page of products an admin manages, newest first (ties by id, so a page
  * boundary never repeats or drops a row). `salesChannel` filters on the channel
  * the admin set, not on sellability; a row written before the field existed
- * counts as 'all'. Rows carry the schema defaults.
+ * counts as 'all'. Rows carry the schema defaults. A `storefrontId` is ignored: Mongo
+ * products have no storefront.
  *
- * @param {{page: number, limit: number, search?: string, category?: string, available?: boolean, salesChannel?: string}} query
+ * @param {{page: number, limit: number, search?: string, category?: string, available?: boolean, salesChannel?: string, storefrontId?: string}} query
  * @returns {Promise<{data: object[], meta: {page: number, limit: number, total: number, totalPages: number}}>} `meta.total` counts every match, not the page
  */
 async function listPage({ page, limit, search, category, available, salesChannel }) {
@@ -265,6 +276,7 @@ module.exports = {
 	update,
 	remove,
 	findSellableForPricing,
+	storefrontIdsOf,
 	findAvailableNames,
 	listSellableInCategories
 };

@@ -2,8 +2,8 @@
  * Order mail over the SMTP account an admin saved on the Settings page.
  *
  * Mail is off until the admin turns it on: with no row, the master switch off, a
- * password that no longer decrypts, the kind's own switch off, or no customer
- * address, `sendOrderMail` returns 'skipped' without building a transport, so no
+ * password that no longer decrypts, the kind's own switch off, or no recipient
+ * address, `sendOrderMail` and `sendMail` return 'skipped' without building a transport, so no
  * connection is ever attempted. Sending is best effort and never throws to the
  * caller: an order or status change has already committed when it runs.
  *
@@ -16,13 +16,14 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const { mailSettings, settings } = require('../data');
 const { encryptSecret, decryptSecret } = require('../lib/secret-box');
-const { renderOrderMail } = require('./mail-templates');
+const { renderOrderMail, renderOtpMail } = require('./mail-templates');
 
 // nodemailer's defaults (2 minutes to connect, 10 idle) would hold an admin request
 // or a background send for minutes against a dead host.
 const CONNECTION_TIMEOUT_MS = 10_000;
 const GREETING_TIMEOUT_MS = 10_000;
 const SOCKET_TIMEOUT_MS = 20_000;
+const DNS_TIMEOUT_MS = 15_000;
 
 const ERROR_TEXT_MAX_LENGTH = 200;
 const TEST_LIMIT = 5;
@@ -116,7 +117,8 @@ function createTransport({ row, pass }) {
 		auth: { user: row.username, pass },
 		connectionTimeout: CONNECTION_TIMEOUT_MS,
 		greetingTimeout: GREETING_TIMEOUT_MS,
-		socketTimeout: SOCKET_TIMEOUT_MS
+		socketTimeout: SOCKET_TIMEOUT_MS,
+		dnsTimeout: DNS_TIMEOUT_MS
 	});
 }
 
@@ -224,37 +226,85 @@ async function storeTitleOrDefault() {
 let warnedUndecryptable = false;
 
 /**
- * Call after the change has committed. `order` carries `email`, `fullName`, `orderCode`,
- * `items`, `totalAmount`, `status`, `cancelReason`, plus `paymentDescription` for a new order.
- *
- * @param {'order_created'|'status_changed'} kind
- * @returns {Promise<'sent'|'skipped'|'failed'>} never rejects
+ * The one send path: reads the saved account, skips (no transport, no connection) unless
+ * mail is on and, when `switchName` is given, that kind's own switch is on, then builds
+ * and sends the message. Never rejects.
  */
-
-async function sendOrderMail(kind, order) {
+async function sendWhenEnabled(switchName, label, buildMessage) {
 	try {
-		const switchName = KIND_SWITCH[kind];
-		const to = typeof order?.email === 'string' ? order.email.trim() : '';
-		if (!switchName || !to) return 'skipped';
-
 		const row = await mailSettings.findConfig();
-		if (!row || !row.enabled || !row[switchName]) return 'skipped';
+		if (!row || !row.enabled || (switchName && !row[switchName])) return 'skipped';
 		const pass = decryptSecret(row.passEncrypted);
 		if (pass === null) {
-			// Switched on but sealed under an earlier JWT_SECRET: say so once, not per order.
-			if (!warnedUndecryptable) console.warn('Order mail is on but the SMTP password no longer decrypts; re-enter it in Settings');
+			// Switched on but sealed under an earlier JWT_SECRET: say so once, not per mail.
+			if (!warnedUndecryptable) console.warn('Mail is on but the SMTP password no longer decrypts; re-enter it in Settings');
 			warnedUndecryptable = true;
 			return 'skipped';
 		}
 		const account = { row, pass };
 
-		const { subject, html, text } = renderOrderMail(kind, order, await storeTitleOrDefault());
-		await sharedTransport(account).sendMail({ from: senderOf(account), to, subject, html, text });
+		const message = await buildMessage();
+		await sharedTransport(account).sendMail({ from: senderOf(account), ...message });
 		return 'sent';
 	} catch (err) {
-		console.error(`Order mail (${kind}) failed: ${errorClass(err)}`);
+		console.error(`${label} failed: ${errorClass(err)}`);
 		return 'failed';
 	}
 }
 
-module.exports = { MailServiceError, getPublicConfig, saveConfig, sendTest, sendOrderMail, takeTestSlot, sanitizeMailError };
+/**
+ * Best-effort mail for anything that is not an order notification (such as a sign-in
+ * code). Behind the master switch only; the order kind switches do not apply.
+ *
+ * @param {{to: string, subject: string, html?: string, text?: string}} message
+ * @returns {Promise<'sent'|'skipped'|'failed'>} never rejects
+ */
+async function sendMail({ to, subject, html, text }) {
+	const address = typeof to === 'string' ? to.trim() : '';
+	if (!address) return 'skipped';
+	return sendWhenEnabled(null, 'Mail', async () => ({ to: address, subject, html, text }));
+}
+
+/**
+ * Whether `sendMail` would try to send: mail is switched on and the saved password
+ * still decrypts. The sign-in code flow asks this up front because Better Auth
+ * swallows a send failure raised inside its callback, so the only way to tell a
+ * visitor "email codes are unavailable" is to check before issuing one.
+ */
+async function isMailAvailable() {
+	const account = await loadAccount();
+	return Boolean(account?.row.enabled);
+}
+
+/**
+ * The sign-in code message for `sendMail`, titled with the store's own name.
+ *
+ * @param {string} to
+ * @param {string} code
+ * @param {number} expiresInMinutes
+ * @returns {Promise<{to: string, subject: string, html: string, text: string}>}
+ */
+async function buildOtpMessage(to, code, expiresInMinutes) {
+	return { to, ...renderOtpMail(code, expiresInMinutes, await storeTitleOrDefault()) };
+}
+
+/**
+ * Call after the change has committed. `order` carries `email`, `fullName`, `orderCode`,
+ * `items`, `totalAmount`, `status`, `cancelReason`, plus `studentId`, `phoneNumber`,
+ * `additionalNote`, `createdAt` and `paymentDescription` for a new order.
+ *
+ * @param {'order_created'|'status_changed'} kind
+ * @returns {Promise<'sent'|'skipped'|'failed'>} never rejects
+ */
+async function sendOrderMail(kind, order) {
+	const switchName = KIND_SWITCH[kind];
+	const to = typeof order?.email === 'string' ? order.email.trim() : '';
+	if (!switchName || !to) return 'skipped';
+
+	return sendWhenEnabled(switchName, `Order mail (${kind})`, async () => {
+		const { subject, html, text } = renderOrderMail(kind, order, await storeTitleOrDefault());
+		return { to, subject, html, text };
+	});
+}
+
+module.exports = { MailServiceError, getPublicConfig, saveConfig, sendTest, sendMail, buildOtpMessage, isMailAvailable, sendOrderMail, takeTestSlot, sanitizeMailError };

@@ -7,6 +7,8 @@ import Modal from '../../components/Modal';
 import ChangePassword from '../../components/ChangePassword';
 import OrderNotesPanel from '../../components/admin/OrderNotesPanel';
 import OrderItemsEditor from '../../components/admin/OrderItemsEditor';
+import StorefrontFilter from '../../components/admin/StorefrontFilter';
+import useAdminStorefronts from '../../components/admin/use-admin-storefronts';
 import { isFinalOrderStatus } from '../../utils/order-status';
 import { describePage } from '../../utils/pagination';
 
@@ -22,10 +24,12 @@ const AdminDashboard = () => {
 	const [filters, setFilters] = useState({
 		search: '',
 		status: '',
+		storefrontId: '',
 		page: 1,
 		limit: 10
 	});
 	const [pagination, setPagination] = useState(null);
+	const { storefronts, nameOf } = useAdminStorefronts();
 	const pageRange = pagination && describePage(pagination);
 
 	// Handle ESC key to close modal
@@ -293,7 +297,8 @@ const AdminDashboard = () => {
 		try {
 			const exportFilters = {
 				status: filters.status,
-				search: filters.search
+				search: filters.search,
+				...(filters.storefrontId && { storefrontId: filters.storefrontId })
 			};
 
 			await adminService.exportOrders(exportFilters);
@@ -578,6 +583,13 @@ const AdminDashboard = () => {
 								<option value="cancelled">Đã hủy</option>
 							</select>
 
+							<StorefrontFilter
+								storefronts={storefronts}
+								value={filters.storefrontId}
+								onChange={(value) => handleFilterChange('storefrontId', value)}
+								className="w-full sm:w-44"
+							/>
+
 							{/* Export Button */}
 							<button
 								onClick={handleExport}
@@ -614,7 +626,7 @@ const AdminDashboard = () => {
 								Không có đơn hàng
 							</h3>
 							<p className="text-gray-600">
-								{filters.search || filters.status
+								{filters.search || filters.status || filters.storefrontId
 									? 'Không tìm thấy đơn hàng phù hợp với bộ lọc'
 									: 'Chưa có đơn hàng nào được tạo'
 								}
@@ -626,6 +638,9 @@ const AdminDashboard = () => {
 								<tr>
 									<th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
 										Đơn hàng
+									</th>
+									<th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+										Gian hàng
 									</th>
 									<th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
 										Khách hàng
@@ -662,6 +677,9 @@ const AdminDashboard = () => {
 													{order.items.length} sản phẩm
 												</div>
 											</div>
+										</td>
+										<td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+											{nameOf(order.storefrontId)}
 										</td>
 										<td className="px-6 py-4">
 											<div className="text-sm text-gray-900">{order.fullName}</div>

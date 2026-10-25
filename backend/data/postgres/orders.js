@@ -111,8 +111,17 @@ async function existsByCode(orderCode) {
 	return (await prisma.order.findUnique({ where: { orderCode }, select: { id: true } })) !== null;
 }
 
+/** Orders of one storefront; an id that cannot name one matches nothing, as an unknown status does. */
+function storefrontFilter(storefrontId) {
+	try {
+		return { storefrontId: recordId(storefrontId, 'storefrontId') };
+	} catch {
+		return { id: { in: [] } };
+	}
+}
+
 /** The filter shared by the paged list and the full export; validates what it is given. */
-function listWhere({ status, search, searchFields = [], createdFrom, createdTo }) {
+function listWhere({ status, search, searchFields = [], createdFrom, createdTo, storefrontId }) {
 	if (status !== undefined && typeof status !== 'string') throw new TypeError('status must be a string');
 	const badField = searchFields.find((field) => !SEARCH_FIELDS.includes(field));
 	if (badField !== undefined) throw new TypeError(`Cannot search order field: ${badField}`);
@@ -122,6 +131,7 @@ function listWhere({ status, search, searchFields = [], createdFrom, createdTo }
 	return {
 		// A status the enum does not have matches nothing, as it does on Mongo.
 		...(status && (STATUS_VALUES.includes(status) ? { status } : { id: { in: [] } })),
+		...(storefrontId !== undefined && storefrontFilter(storefrontId)),
 		...(match && searchFields.length > 0 && { OR: searchFields.map((field) => ({ [field]: match })) }),
 		...((createdFrom || createdTo) && { createdAt: { ...(createdFrom && { gte: createdFrom }), ...(createdTo && { lte: createdTo }) } })
 	};
@@ -183,12 +193,12 @@ async function pageByStatus({ where, direction, skip, take, include }) {
  *
  * @param {{page: number, limit: number, sort: Object<string, 1|-1>, status?: string,
  *          search?: string, searchFields?: string[], createdFrom?: Date, createdTo?: Date,
- *          omit?: string[], withProducts?: string[]}} query `sort` has one entry:
+ *          storefrontId?: string, omit?: string[], withProducts?: string[]}} query `sort` has one entry:
  *          `createdAt`, `totalAmount`, `status`, `orderCode` or `orderNumber`; `createdTo` is inclusive
  * @returns {Promise<{data: object[], meta: object}>}
  */
-async function listPage({ page, limit, sort, status, search, searchFields = [], createdFrom, createdTo, omit = [], withProducts }) {
-	const where = listWhere({ status, search, searchFields, createdFrom, createdTo });
+async function listPage({ page, limit, sort, status, search, searchFields = [], createdFrom, createdTo, storefrontId, omit = [], withProducts }) {
+	const where = listWhere({ status, search, searchFields, createdFrom, createdTo, storefrontId });
 	const ordering = sortOf(sort);
 	const include = includeFor(omit);
 	const { skip, take } = toSkipTake(page, limit);

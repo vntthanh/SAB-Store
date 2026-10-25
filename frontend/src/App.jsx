@@ -7,7 +7,8 @@ import 'react-toastify/dist/ReactToastify.css';
 import { CartProvider } from './context/CartContext';
 
 // Pages
-import HomePage from './pages/HomePage';
+import StorefrontIndexPage from './pages/StorefrontIndexPage';
+import StorefrontPage from './pages/StorefrontPage';
 import CheckoutPage from './pages/CheckoutPage';
 import OrderSuccessPage from './pages/OrderSuccessPage';
 import OrderTrackingPage from './pages/OrderTrackingPage';
@@ -20,6 +21,8 @@ import NotFoundPage from './pages/NotFoundPage';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import ProductsManagement from './pages/admin/ProductsManagement';
 import ComboManagement from './pages/admin/ComboManagement';
+import StorefrontManagement from './pages/admin/StorefrontManagement';
+import EmailListManagement from './pages/admin/EmailListManagement';
 import SellersManagement from './pages/admin/SellersManagement';
 import DatabaseManagement from './pages/admin/DatabaseManagement';
 import SettingsManagement from './pages/admin/SettingsManagement';
@@ -43,7 +46,8 @@ function App() {
 					<Routes>
 						{/* Public Routes */}
 						<Route path="/" element={<Layout />}>
-							<Route index element={<HomePage />} />
+							<Route index element={<StorefrontIndexPage />} />
+							<Route path="s/:slug" element={<StorefrontPage />} />
 							<Route path="checkout" element={<CheckoutPage />} />
 							<Route path="order-success" element={<OrderSuccessPage />} />
 							<Route path="order-tracking" element={<OrderTrackingPage />} />
@@ -75,6 +79,20 @@ function App() {
 							<ProtectedRoute>
 								<AdminLayout>
 									<ComboManagement />
+								</AdminLayout>
+							</ProtectedRoute>
+						} />
+						<Route path="/admin/storefronts" element={
+							<ProtectedRoute>
+								<AdminLayout>
+									<StorefrontManagement />
+								</AdminLayout>
+							</ProtectedRoute>
+						} />
+						<Route path="/admin/email-lists" element={
+							<ProtectedRoute>
+								<AdminLayout>
+									<EmailListManagement />
 								</AdminLayout>
 							</ProtectedRoute>
 						} />

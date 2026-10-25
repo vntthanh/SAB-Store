@@ -2,7 +2,7 @@
 
 Hệ thống bán lanyard/merch cho sinh viên (SAB): khách đặt online và theo dõi đơn; admin quản lý
 sản phẩm/combo/seller/đơn, dashboard, import/export DB; seller bán trực tiếp (POS) và xem đơn;
-thanh toán chuyển khoản VietQR; email xác nhận qua AppScript.
+thanh toán chuyển khoản VietQR; email xác nhận đơn qua SMTP do admin cấu hình (mặc định tắt). Gian hàng (storefront) công khai/riêng tư với quy tắc truy cập theo email/tên miền/danh sách; khách đăng nhập bằng mã email (cần SMTP) hoặc Google One Tap (`GOOGLE_CLIENT_ID`); staff vẫn dùng mật khẩu. Hướng dẫn admin: `docs/storefronts.md`.
 
 Stack (version: đọc `package.json` / Dockerfile / compose, không ghi ở đây):
 - `backend/`: Express + Mongoose (MongoDB), Better Auth (username/password, session, role admin/seller),

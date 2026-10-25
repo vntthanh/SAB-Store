@@ -103,7 +103,29 @@ const authenticateSeller = async (req, res, next) => {
 	}
 };
 
+/**
+ * Identifies the visitor when there is a session and lets everyone else through.
+ * Sets `req.viewer` to `{ id, email, emailVerified, role }`, or null for an anonymous
+ * request or a session that cannot be read. It never answers 401: a public route that
+ * serves more to a signed-in viewer decides for itself what null means, and a failing
+ * session lookup must degrade to "anonymous", not to an open door.
+ */
+const authenticateOptional = async (req, res, next) => {
+	req.viewer = null;
+	try {
+		const session = await auth.api.getSession({ headers: req.headers });
+		if (session?.user) {
+			const { id, email, emailVerified, role } = session.user;
+			req.viewer = { id, email, emailVerified: emailVerified === true, role };
+		}
+	} catch (error) {
+		console.error('Optional auth middleware error:', error);
+	}
+	next();
+};
+
 module.exports = {
+	authenticateOptional,
 	authenticateUser,
 	authenticateAdmin,
 	authenticateSeller

@@ -15,7 +15,10 @@ const { mapJsonIds } = require('./json-ids');
 
 const STATUS_VALUES = Object.values(OrderStatus);
 const PHONE = /^0[0-9]{9}$/;
-const EMAIL = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
+// Same language as the Mongo model's pattern, written so a failing match is linear: with
+// `([.-]?\w+)*` a long address that does not match backtracks exponentially, and a private
+// storefront's order stores the session's address, which no earlier gate bounds.
+const EMAIL = /^\w+(?:[.-]\w+)*@\w+(?:[.-]\w+)*(?:\.\w{2,3})+$/;
 
 const requiredMessage = (name) => `Path \`${name}\` is required.`;
 const tooLong = (name, max) => `Path \`${name}\` is longer than the maximum allowed length (${max}).`;
@@ -221,6 +224,7 @@ function newOrder(fields) {
 		itemsRevision: number('itemsRevision', fields.itemsRevision ?? undefined, { min: 0, minMessage: invalid('itemsRevision'), integer: true, integerMessage: invalid('itemsRevision') }),
 		isDirectSale: checkBoolean(problems, 'isDirectSale', fields.isDirectSale ?? undefined),
 		createdBy: id('createdBy', fields.createdBy),
+		storefrontId: id('storefrontId', fields.storefrontId),
 		comboInfo: jsonOrNull(fields.comboInfo)
 	});
 

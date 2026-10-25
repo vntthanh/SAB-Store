@@ -21,6 +21,7 @@ const { Pool } = require('pg');
 const { v7: uuidv7 } = require('uuid');
 const data = require('../../data');
 const { DuplicateKeyError } = require('../../data/errors');
+const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 const { POOL_OPTIONS } = require('./postgres');
 const { prisma } = require('../../lib/prisma');
 const { SETTINGS_KEY, DEFAULT_NOTICES, DEFAULT_CONTACT, NOTICE_MAX_LENGTH } = require('../../constants/settings');
@@ -121,7 +122,7 @@ const listCombos = async () => Promise.all((await select('combos')).map(withRequ
 const findSettings = () => selectOne('settings', {});
 
 // An optional order column that is NULL is an absent key in the API JSON.
-const ORDER_ABSENT_WHEN_NULL = new Set(['orderNumber', 'phoneNumber', 'studentId', 'fullName', 'email', 'additionalNote', 'transactionCode', 'cancelReason', 'createdBy']);
+const ORDER_ABSENT_WHEN_NULL = new Set(['orderNumber', 'phoneNumber', 'studentId', 'fullName', 'email', 'additionalNote', 'transactionCode', 'cancelReason', 'createdBy', 'storefrontId']);
 const dropNulls = (row, keys) => Object.fromEntries(Object.entries(row).filter(([key, value]) => value !== null || !keys.has(key)));
 
 /** An order with its child rows nested the way the API JSON shows them, in position order. */
@@ -200,7 +201,7 @@ async function insertRawUser(fields) {
 }
 
 // Defaults for the NOT NULL columns without a database default, so a test names only what it cares about.
-const PRODUCT_DEFAULTS = () => ({ name: `Test Product ${uuidv7()}`, price: 0, category: 'general', publicCode: uuidv7(), slug: 'test-product' });
+const PRODUCT_DEFAULTS = () => ({ name: `Test Product ${uuidv7()}`, price: 0, category: 'general', publicCode: uuidv7(), slug: 'test-product', storefrontId: DEFAULT_STOREFRONT_ID });
 
 /**
  * Inserts a product exactly as given plus defaults for the columns that must
@@ -220,15 +221,20 @@ const COMBO_DEFAULTS = () => ({ name: `Test Combo ${uuidv7()}`, price: 0, public
 
 /**
  * Inserts a combo exactly as given plus defaults for the columns that must exist,
- * and one requirements row per `categoryRequirements` entry.
+ * one requirements row per `categoryRequirements` entry and one storefront link per
+ * `storefrontIds` entry (the default storefront when none is named: a combo with no
+ * link is offered nowhere).
  */
-async function insertRawCombo({ categoryRequirements = [], ...fields }) {
+async function insertRawCombo({ categoryRequirements = [], storefrontIds = [DEFAULT_STOREFRONT_ID], ...fields }) {
 	const row = { id: uuidv7(), ...COMBO_DEFAULTS(), ...fields };
 	const columns = Object.keys(row).map(columnOf);
 	await db().query(
 		`INSERT INTO combos (${columns.map(quote).join(', ')}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')})`,
 		Object.values(row)
 	);
+	for (const storefrontId of storefrontIds) {
+		await db().query('INSERT INTO combo_storefronts (id, combo_id, storefront_id) VALUES ($1::uuid, $2::uuid, $3::uuid)', [uuidv7(), row.id, storefrontId]);
+	}
 	// Written last position first, so a read without ORDER BY position comes back in the wrong order.
 	for (const [position, requirement] of [...categoryRequirements.entries()].reverse()) {
 		await db().query(

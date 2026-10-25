@@ -6,7 +6,9 @@ const ProductModal = ({
 	onClose,
 	product,
 	onSubmit,
-	onUploadImage
+	onUploadImage,
+	storefronts,
+	defaultStorefrontId
 }) => {
 	if (!isOpen) return null;
 
@@ -31,6 +33,8 @@ const ProductModal = ({
 						onSubmit={onSubmit}
 						onCancel={onClose}
 						onUploadImage={onUploadImage}
+						storefronts={storefronts}
+						defaultStorefrontId={defaultStorefrontId}
 					/>
 				</div>
 			</div>

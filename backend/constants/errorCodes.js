@@ -33,9 +33,30 @@ const ERROR_CODES = {
 	RESTORE_STOCK_MISMATCH: 'RESTORE_STOCK_MISMATCH',
 	RESTORE_IN_PROGRESS: 'RESTORE_IN_PROGRESS',
 	RESTORE_ERROR: 'RESTORE_ERROR',
+	IMPORT_STOREFRONT_MISSING: 'IMPORT_STOREFRONT_MISSING',
 	RESTORE_BUSY: 'RESTORE_BUSY',
 	STORE_RESTORING: 'STORE_RESTORING',
-	EXPORT_TOO_LARGE: 'EXPORT_TOO_LARGE'
+	EXPORT_TOO_LARGE: 'EXPORT_TOO_LARGE',
+	OTP_MAIL_UNAVAILABLE: 'OTP_MAIL_UNAVAILABLE',
+	OTP_COOLDOWN: 'OTP_COOLDOWN',
+	OTP_LIMIT_REACHED: 'OTP_LIMIT_REACHED',
+	EMAIL_HELD_BY_CUSTOMER: 'EMAIL_HELD_BY_CUSTOMER',
+	GOOGLE_EMAIL_UNVERIFIED: 'GOOGLE_EMAIL_UNVERIFIED',
+	STOREFRONT_NOT_FOUND: 'STOREFRONT_NOT_FOUND',
+	STOREFRONT_LOGIN_REQUIRED: 'STOREFRONT_LOGIN_REQUIRED',
+	STOREFRONT_FORBIDDEN: 'STOREFRONT_FORBIDDEN',
+	STOREFRONT_ORDER_FORBIDDEN: 'STOREFRONT_ORDER_FORBIDDEN',
+	ORDER_MIXED_STOREFRONTS: 'ORDER_MIXED_STOREFRONTS',
+	STOREFRONT_IN_USE: 'STOREFRONT_IN_USE',
+	LAST_ACTIVE_STOREFRONT: 'LAST_ACTIVE_STOREFRONT',
+	DEFAULT_STOREFRONT: 'DEFAULT_STOREFRONT',
+	STOREFRONT_SLUG_TAKEN: 'STOREFRONT_SLUG_TAKEN',
+	EMAIL_LIST_NOT_FOUND: 'EMAIL_LIST_NOT_FOUND',
+	EMAIL_LIST_NAME_TAKEN: 'EMAIL_LIST_NAME_TAKEN',
+	ACCESS_RULE_DUPLICATE: 'ACCESS_RULE_DUPLICATE',
+	RULE_NOT_FOUND: 'RULE_NOT_FOUND',
+	EMAIL_ENTRY_NOT_FOUND: 'EMAIL_ENTRY_NOT_FOUND',
+	REFERENCE_VIOLATION: 'REFERENCE_VIOLATION'
 };
 
 const ERROR_MESSAGES = {
@@ -175,6 +196,10 @@ const ERROR_MESSAGES = {
 		vi: 'Khôi phục thất bại, dữ liệu hiện tại được giữ nguyên',
 		en: 'Restore failed; current data is unchanged'
 	},
+	[ERROR_CODES.IMPORT_STOREFRONT_MISSING]: {
+		vi: 'File nhắc tới cửa hàng chưa có trong hệ thống này. Hãy dùng "Khôi phục" để nạp lại cửa hàng trước; chưa có dữ liệu nào bị thay đổi',
+		en: 'The file names a storefront this system lacks. Use Restore to load the storefront first; nothing was changed'
+	},
 	[ERROR_CODES.RESTORE_BUSY]: {
 		vi: 'Hệ thống còn thao tác ghi đang chạy nên chưa khôi phục được, vui lòng thử lại sau ít phút',
 		en: 'Writes are still in flight; restore did not start'
@@ -186,6 +211,86 @@ const ERROR_MESSAGES = {
 	[ERROR_CODES.EXPORT_TOO_LARGE]: {
 		vi: 'Bản sao lưu vượt quá giới hạn 10MB nên không thể khôi phục lại được, vì vậy không tạo file. Hãy liên hệ người quản trị hệ thống',
 		en: 'The backup exceeds the 10MB restore limit, so it was not produced'
+	},
+	[ERROR_CODES.OTP_MAIL_UNAVAILABLE]: {
+		vi: 'Hiện chưa gửi được mã qua email, vui lòng đăng nhập bằng Google',
+		en: 'Sign-in codes by email are unavailable right now'
+	},
+	[ERROR_CODES.OTP_COOLDOWN]: {
+		vi: 'Vui lòng đợi 60 giây trước khi gửi lại mã',
+		en: 'Please wait 60 seconds before requesting another code'
+	},
+	[ERROR_CODES.OTP_LIMIT_REACHED]: {
+		vi: 'Đã gửi quá nhiều mã, vui lòng thử lại sau',
+		en: 'Too many codes were sent, please try again later'
+	},
+	[ERROR_CODES.EMAIL_HELD_BY_CUSTOMER]: {
+		vi: 'Email đã thuộc một tài khoản khách hàng',
+		en: 'This email already belongs to a customer account'
+	},
+	[ERROR_CODES.GOOGLE_EMAIL_UNVERIFIED]: {
+		vi: 'Email của tài khoản Google này chưa được xác minh',
+		en: 'The Google account email is not verified'
+	},
+	[ERROR_CODES.STOREFRONT_NOT_FOUND]: {
+		vi: 'Không tìm thấy gian hàng',
+		en: 'Storefront not found'
+	},
+	[ERROR_CODES.STOREFRONT_LOGIN_REQUIRED]: {
+		vi: 'Vui lòng đăng nhập để xem gian hàng này',
+		en: 'Please sign in to view this storefront'
+	},
+	[ERROR_CODES.STOREFRONT_FORBIDDEN]: {
+		vi: 'Tài khoản của bạn chưa được cấp quyền vào gian hàng này',
+		en: 'Your account has no access to this storefront'
+	},
+	[ERROR_CODES.STOREFRONT_ORDER_FORBIDDEN]: {
+		vi: 'Email của bạn không nằm trong danh sách được đặt hàng ở gian hàng này',
+		en: 'Your email is not allowed to order in this storefront'
+	},
+	[ERROR_CODES.ORDER_MIXED_STOREFRONTS]: {
+		vi: 'Đơn hàng chỉ được gồm sản phẩm của một gian hàng',
+		en: 'An order may only contain products of one storefront'
+	},
+	[ERROR_CODES.STOREFRONT_IN_USE]: {
+		vi: 'Gian hàng còn sản phẩm, combo hoặc đơn hàng nên không thể xoá; hãy tắt gian hàng thay vì xoá',
+		en: 'The storefront still has products, combos or orders; deactivate it instead'
+	},
+	[ERROR_CODES.LAST_ACTIVE_STOREFRONT]: {
+		vi: 'Phải còn ít nhất một gian hàng đang hoạt động',
+		en: 'At least one storefront must stay active'
+	},
+	[ERROR_CODES.DEFAULT_STOREFRONT]: {
+		vi: 'Không thể xoá gian hàng mặc định',
+		en: 'The default storefront cannot be deleted'
+	},
+	[ERROR_CODES.STOREFRONT_SLUG_TAKEN]: {
+		vi: 'Đường dẫn gian hàng đã được dùng',
+		en: 'This storefront slug is already taken'
+	},
+	[ERROR_CODES.EMAIL_LIST_NOT_FOUND]: {
+		vi: 'Không tìm thấy danh sách email',
+		en: 'Email list not found'
+	},
+	[ERROR_CODES.EMAIL_LIST_NAME_TAKEN]: {
+		vi: 'Tên danh sách email đã được dùng',
+		en: 'This email list name is already taken'
+	},
+	[ERROR_CODES.ACCESS_RULE_DUPLICATE]: {
+		vi: 'Quy tắc truy cập này đã tồn tại',
+		en: 'This access rule already exists'
+	},
+	[ERROR_CODES.RULE_NOT_FOUND]: {
+		vi: 'Không tìm thấy quy tắc',
+		en: 'Access rule not found'
+	},
+	[ERROR_CODES.EMAIL_ENTRY_NOT_FOUND]: {
+		vi: 'Không tìm thấy email trong danh sách',
+		en: 'Email not found in the list'
+	},
+	[ERROR_CODES.REFERENCE_VIOLATION]: {
+		vi: 'Bản ghi được tham chiếu không còn tồn tại',
+		en: 'A referenced record no longer exists'
 	}
 };
 
@@ -241,9 +346,30 @@ const ERROR_CODE_TO_HTTP_STATUS = {
 	[ERROR_CODES.RESTORE_STOCK_MISMATCH]: HTTP_STATUS.BAD_REQUEST,
 	[ERROR_CODES.RESTORE_IN_PROGRESS]: HTTP_STATUS.CONFLICT,
 	[ERROR_CODES.RESTORE_ERROR]: HTTP_STATUS.INTERNAL_SERVER_ERROR,
+	[ERROR_CODES.IMPORT_STOREFRONT_MISSING]: HTTP_STATUS.BAD_REQUEST,
 	[ERROR_CODES.RESTORE_BUSY]: HTTP_STATUS.SERVICE_UNAVAILABLE,
 	[ERROR_CODES.STORE_RESTORING]: HTTP_STATUS.SERVICE_UNAVAILABLE,
-	[ERROR_CODES.EXPORT_TOO_LARGE]: HTTP_STATUS.PAYLOAD_TOO_LARGE
+	[ERROR_CODES.EXPORT_TOO_LARGE]: HTTP_STATUS.PAYLOAD_TOO_LARGE,
+	[ERROR_CODES.OTP_MAIL_UNAVAILABLE]: HTTP_STATUS.SERVICE_UNAVAILABLE,
+	[ERROR_CODES.OTP_COOLDOWN]: HTTP_STATUS.TOO_MANY_REQUESTS,
+	[ERROR_CODES.OTP_LIMIT_REACHED]: HTTP_STATUS.TOO_MANY_REQUESTS,
+	[ERROR_CODES.EMAIL_HELD_BY_CUSTOMER]: HTTP_STATUS.CONFLICT,
+	[ERROR_CODES.GOOGLE_EMAIL_UNVERIFIED]: HTTP_STATUS.FORBIDDEN,
+	[ERROR_CODES.STOREFRONT_NOT_FOUND]: HTTP_STATUS.NOT_FOUND,
+	[ERROR_CODES.STOREFRONT_LOGIN_REQUIRED]: HTTP_STATUS.UNAUTHORIZED,
+	[ERROR_CODES.STOREFRONT_FORBIDDEN]: HTTP_STATUS.FORBIDDEN,
+	[ERROR_CODES.STOREFRONT_ORDER_FORBIDDEN]: HTTP_STATUS.FORBIDDEN,
+	[ERROR_CODES.ORDER_MIXED_STOREFRONTS]: HTTP_STATUS.BAD_REQUEST,
+	[ERROR_CODES.STOREFRONT_IN_USE]: HTTP_STATUS.CONFLICT,
+	[ERROR_CODES.LAST_ACTIVE_STOREFRONT]: HTTP_STATUS.CONFLICT,
+	[ERROR_CODES.DEFAULT_STOREFRONT]: HTTP_STATUS.CONFLICT,
+	[ERROR_CODES.STOREFRONT_SLUG_TAKEN]: HTTP_STATUS.CONFLICT,
+	[ERROR_CODES.EMAIL_LIST_NOT_FOUND]: HTTP_STATUS.NOT_FOUND,
+	[ERROR_CODES.EMAIL_LIST_NAME_TAKEN]: HTTP_STATUS.CONFLICT,
+	[ERROR_CODES.ACCESS_RULE_DUPLICATE]: HTTP_STATUS.CONFLICT,
+	[ERROR_CODES.RULE_NOT_FOUND]: HTTP_STATUS.NOT_FOUND,
+	[ERROR_CODES.EMAIL_ENTRY_NOT_FOUND]: HTTP_STATUS.NOT_FOUND,
+	[ERROR_CODES.REFERENCE_VIOLATION]: HTTP_STATUS.CONFLICT
 };
 
 module.exports = {

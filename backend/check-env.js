@@ -29,7 +29,6 @@ const OPTIONAL = [
 	'NODE_ENV',
 	'PORT',
 	'BASE_URL',
-	'APPSCRIPT_URL',
 	'INIT_EMPTY_DATABASE',
 	// Read only to create the first admin in an empty database.
 	'ADMIN_EMAIL',
@@ -39,6 +38,8 @@ const OPTIONAL = [
 	'MINIO_PORT',
 	'MINIO_BUCKET_NAME',
 	'MINIO_USE_SSL',
+	// Google One Tap is offered only when this is set; unset hides the button.
+	'GOOGLE_CLIENT_ID',
 	'TZ',
 ];
 
@@ -66,6 +67,13 @@ const problems = [];
 if (jwt && jwt.length < 32) problems.push('JWT_SECRET is shorter than 32 characters');
 if (jwt && /change-this|your-super-secret|secret-key-here|changeme/i.test(jwt)) {
 	problems.push('JWT_SECRET is still a placeholder value');
+}
+
+// A wrong client id does not fail at boot: Google would reject every token at
+// sign-in time, so a typo is caught here instead.
+const googleClientId = process.env.GOOGLE_CLIENT_ID;
+if (googleClientId && !googleClientId.endsWith('.apps.googleusercontent.com')) {
+	problems.push('GOOGLE_CLIENT_ID must end with .apps.googleusercontent.com');
 }
 
 if (missing.length) problems.push(`missing required: ${missing.join(', ')}`);

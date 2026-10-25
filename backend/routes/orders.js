@@ -1,13 +1,13 @@
 const express = require('express');
 const { validateOrder, trimText } = require('../middleware/validation');
 const { generateOrderCode } = require('../utils/helpers');
-const { sendOrderToAppScript } = require('../utils/appscript');
 const { sendOrderMail } = require('../services/mailer');
 const { generateOrderPaymentQR, formatOrderPaymentDescription } = require('../utils/paymentHelper');
 const { computeOrderPricing, assertExpectedTotal, pricingErrorBody, PricingError } = require('../services/pricing');
 const { recordOrderMovements } = require('../services/stock');
 const { enqueueMovements } = require('../services/stock-ledger');
-const { orders, withTransaction } = require('../data');
+const { orders, storefronts, withTransaction } = require('../data');
+const { StorefrontAccessError, resolveViewer, assertCanOrder, assertCanOrderCart, sendAccessError } = require('../services/storefront-access');
 const { RecordValidationError, isDuplicateKeyOn } = require('../data/errors');
 const { gated } = require('../services/write-gate');
 const { logEvent, orderCreatedFields } = require('../utils/log-event');
@@ -28,7 +28,7 @@ router.post('/', validateOrder, gated(async (req, res) => {
 		// what is stored and forwarded is trimmed here.
 		const studentId = trimText(req.body.studentId);
 		const fullName = trimText(req.body.fullName);
-		const email = trimText(req.body.email);
+		const clientEmail = trimText(req.body.email);
 		const phoneNumber = trimText(req.body.phoneNumber);
 		const additionalNote = trimText(req.body.additionalNote);
 
@@ -41,16 +41,35 @@ router.post('/', validateOrder, gated(async (req, res) => {
 		// A duplicate orderCode (another order already has it, or two requests drew
 		// the same fresh code) aborts the transaction, so the whole transaction
 		// runs again with a new code.
+		// The session is read before the transaction opens: resolving it is not
+		// part of the order and must not run inside a retryable transaction.
+		const viewer = await resolveViewer(req);
+
 		let created;
 		for (let attempt = 1; !created; attempt++) {
 			try {
 				created = await withTransaction(async (tx) => {
+					// Before pricing: its errors name products and prices, which a viewer
+					// without access to the storefront must not learn.
+					await assertCanOrderCart(items, viewer, tx);
 					const pricing = await computeOrderPricing(items, {
 						channel: 'online',
 						session: tx,
 						enforceQuantityLimits: true
 					});
 					assertExpectedTotal(expectedTotal, pricing.totalAmount);
+
+					// Access is decided here, in the order's own transaction and from the
+					// rules as they are now, so a rule revoked since the page loaded blocks
+					// this very order. A null storefront (rollback store) has no rules.
+					let email = clientEmail;
+					if (pricing.storefrontId !== null) {
+						const storefront = await storefronts.findById(pricing.storefrontId, tx);
+						await assertCanOrder(storefront, viewer, tx);
+						// The session's verified address is what the whitelist admitted; the
+						// address typed into the form could be anyone's.
+						if (storefront.visibility === 'PRIVATE') email = viewer.email;
+					}
 
 					const order = await orders.create({
 						orderCode: generateOrderCode(),
@@ -59,6 +78,7 @@ router.post('/', validateOrder, gated(async (req, res) => {
 						email,
 						phoneNumber,
 						additionalNote,
+						storefrontId: pricing.storefrontId,
 						items: pricing.orderItems,
 						totalAmount: pricing.totalAmount,
 						status: 'confirmed',
@@ -84,9 +104,10 @@ router.post('/', validateOrder, gated(async (req, res) => {
 						reason: `Đơn hàng ${order.orderCode}`
 					}, { tx });
 
-					return { order, pricing, movements };
+					return { order, pricing, movements, email };
 				});
 			} catch (error) {
+				if (error instanceof StorefrontAccessError) return sendAccessError(res, error);
 				if (error instanceof PricingError) {
 					console.error('❌ Pricing rejected order:', error.code, error.details);
 					return res.status(error.httpStatus).json(pricingErrorBody(error));
@@ -107,7 +128,7 @@ router.post('/', validateOrder, gated(async (req, res) => {
 			}
 		}
 
-		const { order, pricing: { totalAmount, orderItems, comboInfo }, movements } = created;
+		const { order, pricing: { totalAmount, orderItems, comboInfo }, movements, email } = created;
 
 		// The order is durable; only now may anything leave the transaction.
 		logEvent('order.created', orderCreatedFields({ channel: 'online', orderItems, totalAmount, comboInfo }));
@@ -123,30 +144,16 @@ router.post('/', validateOrder, gated(async (req, res) => {
 			console.error('❌ Failed to generate QR URL:', qrError.message);
 		}
 
-		// Log dữ liệu gửi App Script
-		const appscriptData = {
-			orderCode: order.orderCode,
-			studentId,
-			fullName,
-			email,
-			phoneNumber,
-			additionalNote,
-			items: orderItems,
-			totalAmount
-		};
-		// Gửi lên App Script sau, không chờ kết quả
-		setImmediate(() => {
-			sendOrderToAppScript(appscriptData).catch(err => {
-				console.error('Gửi đơn hàng lên App Script thất bại:', err.message);
-			});
-		});
-
 		// Confirmation mail to the customer; the mailer skips it unless an admin turned it on.
 		setImmediate(() => {
 			sendOrderMail('order_created', {
 				orderCode: order.orderCode,
+				studentId,
 				fullName,
 				email,
+				phoneNumber,
+				additionalNote,
+				createdAt: order.createdAt,
 				items: orderItems,
 				totalAmount,
 				paymentDescription

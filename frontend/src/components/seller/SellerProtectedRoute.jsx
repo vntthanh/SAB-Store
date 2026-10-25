@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useSession } from '../../lib/auth-client';
+import { canUseSeller } from '../../lib/auth-flow';
 import LoadingSpinner from '../LoadingSpinner';
 
 const SellerProtectedRoute = ({ children }) => {
@@ -15,7 +16,7 @@ const SellerProtectedRoute = ({ children }) => {
 		);
 	}
 
-	if (error || !session || !session.user || (session.user.role !== 'seller' && session.user.role !== 'admin')) {
+	if (error || !session || !session.user || !canUseSeller(session.user)) {
 		// Redirect to seller login page with the current location
 		return <Navigate to="/login" state={{ from: location }} replace />;
 	}

@@ -1,15 +1,19 @@
 const express = require('express');
 const { gated } = require('../services/write-gate');
-const { combos: comboRepo, products: productRepo } = require('../data');
+const { combos: comboRepo, products: productRepo, storefronts: storefrontRepo } = require('../data');
 const { RecordValidationError } = require('../data/errors');
 const { isRecordId } = require('../data/ids');
 const { authenticateAdmin, authenticateSeller, authenticateUser } = require('../middleware/better-auth');
-const { validateComboItems } = require('../middleware/validation');
+const { validateBody, validateComboItems } = require('../middleware/validation');
 const { computeOrderPricing, pricingErrorBody, PricingError } = require('../services/pricing');
-const { asEnum } = require('../utils/query-guard');
+const { asEnum, asString } = require('../utils/query-guard');
+const { comboStorefrontLinks } = require('@sab/shared');
+const { ERROR_CODES } = require('../constants/errorCodes');
+const { sendCoded } = require('./admin/storefront-params');
 const ErrorLogger = require('../utils/errorLogger');
 const { ErrorResponse } = require('../utils/errorResponse');
-const { findPublicComboByCode } = require('../services/public-catalog');
+const { findViewableComboByCode, onlyOpenCombos } = require('../services/public-catalog');
+const { resolveViewer, isStaff, assertCanViewCart, StorefrontAccessError, sendAccessError } = require('../services/storefront-access');
 const router = express.Router();
 
 const SALE_CHANNELS = ['online', 'offline'];
@@ -18,6 +22,18 @@ const INVALID_SALES_CHANNEL_MESSAGE = 'Kênh bán không hợp lệ';
 // An unknown channel falls back to online (the storefront) instead of erroring:
 // these are read-only previews, and the order routes enforce the channel anyway.
 const channelOf = (value) => asEnum(value, SALE_CHANNELS) || 'online';
+
+/**
+ * The storefront ids of a validated body, lowercased like the stored ones, or
+ * `unknown` when one names no storefront. `ids: undefined` means the field was not
+ * sent (create then defaults it, update keeps the links).
+ */
+async function linkedStorefronts(raw) {
+	if (raw === undefined) return { ids: undefined };
+	const ids = raw.map((id) => id.toLowerCase());
+	const existing = new Set((await storefrontRepo.listAll()).map((storefront) => storefront._id));
+	return ids.every((id) => existing.has(id)) ? { ids } : { unknown: true };
+}
 
 /**
  * @route   GET /api/combos
@@ -35,7 +51,14 @@ router.get('/', authenticateAdmin, async (req, res) => {
 			isActive = false;
 		}
 
-		const combos = await comboRepo.list({ active: isActive });
+		let combos = await comboRepo.list({ active: isActive });
+
+		// "Linked to": a combo is offered in several storefronts.
+		const storefrontId = asString(req.query.storefrontId, 64);
+		if (storefrontId) {
+			const wanted = storefrontId.toLowerCase();
+			combos = combos.filter((combo) => (combo.storefrontIds || []).includes(wanted));
+		}
 
 		res.json({
 			success: true,
@@ -57,7 +80,8 @@ router.get('/', authenticateAdmin, async (req, res) => {
  */
 router.get('/active', async (req, res) => {
 	try {
-		const combos = await comboRepo.listSellable(channelOf(req.query.channel));
+		// A private storefront's combos come with its own catalog.
+		const combos = await onlyOpenCombos(await comboRepo.listSellable(channelOf(req.query.channel)));
 
 		res.json({
 			success: true,
@@ -79,16 +103,18 @@ router.get('/active', async (req, res) => {
  */
 router.get('/by-code/:code', async (req, res) => {
 	try {
-		const combo = await findPublicComboByCode(req.params.code);
-		if (!combo) {
+		const found = await findViewableComboByCode(req.params.code, await resolveViewer(req));
+		if (!found) {
 			return res
 				.status(404)
 				.json(ErrorResponse.formatErrorResponse(ErrorResponse.notFoundError('Combo'), req));
 		}
 
-		res.set('Cache-Control', 'public, max-age=60');
-		res.json({ success: true, data: combo });
+		// A combo with a private storefront depends on who asks, so a shared cache must not keep it.
+		res.set('Cache-Control', found.cacheable ? 'public, max-age=60' : 'private, no-store');
+		res.json({ success: true, data: found.data });
 	} catch (error) {
+		if (error instanceof StorefrontAccessError) return sendAccessError(res, error);
 		ErrorLogger.logRoute('GET /combos/by-code/:code', error, req);
 		res.status(500).json({
 			success: false,
@@ -102,7 +128,7 @@ router.get('/by-code/:code', async (req, res) => {
  * @desc    Create new combo
  * @access  Private/Admin
  */
-router.post('/', authenticateAdmin, gated(async (req, res) => {
+router.post('/', authenticateAdmin, validateBody(comboStorefrontLinks), gated(async (req, res) => {
 	try {
 		const { name, description, price, categoryRequirements, priority, salesChannel } = req.body;
 
@@ -138,13 +164,17 @@ router.post('/', authenticateAdmin, gated(async (req, res) => {
 			});
 		}
 
+		const links = await linkedStorefronts(req.body.storefrontIds);
+		if (links.unknown) return sendCoded(res, ERROR_CODES.STOREFRONT_NOT_FOUND);
+
 		const combo = await comboRepo.create({
 			name,
 			description,
 			price,
 			categoryRequirements,
 			priority: priority || 0,
-			...(salesChannel !== undefined && { salesChannel })
+			...(salesChannel !== undefined && { salesChannel }),
+			...(links.ids && { storefrontIds: links.ids })
 		});
 
 		res.status(201).json({
@@ -181,8 +211,18 @@ router.post('/pricing', validateComboItems, async (req, res) => {
 		// Validation accepts digit-string quantities without rewriting them; the engine needs numbers.
 		const items = req.body.items.map((item) => ({ ...item, quantity: Number(item.quantity) }));
 
+		// Before pricing: its errors name products and prices, which a viewer
+		// without access to the storefront must not learn.
+		const viewer = await resolveViewer(req);
+		await assertCanViewCart(items, viewer);
+
+		// The scope the order route will use: a counter cart may span storefronts
+		// only for the staff who ring it up (seller direct sale); any other cart is
+		// one storefront's.
+		const channel = channelOf(req.body.channel);
+		const scope = channel === 'offline' && isStaff(viewer) ? 'any' : 'single';
 		const { originalTotal, totalAmount, savings, orderItems, comboInfo } =
-			await computeOrderPricing(items, { channel: channelOf(req.body.channel) });
+			await computeOrderPricing(items, { channel, scope });
 
 		res.json({
 			success: true,
@@ -205,6 +245,7 @@ router.post('/pricing', validateComboItems, async (req, res) => {
 		if (error instanceof PricingError) {
 			return res.status(error.httpStatus).json(pricingErrorBody(error));
 		}
+		if (error instanceof StorefrontAccessError) return sendAccessError(res, error);
 		ErrorLogger.logRoute('POST /combos/pricing', error, req);
 		res.status(500).json({
 			success: false,
@@ -230,7 +271,7 @@ router.get('/pricing', async (req, res) => {
  * @desc    Update combo
  * @access  Private/Admin
  */
-router.put('/:id', authenticateAdmin, gated(async (req, res) => {
+router.put('/:id', authenticateAdmin, validateBody(comboStorefrontLinks), gated(async (req, res) => {
 	try {
 		const { id } = req.params;
 		const { name, description, price, categoryRequirements, priority, isActive, salesChannel } = req.body;
@@ -277,8 +318,12 @@ router.put('/:id', authenticateAdmin, gated(async (req, res) => {
 			}
 		}
 
+		const links = await linkedStorefronts(req.body.storefrontIds);
+		if (links.unknown) return sendCoded(res, ERROR_CODES.STOREFRONT_NOT_FOUND);
+
 		const updated = await comboRepo.update(id, {
-			name, description, price, categoryRequirements, priority, isActive, salesChannel
+			name, description, price, categoryRequirements, priority, isActive, salesChannel,
+			storefrontIds: links.ids
 		});
 		// Deleted between the lookup above and the save.
 		if (!updated) {

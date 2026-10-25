@@ -10,6 +10,8 @@ import usePublicSettings from '../hooks/usePublicSettings';
 import useFieldErrors from '../hooks/use-field-errors';
 import FormField from '../components/form/FormField';
 import { rulesFromSchema, requiredFromSchema } from '../lib/schema-rules';
+import { useAuthIdentity, useStorefronts } from '../lib/use-storefronts';
+import { isStorefrontAccessError, storefrontPath } from '../lib/storefront-tabs';
 
 // The form fields are the customer-entered part of the order; the cart items and the total are
 // guarded by the cart checks in handleSubmit.
@@ -20,7 +22,23 @@ const REQUIRED = requiredFromSchema(orderCreate);
 const CheckoutPage = () => {
 	const settings = usePublicSettings();
 	const navigate = useNavigate();
-	const { cart, getCartTotal, formatCurrency, clearCart, getPricingBreakdown, comboDetection, pricingError, checkForCombos } = useCart();
+	const { cart, activeStorefront, getCartTotal, formatCurrency, clearCart, getPricingBreakdown, comboDetection, pricingError, checkForCombos } = useCart();
+	const identity = useAuthIdentity();
+	const { status: storefrontsStatus, storefronts } = useStorefronts();
+
+	// The list is fresher than what the cart remembered (visibility and ordering rights can change).
+	const listed = storefrontsStatus === 'ready'
+		? storefronts.find((candidate) => candidate.id === activeStorefront.id) ?? null
+		: null;
+	const storefront = listed ?? activeStorefront;
+	const storefrontHome = storefront.slug ? storefrontPath(storefront.slug) : '/';
+	const isPrivate = storefront.visibility === 'PRIVATE';
+	const sessionEmail = identity.user?.email ?? '';
+	// In a private storefront the order belongs to the verified session email; the server enforces it too.
+	// An address the order schema would reject cannot be fixed in a read-only field, so it stays editable.
+	const sessionEmailUsable = sessionEmail !== '' && !CHECKOUT_RULES.email(sessionEmail, { email: sessionEmail });
+	const emailLocked = isPrivate && sessionEmailUsable;
+	const canOrder = storefront.canOrder !== false;
 
 	const [formData, setFormData] = useState({
 		studentId: '',
@@ -39,24 +57,39 @@ const CheckoutPage = () => {
 	useEffect(() => {
 		if (cart.items.length === 0 && !orderCompleted && !isSubmitting) {
 			toast.warning('Giỏ hàng trống. Vui lòng thêm sản phẩm trước khi thanh toán.');
-			navigate('/');
+			navigate(storefrontHome);
 		}
-	}, [cart.items.length, navigate, orderCompleted, isSubmitting]);
+	}, [cart.items.length, navigate, orderCompleted, isSubmitting, storefrontHome]);
+
+	// A private storefront cannot be checked out without its sign-in; the gate is where to get it.
+	useEffect(() => {
+		if (identity.ready && !identity.user && listed?.visibility === 'PRIVATE') {
+			toast.info('Vui lòng đăng nhập để đặt hàng ở gian hàng này');
+			navigate(storefrontHome, { replace: true });
+		}
+	}, [identity.ready, identity.user, listed, navigate, storefrontHome]);
+
+	const values = emailLocked ? { ...formData, email: sessionEmail } : formData;
 
 	const handleInputChange = (e) => {
 		const { name, value } = e.target;
 		setFormData(prev => ({ ...prev, [name]: value }));
-		onFieldChange(name, value, { ...formData, [name]: value });
+		onFieldChange(name, value, { ...values, [name]: value });
 	};
 
 	const handleBlur = (e) => {
-		validateField(e.target.name, e.target.value, formData);
+		validateField(e.target.name, e.target.value, values);
 	};
 
 	const handleSubmit = async (e) => {
 		e.preventDefault();
 
-		if (!validateAll(formData)) {
+		if (!canOrder) {
+			toast.error('Tài khoản này không nằm trong danh sách được đặt hàng');
+			return;
+		}
+
+		if (!validateAll(values)) {
 			focusFirstError(formRef);
 			return;
 		}
@@ -79,11 +112,11 @@ const CheckoutPage = () => {
 			const expectedTotal = getCartTotal();
 
 			const orderData = {
-				studentId: formData.studentId.trim(),
-				fullName: formData.fullName.trim(),
-				email: formData.email.trim().toLowerCase(),
-				phoneNumber: formData.phoneNumber.trim(),
-				additionalNote: formData.additionalNote.trim(),
+				studentId: values.studentId.trim(),
+				fullName: values.fullName.trim(),
+				email: values.email.trim().toLowerCase(),
+				phoneNumber: values.phoneNumber.trim(),
+				additionalNote: values.additionalNote.trim(),
 				items: cart.items.map(item => ({
 					productId: item.productId,
 					quantity: item.quantity
@@ -113,15 +146,21 @@ const CheckoutPage = () => {
 							qrUrl: response.data.qrUrl,
 							paymentDescription: response.data.paymentDescription,
 							customerInfo: {
-								studentId: formData.studentId.trim(),
-								fullName: formData.fullName.trim(),
-								email: formData.email.trim()
+								studentId: values.studentId.trim(),
+								fullName: values.fullName.trim(),
+								email: values.email.trim()
 							}
 						}
 					});
 				}, 100);
 			}
 		} catch (error) {
+			if (isStorefrontAccessError(error)) {
+				// Mixed carts and lost access both end at the storefront: it shows the gate or the cart to fix.
+				toast.error(error.message);
+				navigate(error.storefront?.slug ? storefrontPath(error.storefront.slug) : storefrontHome);
+				return;
+			}
 			if (error.code === PRICE_CHANGED) {
 				toast.warning('Giá vừa thay đổi, vui lòng xem lại giỏ hàng');
 				checkForCombos();
@@ -210,16 +249,17 @@ const CheckoutPage = () => {
 										id="email"
 										label="Email" required={REQUIRED.email}
 										error={errors.email}
-										hint="Email sẽ được sử dụng để gửi xác nhận đơn hàng"
+										hint={emailLocked ? 'Email đã xác minh' : 'Email sẽ được sử dụng để gửi xác nhận đơn hàng'}
 									>
 										<input
 											type="email"
 											name="email"
-											value={formData.email}
+											value={values.email}
 											onChange={handleInputChange}
 											onBlur={handleBlur}
 											placeholder="Nhập địa chỉ email"
-											className="form-input"
+											className={emailLocked ? 'form-input bg-gray-100 text-gray-600' : 'form-input'}
+											readOnly={emailLocked}
 											maxLength="100"
 										/>
 									</FormField>
@@ -350,6 +390,11 @@ const CheckoutPage = () => {
 
 								{/* Submit Button */}
 								<div className="mt-6">
+									{!canOrder && (
+										<div className="mb-3 rounded-lg bg-yellow-50 p-3 text-sm text-yellow-800" role="status">
+											Chế độ xem trước — tài khoản này không nằm trong danh sách được đặt hàng
+										</div>
+									)}
 									{pricingError && (
 										<div className="mb-3 flex items-center justify-between gap-3 rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">
 											<span>Không tính được giá, vui lòng thử lại</span>
@@ -366,7 +411,7 @@ const CheckoutPage = () => {
 									<button
 										type="submit"
 										form="checkout-form"
-										disabled={isSubmitting || comboDetection.isChecking || pricingError}
+										disabled={isSubmitting || !identity.ready || comboDetection.isChecking || pricingError || !canOrder}
 										className="btn-success w-full text-lg py-3 disabled:opacity-50 disabled:cursor-not-allowed"
 									>
 										{isSubmitting ? (

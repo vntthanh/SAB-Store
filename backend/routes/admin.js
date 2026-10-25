@@ -6,6 +6,7 @@ const dashboardRoutes = require('./admin/dashboard');
 const ordersRoutes = require('./admin/orders');
 const productsRoutes = require('./admin/products');
 const stockRoutes = require('./admin/stock');
+const storefrontRoutes = require('./admin/storefronts');
 const exportsRoutes = require('./admin/exports');
 const databaseRoutes = require('./admin/database');
 
@@ -20,6 +21,8 @@ router.use('/orders', ordersRoutes);
 router.use('/products', productsRoutes);
 // Declares its own /products/:id/... and /stock/... paths.
 router.use(stockRoutes);
+// Declares its own /storefronts/... and /email-lists/... paths.
+router.use(storefrontRoutes);
 router.use('/orders/export', exportsRoutes);
 router.use('/database', databaseRoutes);
 
@@ -39,6 +42,11 @@ router.use('/database', databaseRoutes);
  * 
  * Frontend should use authClient.admin.* methods instead of custom API calls.
  * 
+ * A seller or admin created this way is stored with a verified email whatever the request
+ * says (lib/auth-guards.js): the admin typing the address is the proof, and it is what lets
+ * staff use email-code and Google sign-in. An address that already belongs to a customer
+ * answers 409.
+ *
  * Example usage:
  * - Create: await authClient.admin.createUser({email, password, name, role: 'seller'})
  * - List: await authClient.admin.listUsers({query: {filterField: 'role', filterValue: 'seller'}})

@@ -19,6 +19,7 @@ const path = require('path');
 const { execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const { Client } = require('pg');
+const { DEFAULT_STOREFRONT_ID, DEFAULT_STOREFRONT_SLUG, DEFAULT_STOREFRONT_NAME } = require('../../data/default-storefront');
 
 const execFileAsync = promisify(execFile);
 const backendRoot = path.resolve(__dirname, '..', '..');
@@ -117,7 +118,11 @@ async function createDatabaseFromTemplate(uri, name) {
 	return databaseUrl(uri, name);
 }
 
-/** Empties every public table (not the migration ledger) and restarts identities. */
+/**
+ * Empties every public table (not the migration ledger), restarts identities and
+ * puts back the default storefront the migration seeds: products require one, and
+ * TRUNCATE ... CASCADE would otherwise leave none.
+ */
 async function truncateAll(client) {
 	const { rows } = await client.query(
 		`SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename <> '_prisma_migrations'`
@@ -125,6 +130,10 @@ async function truncateAll(client) {
 	if (rows.length === 0) return;
 	const tables = rows.map((r) => `public.${client.escapeIdentifier(r.tablename)}`).join(', ');
 	await client.query(`TRUNCATE ${tables} RESTART IDENTITY CASCADE`);
+	await client.query(
+		`INSERT INTO storefronts (id, slug, name, visibility, sort_order) VALUES ($1::uuid, $2, $3, 'PUBLIC', 0) ON CONFLICT (id) DO NOTHING`,
+		[DEFAULT_STOREFRONT_ID, DEFAULT_STOREFRONT_SLUG, DEFAULT_STOREFRONT_NAME]
+	);
 }
 
 function pidAlive(pid) {

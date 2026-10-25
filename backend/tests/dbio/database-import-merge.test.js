@@ -10,6 +10,7 @@ const { recordAppliedOpening } = require('../../services/stock-ledger');
 const { seedStore } = require('./snapshot-fixture');
 const { POSTGRES } = require('../helpers/backend');
 const { normalizeRecordId } = require('../../data/ids');
+const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 
 const importFile = (app, cookies, payload) => request(app)
 	.post('/api/admin/database/import')
@@ -228,5 +229,74 @@ describe('POST /api/admin/database/import (merge) with a backup file', () => {
 		// A legacy hex id is stored under its uuid on Postgres.
 		expect((await findProductByName('From v1'))._id).toBe(normalizeRecordId('507f1f77bcf86cd799439011'));
 		expect(await findProduct(product._id)).not.toBeNull();
+	});
+});
+
+describe.skipIf(!POSTGRES)('POST /api/admin/database/import (merge) with storefronts', () => {
+	let app;
+	let cookies;
+	let data;
+
+	beforeAll(() => {
+		app = buildTestApp();
+		data = require('../../data');
+	});
+
+	beforeEach(async () => {
+		({ cookies } = await makeAdminSession(app));
+	});
+
+	/** A private storefront with one product, one combo and one online order in it, exported and then emptied of them. */
+	async function exportedClub() {
+		const club = await data.storefronts.create({ slug: 'clb', name: 'Câu lạc bộ', visibility: 'PRIVATE' });
+		const product = await makeProduct({ name: 'Club badge', storefrontId: club._id });
+		const combo = await makeCombo({ storefrontIds: [club._id] });
+		const order = await makeOrder({ storefrontId: club._id });
+		const file = await exportFile(app, cookies);
+		await deleteAllRows('product', 'combo', 'order', 'settings');
+		return { club, product, combo, order, file };
+	}
+
+	it('keeps a record in its private storefront when the database has that storefront', async () => {
+		const { club, product, combo, order, file } = await exportedClub();
+
+		const res = await importFile(app, cookies, file);
+
+		expect(res.status).toBe(200);
+		expect(res.body.results.products.imported).toBeGreaterThanOrEqual(1);
+		expect((await data.products.findById(product._id)).storefrontId).toBe(club._id);
+		expect((await data.combos.findById(combo._id)).storefrontIds).toEqual([club._id]);
+		// An order's id is not carried by the file (a merge never writes one); its code is.
+		expect((await findOrderByCode(order.orderCode)).storefrontId).toBe(club._id);
+	});
+
+	it('refuses the whole file, writing nothing, when a storefront it names is missing', async () => {
+		const { club, file } = await exportedClub();
+		await data.storefronts.remove(club._id);
+
+		const res = await importFile(app, cookies, file);
+
+		expect(res.status).toBe(400);
+		expect(res.body.code).toBe('IMPORT_STOREFRONT_MISSING');
+		expect(res.body.message).toContain('Khôi phục');
+		expect(res.body.problems.join('\n')).toContain(club._id);
+		expect(await data.products.count()).toBe(0);
+		expect(await listCombos()).toHaveLength(0);
+		expect(await listOrders()).toHaveLength(0);
+	});
+
+	it('puts products and combos of a file without storefront fields in the default storefront', async () => {
+		const res = await importFile(app, cookies, {
+			data: {
+				products: [{ name: 'Old format product', price: 1000, category: 'general' }],
+				combos: [{ name: 'Old format combo', price: 5000, categoryRequirements: [{ category: 'general', quantity: 1 }] }]
+			}
+		});
+
+		expect(res.status).toBe(200);
+		expect(res.body.results.products.imported).toBe(1);
+		expect(res.body.results.combos.imported).toBe(1);
+		expect((await findProductByName('Old format product')).storefrontId).toBe(DEFAULT_STOREFRONT_ID);
+		expect((await data.combos.list()).find((c) => c.name === 'Old format combo').storefrontIds).toEqual([DEFAULT_STOREFRONT_ID]);
 	});
 });

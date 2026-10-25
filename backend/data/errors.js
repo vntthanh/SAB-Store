@@ -47,6 +47,33 @@ class RecordValidationError extends Error {
 }
 
 /**
+ * A write was refused by a rule about the rest of the store, not about one value:
+ * a row other rows still point at, a last remaining row, a reference to a row that
+ * does not exist. `code` is one of CONFLICT_CODES; `details` carries counts or
+ * names the caller may show, never row contents.
+ */
+const CONFLICT_CODES = Object.freeze({
+	STOREFRONT_IN_USE: 'STOREFRONT_IN_USE',
+	LAST_ACTIVE_STOREFRONT: 'LAST_ACTIVE_STOREFRONT',
+	DEFAULT_STOREFRONT: 'DEFAULT_STOREFRONT',
+	REFERENCE_VIOLATION: 'REFERENCE_VIOLATION'
+});
+
+class ConflictError extends Error {
+	/**
+	 * @param {string} code a CONFLICT_CODES value
+	 * @param {string} message
+	 * @param {{details?: object, cause?: unknown}} [options]
+	 */
+	constructor(code, message, { details, cause } = {}) {
+		super(message, cause === undefined ? undefined : { cause });
+		this.name = 'ConflictError';
+		this.code = code;
+		this.details = details;
+	}
+}
+
+/**
  * True when `err` reports a unique-constraint violation. Callers ask this
  * instead of looking at an engine-specific error code. Repositories that
  * translate their errors raise `DuplicateKeyError`; the ones not yet converted
@@ -104,4 +131,4 @@ function indexFields(err) {
 	return index ? [...index[1].matchAll(/(.+?)_-?\d+(?:_|$)/g)].map((part) => part[1]) : [];
 }
 
-module.exports = { InvalidIdError, DuplicateKeyError, RecordValidationError, isDuplicateKeyError, isDuplicateKeyOn, duplicateKeyFields, indexFields };
+module.exports = { InvalidIdError, DuplicateKeyError, RecordValidationError, ConflictError, CONFLICT_CODES, isDuplicateKeyError, isDuplicateKeyOn, duplicateKeyFields, indexFields };

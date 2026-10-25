@@ -77,8 +77,7 @@ async function startServer() {
 			DATABASE_URL: process.env.DATABASE_URL,
 			MONGODB_URI: process.env.MONGODB_URI,
 			JWT_SECRET: process.env.JWT_SECRET,
-			BASE_URL: process.env.BASE_URL,
-			APPSCRIPT_URL: process.env.APPSCRIPT_URL
+			BASE_URL: process.env.BASE_URL
 		}
 	});
 
