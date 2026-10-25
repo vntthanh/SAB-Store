@@ -84,6 +84,8 @@ const Account = require('../../models/Account');
 
 const KINDS = {
 	product: Product, combo: Combo, order: Order, movement: StockMovement, settings: Settings, user: User, account: Account,
+	// Better Auth's own collection: no Mongoose model, so count through the raw collection.
+	verification: { countDocuments: (query) => authRows('verification').countDocuments(query) },
 };
 
 const toObjectId = (id) => new mongoose.Types.ObjectId(String(id));
@@ -165,7 +167,7 @@ function rowsOf(kind) {
 
 /**
  * Row count of `kind` ('product' | 'combo' | 'order' | 'movement' | 'settings' |
- * 'user' | 'account'), optionally narrowed by `filter`.
+ * 'user' | 'account' | 'verification'), optionally narrowed by `filter`.
  */
 function countRows(kind, filter = {}) {
 	return rowsOf(kind).countDocuments(toQuery(filter));
