@@ -86,6 +86,19 @@ The order confirmation is rendered from `backend/templates/order-created.html`; 
 in it is `BASE_URL` (derived from `PUBLIC_URL`) plus `/order-tracking?code=<orderCode>`. The two
 banner images in that template are Google Drive thumbnails.
 
+## Customer sign-in: email code and Google
+
+Customers sign in with a one-time code mailed to them, or with Google One Tap. See
+[`storefronts.md`](storefronts.md) for who can see and order from what.
+
+- **Email code needs SMTP.** The code travels by the mail configured above; with the master
+  switch off, sending a code is refused and customers cannot use that method.
+- **`GOOGLE_CLIENT_ID`** is optional. It is the Google Cloud OAuth **Web** client id, with the
+  authorized JavaScript origin set to `PUBLIC_URL`. When it is empty the backend does not register
+  One Tap and the frontend hides the button (`backend/lib/auth.js`, `GET /api/settings`).
+  `backend/check-env.js` rejects a value that does not end in `.apps.googleusercontent.com`.
+- `APPSCRIPT_URL` no longer exists; remove it from any environment that still carries it.
+
 ## `ADMIN_*` and `INIT_EMPTY_DATABASE`
 
 `ADMIN_EMAIL`, `ADMIN_USERNAME` and `ADMIN_PASSWORD` are read only when the database has no

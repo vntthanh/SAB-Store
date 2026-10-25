@@ -98,6 +98,35 @@ covers `prod.compose.yml` on a host without Coolify and is kept as the fallback 
   encrypted with a key derived from `JWT_SECRET`, so after a rotation the stored one no longer
   decrypts, order mail stays off, and the admin re-enters the password.
 
+### Releasing storefronts and email sign-in
+
+The migration `20261025120000_storefronts` (`backend/prisma/migrations/`) runs in the release job,
+after its `pg_dump`, like any other. It creates the default storefront and moves every existing
+product, combo and online order into it. Order of work:
+
+1. Coolify environment: delete `APPSCRIPT_URL`; add `GOOGLE_CLIENT_ID` (optional, see
+   `docs/ENV_SETUP.md`). `coolify.compose.yml` reads it as `${GOOGLE_CLIENT_ID:-}`, so leaving it
+   out only hides One Tap. Confirm SMTP is on in the admin Settings page: email-code sign-in
+   needs it.
+2. Deploy (see the downtime note above).
+3. Checks, anonymous unless stated:
+   - the release job exited 0 and the backend is up;
+   - the default storefront exists (admin storefront list) and the product count equals the
+     count taken before the deploy;
+   - the public shop shows the same products and prices as before, with no sign-in;
+   - requesting a sign-in code for a test address delivers the mail (SMTP on only).
+4. Staff emails. Staff accounts made before this release are stored with an unverified email, so
+   code and Google sign-in refuse them (fail closed) and they keep using their password. To enable
+   the new methods for them, in `tmux` on the server, inside the backend container:
+   `node scripts/verify-staff-emails.js` (dry run: username, role, masked email, no writes).
+   The owner reads the list, fixes any placeholder or mistyped address in the admin UI (whoever
+   owns that mailbox could otherwise sign in as that staff member), and only then runs
+   `node scripts/verify-staff-emails.js --apply --only=<username,...>` (`--all` verifies every
+   unverified account). Accounts left out keep working with their password.
+
+Rollback is the usual one (redeploy the previous `main` commit); the migration is additive, but
+anything written to storefront tables is ignored by the older code.
+
 ### Copying the database under a new name (MongoDB)
 
 The production database is `sabstore` (it was `sablanyard` until 2026-09-29; that copy is kept
