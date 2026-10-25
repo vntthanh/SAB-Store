@@ -1,0 +1,30 @@
+{
+	"accept": [
+		"ab",
+		"a1",
+		"sab",
+		"sab-store",
+		"khoa-2026",
+		"a-b-c",
+		"0-1",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	],
+	"reject": [
+		"",
+		"a",
+		"-ab",
+		"ab-",
+		"a--b",
+		"AB",
+		"Sab",
+		"sab_store",
+		"sab store",
+		"sab.store",
+		"sab/store",
+		"xin-chào",
+		"-",
+		"a-",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"ab\n"
+	]
+}
