@@ -264,22 +264,26 @@ const SellersManagement = () => {
 		setSubmitting(true);
 		try {
 			if (editingSeller) {
-				// Update seller using better-auth admin functions
+				// Profile first: a rejected rename (name taken, bad length) must not leave a
+				// new password behind that the admin never meant to set on its own.
+				const profile = {};
+				if (formData.name !== editingSeller.name) profile.name = formData.name;
+				if (formData.username !== editingSeller.username) profile.username = formData.username;
+				if (Object.keys(profile).length > 0) {
+					const { error } = await authClient.admin.updateUser({ userId: editingSeller.id, data: profile });
+					if (error) {
+						throw new Error(error.message);
+					}
+				}
+
 				if (formData.password) {
-					await authClient.admin.setUserPassword({
+					const { error } = await authClient.admin.setUserPassword({
 						userId: editingSeller.id,
 						newPassword: formData.password
 					});
-				}
-
-				// Update other fields using updateUser
-				const { error } = await authClient.updateUser({
-					name: formData.name,
-					username: formData.username
-				});
-
-				if (error) {
-					throw new Error(error.message);
+					if (error) {
+						throw new Error(error.message);
+					}
 				}
 
 				toast.success('Cập nhật seller thành công');

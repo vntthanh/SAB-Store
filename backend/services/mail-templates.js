@@ -151,4 +151,35 @@ function renderOrderMail(kind, order, storeTitle) {
 	return render(order, oneLine(storeTitle) || FALLBACK_STORE_TITLE);
 }
 
-module.exports = { renderOrderMail };
+/**
+ * The sign-in code mail. `expiresInMinutes` mirrors the emailOTP `expiresIn` so the
+ * promise in the mail and the real lifetime cannot drift apart silently.
+ *
+ * @param {string} code the plain one-time code (the only place it is ever rendered)
+ * @param {number} expiresInMinutes
+ * @param {string} [storeTitle]
+ * @returns {{subject: string, html: string, text: string}}
+ */
+function renderOtpMail(code, expiresInMinutes, storeTitle) {
+	const title = oneLine(storeTitle) || FALLBACK_STORE_TITLE;
+	const html = shell(title, 'Mã đăng nhập của bạn', [
+		'<p>Dùng mã dưới đây để đăng nhập:</p>',
+		`<p style="font-size:28px;font-weight:bold;letter-spacing:6px;margin:16px 0">${escapeHtml(code)}</p>`,
+		`<p>Mã có hiệu lực trong ${escapeHtml(expiresInMinutes)} phút. Vì lý do bảo mật, không chia sẻ mã này cho bất kỳ ai.</p>`,
+		'<p style="color:#666">Nếu bạn không yêu cầu mã này, hãy bỏ qua thư.</p>'
+	].join(''));
+
+	const text = [
+		'Mã đăng nhập của bạn:',
+		code,
+		'',
+		`Mã có hiệu lực trong ${expiresInMinutes} phút. Vì lý do bảo mật, không chia sẻ mã này cho bất kỳ ai.`,
+		'Nếu bạn không yêu cầu mã này, hãy bỏ qua thư.',
+		'',
+		title
+	].join('\n');
+
+	return { subject: `[${title}] Mã đăng nhập`, html, text };
+}
+
+module.exports = { renderOrderMail, renderOtpMail };

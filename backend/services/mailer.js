@@ -16,7 +16,7 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const { mailSettings, settings } = require('../data');
 const { encryptSecret, decryptSecret } = require('../lib/secret-box');
-const { renderOrderMail } = require('./mail-templates');
+const { renderOrderMail, renderOtpMail } = require('./mail-templates');
 
 // nodemailer's defaults (2 minutes to connect, 10 idle) would hold an admin request
 // or a background send for minutes against a dead host.
@@ -266,6 +266,29 @@ async function sendMail({ to, subject, html, text }) {
 }
 
 /**
+ * Whether `sendMail` would try to send: mail is switched on and the saved password
+ * still decrypts. The sign-in code flow asks this up front because Better Auth
+ * swallows a send failure raised inside its callback, so the only way to tell a
+ * visitor "email codes are unavailable" is to check before issuing one.
+ */
+async function isMailAvailable() {
+	const account = await loadAccount();
+	return Boolean(account?.row.enabled);
+}
+
+/**
+ * The sign-in code message for `sendMail`, titled with the store's own name.
+ *
+ * @param {string} to
+ * @param {string} code
+ * @param {number} expiresInMinutes
+ * @returns {Promise<{to: string, subject: string, html: string, text: string}>}
+ */
+async function buildOtpMessage(to, code, expiresInMinutes) {
+	return { to, ...renderOtpMail(code, expiresInMinutes, await storeTitleOrDefault()) };
+}
+
+/**
  * Call after the change has committed. `order` carries `email`, `fullName`, `orderCode`,
  * `items`, `totalAmount`, `status`, `cancelReason`, plus `studentId`, `phoneNumber`,
  * `additionalNote`, `createdAt` and `paymentDescription` for a new order.
@@ -284,4 +307,4 @@ async function sendOrderMail(kind, order) {
 	});
 }
 
-module.exports = { MailServiceError, getPublicConfig, saveConfig, sendTest, sendMail, sendOrderMail, takeTestSlot, sanitizeMailError };
+module.exports = { MailServiceError, getPublicConfig, saveConfig, sendTest, sendMail, buildOtpMessage, isMailAvailable, sendOrderMail, takeTestSlot, sanitizeMailError };

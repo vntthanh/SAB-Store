@@ -1,13 +1,11 @@
 const { betterAuth } = require("better-auth");
-const { admin, openAPI } = require("better-auth/plugins");
-const { username } = require("better-auth/plugins");
-const { jwt } = require("better-auth/plugins");
-const { customSession } = require("better-auth/plugins");
+const { admin, openAPI, username, jwt, customSession, emailOTP, oneTap } = require("better-auth/plugins");
 const { createAuthMiddleware, APIError } = require("better-auth/api");
 const { COMMON_PASSWORDS } = require("../utils/passwordValidator");
 const { buildTrustedProxies, toCidrs } = require("./trusted-proxies");
 const { isUuid } = require("@sab/shared");
 const { backendName } = require("../data/backend-name");
+const { OTP_EXPIRES_IN_SECONDS, CUSTOMER_ROLE, guardAuthRequest, sendSignInCode, beforeUserCreate } = require("./auth-guards");
 
 const POSTGRES = backendName === 'postgres';
 
@@ -75,6 +73,40 @@ const PASSWORD_FIELD_BY_PATH = {
 	"/reset-password": "newPassword",
 };
 
+// Every email-code endpoint except the two sign-in ones. `reset-password` would let
+// anyone who can read a mailbox set a password, but the admin is the only credential
+// authority; verify-email, check-verification-otp and the email-change pair have no
+// caller either. `disabledPaths` answers 404 at the router, ahead of every hook, so
+// closing them does not depend on hook path matching. (`createVerificationOTP` and
+// `getVerificationOTP` are server-only and have no HTTP route at all.)
+const DISABLED_EMAIL_OTP_PATHS = [
+	"/email-otp/verify-email",
+	"/email-otp/check-verification-otp",
+	"/email-otp/request-password-reset",
+	"/forget-password/email-otp",
+	"/email-otp/reset-password",
+	"/email-otp/request-email-change",
+	"/email-otp/change-email",
+];
+
+// Google One Tap needs only the public client id: the plugin checks the ID token's
+// signature and audience against Google's keys, with no secret and no code exchange.
+// Google is deliberately NOT in `socialProviders`: a redirect provider needs a client
+// secret, and registering one without it makes every redirect attempt fail. Without
+// the env the button is simply not offered.
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+
+// Better Auth's own limiter is off outside production unless enabled; the sign-in code
+// limits must hold in every NODE_ENV, so it is enabled explicitly. Its built-in
+// stricter defaults for /sign-in/*, /sign-up/* and /change-password (3 per 10 s per
+// IP) are left alone in production, but would starve a test suite that signs in dozens
+// of times from one address, so the test environment lifts only those.
+// Memory storage is correct for the single backend container; a second replica would
+// need a shared store, and the DB-backed cooldown below holds regardless.
+const TEST_ENV_RELIEF = process.env.NODE_ENV === "test"
+	? { "/sign-in/email": false, "/sign-in/username": false, "/sign-up/email": false, "/change-password": false }
+	: {};
+
 const auth = betterAuth({
 	database: storage.database,
 	baseURL: process.env.BASE_URL || "http://localhost:5000",
@@ -109,6 +141,9 @@ const auth = betterAuth({
 	// password gets the same defense ("123456" is its first entry).
 	hooks: {
 		before: createAuthMiddleware(async (ctx) => {
+			// A guard may answer on its own (the unverified-account send); that response must be returned for the endpoint not to run.
+			const answered = await guardAuthRequest(ctx);
+			if (answered) return answered;
 			// A user id that is not a uuid reaches the native uuid column and fails there
 			// (22P02) as an empty 500; Mongo answers the same request with a 404. A legacy
 			// 24-hex id is refused too: the admin page only sends ids it got from list-users.
@@ -135,6 +170,24 @@ const auth = betterAuth({
 			}
 		}),
 	},
+	disabledPaths: DISABLED_EMAIL_OTP_PATHS,
+	rateLimit: {
+		enabled: true,
+		storage: "memory",
+		customRules: {
+			"/email-otp/send-verification-otp": { window: 60, max: 3 },
+			"/sign-in/email-otp": { window: 300, max: 10 },
+			...TEST_ENV_RELIEF,
+		},
+	},
+	account: {
+		// Lets a Google sign-in attach to an existing local account with the same
+		// email (staff who also want One Tap). The default requireLocalEmailVerified
+		// (true) stays: a staff account whose email an admin has not vouched for
+		// cannot be taken over through Google. Google's own email_verified claim is
+		// enforced in the one-tap guard, because trusting a provider skips that check.
+		accountLinking: { enabled: true, trustedProviders: ["google"] },
+	},
 	plugins: [
 		// Exposes the full API schema at /api/auth/reference; no reason to ship
 		// that surface to production.
@@ -144,15 +197,32 @@ const auth = betterAuth({
 			maxUsernameLength: 30,
 		}),
 		admin({
-			defaultRole: "user",
+			defaultRole: CUSTOMER_ROLE,
 			adminRoles: ["admin"],
 			adminUserIds: [],
 		}),
+		emailOTP({
+			otpLength: 6,
+			expiresIn: OTP_EXPIRES_IN_SECONDS,
+			// 5 wrong guesses burn the code (6 digits, so ~1 in 200 000 to guess).
+			allowedAttempts: 5,
+			// A database read must not reveal a usable code.
+			storeOTP: "hashed",
+			// A first sign-in by code is how a customer registers.
+			disableSignUp: false,
+			// Explicit: changing an email through a code is not offered (staff email is
+			// set by an admin, customer email is their identity).
+			changeEmail: { enabled: false },
+			sendVerificationOTP: sendSignInCode,
+		}),
+		...(GOOGLE_CLIENT_ID ? [oneTap({ clientId: GOOGLE_CLIENT_ID })] : []),
 		customSession(async ({ user, session }) => {
 			return {
 				user: {
 					...user,
 					role: user.role, // Ensure role is included in session
+					email: user.email,
+					emailVerified: user.emailVerified === true,
 				},
 				session
 			};
@@ -178,11 +248,19 @@ const auth = betterAuth({
 		expiresIn: 60 * 60 * 24 * 7, // 7 days
 		updateAge: 60 * 60 * 24, // 1 day
 	},
+	databaseHooks: {
+		user: { create: { before: beforeUserCreate } },
+	},
 	user: {
+		// Explicit: /change-email stays off. Email is the sign-in identity of customers
+		// and an admin-vouched credential for staff.
+		changeEmail: { enabled: false },
 		additionalFields: {
+			// Optional at parse time: a first-time email-code or One Tap sign-in carries
+			// none, and the create hook always generates it for customers.
 			username: {
 				type: "string",
-				required: true,
+				required: false,
 			},
 			displayUsername: {
 				type: "string",
@@ -190,7 +268,7 @@ const auth = betterAuth({
 			},
 			role: {
 				type: "string",
-				defaultValue: "user",
+				defaultValue: CUSTOMER_ROLE,
 				required: false,
 				// Must never be settable from a self-service request body: otherwise
 				// /update-user would let any signed-in user choose their own role.

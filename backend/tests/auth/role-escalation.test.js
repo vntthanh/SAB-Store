@@ -43,9 +43,9 @@ describe('role escalation guard', () => {
 		expect(stored.name).not.toBe('x');
 	});
 
-	it('gives an account created without a role the default user role', async () => {
+	it('gives an account created without a role the customer role', async () => {
 		const account = await createAccount();
-		expect((await findUser({ email: account.email })).role).toBe('user');
+		expect((await findUser({ email: account.email })).role).toBe('customer');
 	});
 
 	it('does not let a seller session create an admin', async () => {

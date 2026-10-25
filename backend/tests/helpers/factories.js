@@ -198,5 +198,5 @@ async function makeSellerSession(app) {
 
 module.exports = {
 	makeProduct, makeCombo, makeOrder, makeSettings, makeLegacyProduct,
-	createAccount, makeAdminSession, makeSellerSession,
+	createAccount, signInSession, makeAdminSession, makeSellerSession,
 };
