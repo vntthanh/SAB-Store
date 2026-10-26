@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import Swal from 'sweetalert2';
-import { accessRuleCreate, emailListCreate } from '@sab/shared';
+import { accessRuleCreate } from '@sab/shared';
 import { emailListService, storefrontAdminService } from '../../services/api';
 import LoadingSpinner from '../LoadingSpinner';
 import EmailImportDialog from './EmailImportDialog';
@@ -52,9 +52,7 @@ const StorefrontAccessPanel = ({ storefront }) => {
 	const [formError, setFormError] = useState(null);
 	const [adding, setAdding] = useState(false);
 	const [removingId, setRemovingId] = useState(null);
-	const [quickName, setQuickName] = useState(null);
-	const [creatingList, setCreatingList] = useState(false);
-	const [importTarget, setImportTarget] = useState(null);
+	const [uploadOpen, setUploadOpen] = useState(false);
 
 	const load = useCallback(async () => {
 		try {
@@ -136,35 +134,19 @@ const StorefrontAccessPanel = ({ storefront }) => {
 		}
 	};
 
-	const handleQuickCreate = async (e) => {
-		e.preventDefault();
-		if (creatingList) return;
-		const parsed = emailListCreate.safeParse({ name: quickName });
-		if (!parsed.success) {
-			setFormError(parsed.error.issues[0].message);
-			return;
-		}
-		setFormError(null);
-		setCreatingList(true);
+	// The upload dialog creates the list, then this links it to the storefront before the
+	// emails are added. A failed link is reported but does not stop the upload: the list is
+	// still there to pick from the "Danh sách email" tab.
+	const createLinkedList = async (name) => {
+		const created = (await emailListService.create({ name })).data;
 		try {
-			const created = (await emailListService.create({ name: quickName.trim() })).data;
-			let linked = false;
-			try {
-				await storefrontAdminService.addRule(storefrontId, { type: 'LIST', emailListId: created._id });
-				linked = true;
-			} catch (error) {
-				toast.error(`Đã tạo danh sách nhưng chưa gắn vào gian hàng: ${error.message}`);
-			}
-			toast.success(linked ? 'Đã tạo danh sách và thêm quy tắc' : 'Đã tạo danh sách');
-			setQuickName(null);
-			setImportTarget({ id: created._id, name: created.name });
-			await load();
+			await storefrontAdminService.addRule(storefrontId, { type: 'LIST', emailListId: created._id });
+			toast.success('Đã tạo danh sách và thêm quy tắc');
 		} catch (error) {
-			setFormError(error.message);
-			toast.error(error.message);
-		} finally {
-			setCreatingList(false);
+			toast.error(`Đã tạo danh sách nhưng chưa gắn vào gian hàng: ${error.message}`);
 		}
+		load();
+		return created;
 	};
 
 	if (loading) {
@@ -205,7 +187,7 @@ const StorefrontAccessPanel = ({ storefront }) => {
 				</ul>
 			)}
 
-			<div role="tablist" aria-label="Loại quy tắc" className="flex gap-2">
+			<div role="tablist" aria-label="Loại quy tắc" className="flex flex-wrap gap-2">
 				{TABS.map((item) => (
 					<button
 						key={item.type}
@@ -226,7 +208,7 @@ const StorefrontAccessPanel = ({ storefront }) => {
 						aria-label="Danh sách email"
 						value={listId}
 						onChange={(e) => setListId(e.target.value)}
-						className="form-input flex-1"
+						className="form-input h-10 flex-1"
 					>
 						<option value="">Chọn danh sách email</option>
 						{lists.map((list) => (
@@ -240,45 +222,28 @@ const StorefrontAccessPanel = ({ storefront }) => {
 						value={value}
 						onChange={(e) => setValue(e.target.value)}
 						placeholder={activeTab.placeholder}
-						className="form-input flex-1"
+						className="form-input h-10 flex-1"
 					/>
 				)}
-				<button type="submit" disabled={adding} className="btn-primary whitespace-nowrap">
+				<button type="submit" disabled={adding} className="btn-primary h-10 whitespace-nowrap">
 					{adding ? 'Đang thêm...' : 'Thêm quy tắc'}
 				</button>
 			</form>
 
 			{formError && <p role="alert" className="text-sm text-danger-500">{formError}</p>}
 
-			{quickName === null ? (
-				<button type="button" onClick={() => setQuickName('')} className="text-sm text-primary-600 hover:text-primary-900">
-					<i className="fas fa-plus mr-1"></i>Thêm nhanh vào danh sách mới
+			<div>
+				<button type="button" onClick={() => setUploadOpen(true)} className="btn-secondary h-10 w-full sm:w-auto">
+					<i className="fas fa-file-upload mr-2"></i>Tải lên danh sách mới
 				</button>
-			) : (
-				<form onSubmit={handleQuickCreate} noValidate className="flex flex-col sm:flex-row gap-2 sm:items-center">
-					<input
-						type="text"
-						aria-label="Tên danh sách mới"
-						value={quickName}
-						onChange={(e) => setQuickName(e.target.value)}
-						placeholder="Tên danh sách mới"
-						className="form-input flex-1"
-						maxLength={80}
-						autoFocus
-					/>
-					<button type="submit" disabled={creatingList} className="btn-primary whitespace-nowrap">
-						{creatingList ? 'Đang tạo...' : 'Tạo và thêm email'}
-					</button>
-					<button type="button" onClick={() => setQuickName(null)} disabled={creatingList} className="btn-secondary">Hủy</button>
-				</form>
-			)}
+				<p className="mt-1 text-xs text-gray-500">File .csv, .txt, .xlsx hoặc dán email; danh sách được tạo và gắn ngay vào gian hàng này.</p>
+			</div>
 
-			{importTarget && (
+			{uploadOpen && (
 				<EmailImportDialog
 					isOpen
-					listId={importTarget.id}
-					listName={importTarget.name}
-					onClose={() => setImportTarget(null)}
+					onCreateList={createLinkedList}
+					onClose={() => setUploadOpen(false)}
 					onImported={load}
 				/>
 			)}

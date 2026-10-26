@@ -148,9 +148,9 @@ const EntriesPanel = ({ list, refreshKey, onChanged, onAdd }) => {
 						value={searchInput}
 						onChange={(e) => setSearchInput(e.target.value)}
 						placeholder="Tìm email..."
-						className="form-input w-full sm:w-56"
+						className="form-input h-10 w-full sm:w-56"
 					/>
-					<button type="button" onClick={onAdd} className="btn-primary whitespace-nowrap">
+					<button type="button" onClick={onAdd} className="btn-primary h-10 whitespace-nowrap">
 						<i className="fas fa-plus mr-2"></i>Thêm email
 					</button>
 				</div>
@@ -282,8 +282,8 @@ const EmailListManagement = () => {
 	}
 
 	return (
-		<div className="p-6">
-			<div className="flex justify-between items-center mb-6">
+		<div>
+			<div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
 				<div>
 					<h1 className="text-2xl font-bold text-gray-900">Danh sách email</h1>
 					<p className="text-gray-600">Dùng làm quy tắc truy cập cho gian hàng riêng tư</p>

@@ -8,7 +8,7 @@ vi.mock('../../services/api', () => ({
 }));
 
 import { buildRuleRequest, RuleSummary } from './StorefrontAccessPanel';
-import { ImportPreview } from './EmailImportDialog';
+import { ImportPreview, listNameFromFile } from './EmailImportDialog';
 
 const LIST_ID = '01a173f3-7280-71fd-b24f-118da6196e35';
 
@@ -47,5 +47,16 @@ describe('ImportPreview', () => {
 		expect(html).toContain('<strong>1</strong> trùng đã loại');
 		expect(html).toContain('<strong>1</strong> không hợp lệ');
 		expect(html).toContain('bad');
+	});
+});
+
+describe('listNameFromFile', () => {
+	it.each([
+		['khoa-cntt_2026.xlsx', 'khoa-cntt 2026'],
+		['danh sach.lop.csv', 'danh sach.lop'],
+		['', ''],
+		[`${'a'.repeat(100)}.txt`, 'a'.repeat(80)]
+	])('suggests %j as %j', (fileName, expected) => {
+		expect(listNameFromFile(fileName)).toBe(expected);
 	});
 });

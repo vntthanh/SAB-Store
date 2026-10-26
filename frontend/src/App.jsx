@@ -21,8 +21,7 @@ import NotFoundPage from './pages/NotFoundPage';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import ProductsManagement from './pages/admin/ProductsManagement';
 import ComboManagement from './pages/admin/ComboManagement';
-import StorefrontManagement from './pages/admin/StorefrontManagement';
-import EmailListManagement from './pages/admin/EmailListManagement';
+import StorefrontAdminPage from './pages/admin/StorefrontAdminPage';
 import SellersManagement from './pages/admin/SellersManagement';
 import DatabaseManagement from './pages/admin/DatabaseManagement';
 import SettingsManagement from './pages/admin/SettingsManagement';
@@ -85,17 +84,12 @@ function App() {
 						<Route path="/admin/storefronts" element={
 							<ProtectedRoute>
 								<AdminLayout>
-									<StorefrontManagement />
+									<StorefrontAdminPage />
 								</AdminLayout>
 							</ProtectedRoute>
 						} />
-						<Route path="/admin/email-lists" element={
-							<ProtectedRoute>
-								<AdminLayout>
-									<EmailListManagement />
-								</AdminLayout>
-							</ProtectedRoute>
-						} />
+						{/* Keeps bookmarks to the old email-lists URL working. */}
+						<Route path="/admin/email-lists" element={<Navigate to="/admin/storefronts?tab=email-lists" replace />} />
 						<Route path="/admin/sellers" element={
 							<ProtectedRoute>
 								<AdminLayout>
