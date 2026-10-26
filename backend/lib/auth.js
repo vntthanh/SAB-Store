@@ -5,7 +5,7 @@ const { COMMON_PASSWORDS } = require("../utils/passwordValidator");
 const { buildTrustedProxies, toCidrs } = require("./trusted-proxies");
 const { isUuid } = require("@sab/shared");
 const { backendName } = require("../data/backend-name");
-const { OTP_EXPIRES_IN_SECONDS, CUSTOMER_ROLE, guardAuthRequest, sendSignInCode, beforeUserCreate } = require("./auth-guards");
+const { OTP_EXPIRES_IN_SECONDS, CUSTOMER_ROLE, oneTapOptions, guardAuthRequest, sendSignInCode, beforeUserCreate } = require("./auth-guards");
 
 const POSTGRES = backendName === 'postgres';
 
@@ -92,9 +92,9 @@ const DISABLED_EMAIL_OTP_PATHS = [
 // Google One Tap needs only the public client id: the plugin checks the ID token's
 // signature and audience against Google's keys, with no secret and no code exchange.
 // Google is deliberately NOT in `socialProviders`: a redirect provider needs a client
-// secret, and registering one without it makes every redirect attempt fail. Without
-// the env the button is simply not offered.
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+// secret, and registering one without it makes every redirect attempt fail. The id is
+// an admin setting, so the plugin is always registered and the one-tap guard refuses
+// the callback while none is saved (lib/auth-guards.js `oneTapOptions`).
 
 // Better Auth's own limiter is off outside production unless enabled; the sign-in code
 // limits must hold in every NODE_ENV, so it is enabled explicitly. Its built-in
@@ -215,7 +215,7 @@ const auth = betterAuth({
 			changeEmail: { enabled: false },
 			sendVerificationOTP: sendSignInCode,
 		}),
-		...(GOOGLE_CLIENT_ID ? [oneTap({ clientId: GOOGLE_CLIENT_ID })] : []),
+		oneTap(oneTapOptions),
 		customSession(async ({ user, session }) => {
 			return {
 				user: {

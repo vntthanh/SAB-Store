@@ -4,7 +4,7 @@ vi.mock('../../services/api', () => ({
 	mailSettingsService: { get: vi.fn(), update: vi.fn(), sendTest: vi.fn() }
 }));
 
-import { buildPayload, isDirty, toForm, validateMailForm } from './MailSettingsSection';
+import { buildPayload, isDirty, tlsMismatch, toForm, validateMailForm } from './MailSettingsSection';
 
 const SAVED = {
 	enabled: true,
@@ -79,5 +79,18 @@ describe('validateMailForm', () => {
 		expect(errors.fromAddress).toBe('Địa chỉ email người gửi không hợp lệ');
 		expect(errors.host).toMatch(/^Máy chủ SMTP/);
 		expect(Object.keys(errors).sort()).toEqual(['fromAddress', 'host']);
+	});
+});
+
+describe('tlsMismatch', () => {
+	it('flags implicit TLS on the STARTTLS port and plain on the TLS port', () => {
+		expect(tlsMismatch({ port: '587', secure: true })).toMatch(/587/);
+		expect(tlsMismatch({ port: '465', secure: false })).toMatch(/465/);
+	});
+
+	it('stays quiet for matching pairs and other ports', () => {
+		expect(tlsMismatch({ port: '587', secure: false })).toBeNull();
+		expect(tlsMismatch({ port: '465', secure: true })).toBeNull();
+		expect(tlsMismatch({ port: '2525', secure: true })).toBeNull();
 	});
 });

@@ -33,7 +33,10 @@ chưa xác minh không bao giờ khớp quy tắc nào.
 
 ### Danh sách email
 
-- Tạo danh sách riêng (tên không trùng), dùng lại cho nhiều gian hàng.
+- Quản lý ở tab **Danh sách email** của trang Gian hàng (`/admin/storefronts?tab=email-lists`).
+  Tạo danh sách riêng (tên không trùng), dùng lại cho nhiều gian hàng.
+- Ngay trong phần Quyền truy cập của một gian hàng riêng tư, nút **Tải lên danh sách mới** tạo
+  danh sách từ file hoặc email dán vào (tên tự gợi ý theo tên file) và gắn luôn vào gian hàng đó.
 - Thêm địa chỉ bằng cách dán, hoặc nạp file CSV / XLSX (tối đa 5 MB; file `.xls` cũ không đọc
   được, lưu lại thành `.xlsx`); hệ thống xem trước kết quả (hợp lệ,
   trùng, sai định dạng) rồi mới lưu. Mỗi lần gửi tối đa **5000** địa chỉ; danh sách lớn hơn thì
@@ -66,4 +69,5 @@ chưa xác minh không bao giờ khớp quy tắc nào.
 
 - **Bật SMTP** ở trang Cài đặt: không có SMTP thì không gửi được mã, khách không đăng nhập bằng mã
   được. Cấu hình SMTP: [`ENV_SETUP.md`](ENV_SETUP.md).
-- **`GOOGLE_CLIENT_ID`** (tuỳ chọn) để hiện nút Google; để trống thì ẩn.
+- **Google Client ID** (tuỳ chọn) ở trang Cài đặt để hiện nút Google; để trống thì ẩn. Cách tạo:
+  [`ENV_SETUP.md`](ENV_SETUP.md).

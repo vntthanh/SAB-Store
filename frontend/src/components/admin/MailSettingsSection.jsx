@@ -25,6 +25,14 @@ const EMPTY_FORM = {
 	notifyStatusChanged: true
 };
 
+// 587 speaks plain SMTP then upgrades (STARTTLS); 465 expects a TLS handshake first.
+// Mixing them fails before login with ESOCKET, which tells the admin nothing.
+export const tlsMismatch = ({ port, secure }) => {
+	if (String(port) === '587' && secure) return 'Cổng 587 cần TẮT ô SSL/TLS, nếu không máy chủ sẽ từ chối kết nối.';
+	if (String(port) === '465' && !secure) return 'Cổng 465 cần BẬT ô SSL/TLS.';
+	return null;
+};
+
 // The password is write-only: the form never holds the stored one, `pass` starts and
 // returns to empty after every load/save.
 export const toForm = (saved) => (saved ? {
@@ -116,6 +124,7 @@ const MailSettingsForm = ({ saved, onSave, onTest }) => {
 	const formRef = useRef(null);
 
 	const hasPassword = Boolean(saved?.hasPassword);
+	const tlsWarning = tlsMismatch(values);
 	const rules = Object.fromEntries(
 		FIELD_NAMES.map((name) => [name, (_value, all) => validateMailForm(all, hasPassword)[name] ?? null])
 	);
@@ -213,9 +222,14 @@ const MailSettingsForm = ({ saved, onSave, onTest }) => {
 					checked={values.secure}
 					onChange={(e) => setField('secure', e.target.checked)}
 					disabled={saving}
-					label="Dùng SSL/TLS (cổng 465)"
-					hint="Bỏ chọn với cổng 587 (STARTTLS)."
+					label="Dùng SSL/TLS ngay khi kết nối"
+					hint="Chỉ BẬT với cổng 465. Cổng 587 thì để TẮT — mail vẫn được mã hoá bằng STARTTLS."
 				/>
+				{tlsWarning && (
+					<p role="alert" className="text-sm text-amber-700">
+						{tlsWarning}
+					</p>
+				)}
 
 				<div className="space-y-3">
 					<h3 className="text-sm font-medium text-gray-700">Loại email sẽ gửi</h3>

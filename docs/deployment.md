@@ -104,9 +104,8 @@ The migration `20261025120000_storefronts` (`backend/prisma/migrations/`) runs i
 after its `pg_dump`, like any other. It creates the default storefront and moves every existing
 product, combo and online order into it. Order of work:
 
-1. Coolify environment: delete `APPSCRIPT_URL`; add `GOOGLE_CLIENT_ID` (optional, see
-   `docs/ENV_SETUP.md`). `coolify.compose.yml` reads it as `${GOOGLE_CLIENT_ID:-}`, so leaving it
-   out only hides One Tap. Confirm SMTP is on in the admin Settings page: email-code sign-in
+1. Coolify environment: delete `APPSCRIPT_URL` (and `GOOGLE_CLIENT_ID`, now an admin setting,
+   see `docs/ENV_SETUP.md`). Confirm SMTP is on in the admin Settings page: email-code sign-in
    needs it.
 2. Deploy (see the downtime note above).
 3. Checks, anonymous unless stated:

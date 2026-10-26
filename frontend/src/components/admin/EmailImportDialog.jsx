@@ -1,5 +1,6 @@
 import React, { useDeferredValue, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
+import { emailListCreate } from '@sab/shared';
 import { emailListService } from '../../services/api';
 import { readEmailFile, EMAIL_FILE_ACCEPT } from '../../lib/read-email-file';
 import {
@@ -39,10 +40,24 @@ export const ImportPreview = ({ preview }) => (
 	</div>
 );
 
+/** A list name suggested by an uploaded file: its name without the extension, cut to the schema's limit. */
+export const listNameFromFile = (fileName) => {
+	const base = String(fileName || '').replace(/\.[^.]+$/, '').replace(/_+/g, ' ').trim();
+	return base.slice(0, 80);
+};
+
 // Adds the pasted/uploaded addresses to one list. Parsing is the shared parseEmailList; the server
 // stays the authority and reports how many were new. `onImported` receives the summed counts.
 // Parents mount it only while open, so every open starts with an empty textarea.
-const EmailImportDialog = ({ isOpen, listId, listName, onClose, onImported }) => {
+//
+// Without `listId` the dialog creates the list first: it asks for a name (suggested from the
+// uploaded file) and calls `onCreateList(name)`, which returns the new list. The created list is
+// kept, so a retry after a failed upload adds to it instead of creating a second one.
+const EmailImportDialog = ({ isOpen, listId, listName, onClose, onImported, onCreateList }) => {
+	const [createdList, setCreatedList] = useState(null);
+	const creating = !listId && !createdList;
+	const [newName, setNewName] = useState('');
+	const [nameError, setNameError] = useState(null);
 	const [text, setText] = useState('');
 	const [reading, setReading] = useState(false);
 	const [fileError, setFileError] = useState(null);
@@ -58,7 +73,10 @@ const EmailImportDialog = ({ isOpen, listId, listName, onClose, onImported }) =>
 	if (!isOpen) return null;
 
 	const handleClose = () => {
-		if (!saving) onClose();
+		if (saving) return;
+		// The list survives a failed upload; say where it is so a reopen does not start a second one.
+		if (createdList) toast.info(`Danh sách "${createdList.name}" đã được tạo; thêm tiếp email ở tab Danh sách email`);
+		onClose();
 	};
 
 	const handleFile = async (event) => {
@@ -70,6 +88,7 @@ const EmailImportDialog = ({ isOpen, listId, listName, onClose, onImported }) =>
 		try {
 			const fileText = await readEmailFile(file);
 			setText((previous) => (previous.trim() ? `${previous}\n${fileText}` : fileText));
+			if (creating) setNewName((previous) => previous.trim() || listNameFromFile(file.name));
 		} catch (error) {
 			setFileError(error.message);
 		} finally {
@@ -79,15 +98,29 @@ const EmailImportDialog = ({ isOpen, listId, listName, onClose, onImported }) =>
 
 	const handleSave = async () => {
 		if (!canSave) return;
+		if (creating) {
+			const parsed = emailListCreate.safeParse({ name: newName });
+			if (!parsed.success) {
+				setNameError(parsed.error.issues[0].message);
+				return;
+			}
+			setNameError(null);
+		}
 		const chunks = chunkEmails(preview.emails);
 		let added = 0;
 		let skipped = 0;
 		setSaving(true);
 		setProgress({ done: 0, total: preview.validCount });
 		try {
+			let targetId = listId || createdList?._id;
+			if (!targetId) {
+				const list = await onCreateList(newName.trim());
+				setCreatedList(list);
+				targetId = list._id;
+			}
 			let done = 0;
 			for (const chunk of chunks) {
-				const response = await emailListService.addEntries(listId, chunk);
+				const response = await emailListService.addEntries(targetId, chunk);
 				added += response.data.added;
 				skipped += response.data.skipped;
 				done += chunk.length;
@@ -118,13 +151,38 @@ const EmailImportDialog = ({ isOpen, listId, listName, onClose, onImported }) =>
 				<div className="p-6 space-y-4">
 					<div className="flex justify-between items-start">
 						<div>
-							<h2 id="email-import-title" className="text-xl font-semibold text-gray-900">Thêm email</h2>
-							{listName && <p className="text-sm text-gray-600">Vào danh sách: <strong>{listName}</strong></p>}
+							<h2 id="email-import-title" className="text-xl font-semibold text-gray-900">
+								{listId ? 'Thêm email' : 'Tải lên danh sách mới'}
+							</h2>
+							{(listName || createdList) && (
+								<p className="text-sm text-gray-600">Vào danh sách: <strong>{listName || createdList.name}</strong></p>
+							)}
 						</div>
 						<button type="button" onClick={handleClose} disabled={saving} aria-label="Đóng" className="text-gray-500 hover:text-gray-700 disabled:opacity-50">
 							<i className="fas fa-times text-xl"></i>
 						</button>
 					</div>
+
+					{creating && (
+						<div>
+							<label htmlFor="email-import-name" className="block text-sm font-medium text-gray-700 mb-1">
+								Tên danh sách <span className="text-danger-500">*</span>
+							</label>
+							<input
+								id="email-import-name"
+								type="text"
+								value={newName}
+								onChange={(e) => { setNewName(e.target.value); setNameError(null); }}
+								disabled={saving}
+								maxLength={80}
+								aria-invalid={Boolean(nameError)}
+								aria-describedby={nameError ? 'email-import-name-error' : undefined}
+								placeholder="VD: Lớp K66 CNTT (tự điền khi chọn file)"
+								className="form-input"
+							/>
+							{nameError && <p id="email-import-name-error" role="alert" className="mt-1 text-sm text-danger-500">{nameError}</p>}
+						</div>
+					)}
 
 					<div>
 						<label htmlFor="email-import-text" className="block text-sm font-medium text-gray-700 mb-1">
@@ -173,7 +231,7 @@ const EmailImportDialog = ({ isOpen, listId, listName, onClose, onImported }) =>
 						</div>
 					)}
 
-					<div className="flex justify-end gap-3 pt-2">
+					<div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
 						<button type="button" onClick={handleClose} disabled={saving} className="btn-secondary">Hủy</button>
 						<button type="button" onClick={handleSave} disabled={!canSave} className="btn-primary">
 							{saving ? 'Đang thêm...' : `Thêm ${preview.validCount} email`}

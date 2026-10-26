@@ -20,7 +20,7 @@
  */
 const { prisma } = require('../../lib/prisma');
 const {
-	SETTINGS_KEY, DEFAULT_STORE_TITLE, STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH, DEFAULT_NOTICES, DEFAULT_CONTACT, DEFAULT_PREFIX_MESSAGE, DEFAULT_UPDATED_BY, NOTICE_FIELDS, CONTACT_FIELDS, STOREFRONT_FIELDS
+	SETTINGS_KEY, DEFAULT_STORE_TITLE, STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH, DEFAULT_NOTICES, DEFAULT_CONTACT, DEFAULT_PREFIX_MESSAGE, DEFAULT_UPDATED_BY, NOTICE_FIELDS, CONTACT_FIELDS, GOOGLE_CLIENT_ID_FIELD, STOREFRONT_FIELDS
 } = require('../../constants/settings');
 const { translating } = require('./errors');
 const { Problems, checkText } = require('./rules');
@@ -32,7 +32,7 @@ const REQUIRED_TEXT = {
 };
 const BANK_FIELDS = ['bankNameId', 'bankAccountId'];
 
-const DEFAULTS = { storeTitle: DEFAULT_STORE_TITLE, ...DEFAULT_NOTICES, ...DEFAULT_CONTACT };
+const DEFAULTS = { storeTitle: DEFAULT_STORE_TITLE, ...DEFAULT_NOTICES, ...DEFAULT_CONTACT, [GOOGLE_CLIENT_ID_FIELD]: '' };
 
 /** A stored row as a plain record. `defaults` substitutes the code defaults for NULL columns. */
 function toRecord(row, { defaults }) {
@@ -91,6 +91,7 @@ function valuesOf(fields) {
 		}),
 		...Object.fromEntries(NOTICE_FIELDS.map((name) => [name, notice(name)])),
 		...Object.fromEntries(CONTACT_FIELDS.map((name) => [name, contact(name)])),
+		[GOOGLE_CLIENT_ID_FIELD]: contact(GOOGLE_CLIENT_ID_FIELD),
 		updatedBy: checkText(problems, 'updatedBy', fields.updatedBy ?? undefined, { trim: false })
 	};
 	// Mongoose's minlength: a title given as text must keep at least one character once trimmed.

@@ -321,8 +321,8 @@ const StorefrontManagement = () => {
 	}
 
 	return (
-		<div className="p-6">
-			<div className="flex justify-between items-center mb-6">
+		<div>
+			<div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
 				<div>
 					<h1 className="text-2xl font-bold text-gray-900">Quản lý gian hàng</h1>
 					<p className="text-gray-600">Mỗi gian hàng có sản phẩm, combo và quyền truy cập riêng</p>
@@ -340,7 +340,52 @@ const StorefrontManagement = () => {
 				</div>
 			)}
 
-			<div className="card overflow-x-auto">
+			{/* Phones get one card per storefront: the six-column table squeezes the name to a word per line. */}
+			<ul className="md:hidden space-y-3">
+				{storefronts.map((storefront, index) => (
+					<li key={storefront._id} className="card p-4 space-y-3">
+						<div className="flex items-start justify-between gap-3">
+							<div className="min-w-0">
+								<div className="font-medium text-gray-900 break-words">{storefront.name}</div>
+								<div className="text-sm font-mono text-gray-600 break-all">/s/{storefront.slug}</div>
+							</div>
+							<span className="shrink-0 whitespace-nowrap"><VisibilityBadge visibility={storefront.visibility} /></span>
+						</div>
+						{storefront.description && <p className="text-sm text-gray-500 line-clamp-2">{storefront.description}</p>}
+						<div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3 text-sm">
+							<label className="flex items-center gap-2 text-gray-700">
+								<input
+									type="checkbox"
+									role="switch"
+									checked={storefront.isActive}
+									onChange={() => handleToggleActive(storefront)}
+									disabled={busy}
+									aria-label={`Bật/tắt ${storefront.name}`}
+									className="h-5 w-5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 disabled:opacity-50"
+								/>
+								{pendingId === storefront._id ? 'Đang lưu...' : 'Hoạt động'}
+							</label>
+							<div className="flex items-center gap-1">
+								<button type="button" onClick={() => handleMove(index, -1)} disabled={busy || index === 0} aria-label={`Đưa ${storefront.name} lên`} className="h-9 w-9 text-gray-600 hover:text-gray-900 disabled:opacity-30">
+									<i className="fas fa-arrow-up"></i>
+								</button>
+								<button type="button" onClick={() => handleMove(index, 1)} disabled={busy || index === storefronts.length - 1} aria-label={`Đưa ${storefront.name} xuống`} className="h-9 w-9 text-gray-600 hover:text-gray-900 disabled:opacity-30">
+									<i className="fas fa-arrow-down"></i>
+								</button>
+								<button type="button" onClick={() => setModal({ open: true, storefront })} disabled={busy} className="h-9 px-2 text-primary-600 hover:text-primary-900 disabled:opacity-50">
+									<i className="fas fa-edit mr-1"></i>Sửa
+								</button>
+								<button type="button" onClick={() => handleDelete(storefront)} disabled={busy} className="h-9 px-2 text-danger-600 hover:text-danger-900 disabled:opacity-50">
+									<i className="fas fa-trash mr-1"></i>Xóa
+								</button>
+							</div>
+						</div>
+					</li>
+				))}
+				{reordering && <li className="text-sm text-gray-500">Đang sắp xếp...</li>}
+			</ul>
+
+			<div className="card overflow-x-auto hidden md:block">
 				<table className="min-w-full divide-y divide-gray-200">
 					<thead className="bg-gray-50">
 						<tr>

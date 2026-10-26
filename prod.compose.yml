@@ -328,8 +328,6 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       CORS_ORIGIN: ${PUBLIC_URL}
-      # Optional: the Google Cloud Web client id for One Tap sign-in. Empty hides the button.
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       # The MINIO_* names are kept for the minio SDK; the server behind them is
       # SeaweedFS. The endpoint is fixed because the platform environment store
       # may still carry the old MinIO hostname, which would silently win.

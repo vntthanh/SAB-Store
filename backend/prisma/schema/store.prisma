@@ -350,6 +350,7 @@ model Settings {
   paymentNotice      String?  @map("payment_notice")
   contactEmail       String?  @map("contact_email")
   contactFacebookUrl String?  @map("contact_facebook_url")
+  googleClientId     String?  @map("google_client_id")
   updatedBy          String   @default("system") @map("updated_by")
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)

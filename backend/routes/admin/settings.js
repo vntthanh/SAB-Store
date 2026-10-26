@@ -1,6 +1,6 @@
 const express = require('express');
 const { gated } = require('../../services/write-gate');
-const { contactEmail, contactUrl } = require('@sab/shared');
+const { contactEmail, contactUrl, googleClientId } = require('@sab/shared');
 const { settings: settingsRepo } = require('../../data');
 const { RecordValidationError } = require('../../data/errors');
 const { authenticateAdmin } = require('../../middleware/better-auth');
@@ -8,8 +8,9 @@ const { validateMailSettings, validateMailTest } = require('../../middleware/val
 const { MailServiceError, getPublicConfig, saveConfig, sendTest, takeTestSlot } = require('../../services/mailer');
 const ErrorLogger = require('../../utils/errorLogger');
 
-const { STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH, NOTICE_FIELDS, CONTACT_FIELDS } = require('../../constants/settings');
-const CONTACT_SCHEMAS = { contactEmail, contactFacebookUrl: contactUrl };
+const { STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH, NOTICE_FIELDS, GOOGLE_CLIENT_ID_FIELD } = require('../../constants/settings');
+// Optional trimmed text fields, each checked against its shared schema.
+const TEXT_SCHEMAS = { contactEmail, contactFacebookUrl: contactUrl, [GOOGLE_CLIENT_ID_FIELD]: googleClientId };
 const router = express.Router();
 
 const toResponse = (settings) => ({
@@ -17,7 +18,7 @@ const toResponse = (settings) => ({
 	bankAccountId: settings.bankAccountId,
 	prefixMessage: settings.prefixMessage,
 	storeTitle: settings.storeTitle,
-	...Object.fromEntries([...NOTICE_FIELDS, ...CONTACT_FIELDS].map((field) => [field, settings[field]])),
+	...Object.fromEntries([...NOTICE_FIELDS, ...Object.keys(TEXT_SCHEMAS)].map((field) => [field, settings[field]])),
 	updatedAt: settings.updatedAt,
 	updatedBy: settings.updatedBy
 });
@@ -104,10 +105,11 @@ router.put('/', gated(async (req, res) => {
 			updateData[field] = value.trim();
 		}
 
-		// Optional too; an empty string hides that footer line.
-		for (const field of CONTACT_FIELDS) {
+		// Optional too; an empty string hides that footer line (or, for the Google
+		// client id, turns Google sign-in off).
+		for (const field of Object.keys(TEXT_SCHEMAS)) {
 			if (req.body[field] === undefined) continue;
-			const parsed = CONTACT_SCHEMAS[field].safeParse(req.body[field]);
+			const parsed = TEXT_SCHEMAS[field].safeParse(req.body[field]);
 			if (!parsed.success) {
 				return res.status(400).json({
 					success: false,

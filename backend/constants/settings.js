@@ -41,8 +41,12 @@ const DEFAULT_CONTACT = {
 };
 const CONTACT_FIELDS = Object.keys(DEFAULT_CONTACT);
 
+// Google One Tap's Web client id: public (the page hands it to Google), empty = off.
+// Format is checked by the admin route against @sab/shared, as for the contacts.
+const GOOGLE_CLIENT_ID_FIELD = 'googleClientId';
+
 // The public read shares the row with the bank details, so it is an allowlist.
-const STOREFRONT_FIELDS = ['storeTitle', ...NOTICE_FIELDS, ...CONTACT_FIELDS];
+const STOREFRONT_FIELDS = ['storeTitle', ...NOTICE_FIELDS, ...CONTACT_FIELDS, GOOGLE_CLIENT_ID_FIELD];
 
 module.exports = {
 	SETTINGS_KEY,
@@ -55,5 +59,6 @@ module.exports = {
 	DEFAULT_PREFIX_MESSAGE,
 	DEFAULT_UPDATED_BY,
 	CONTACT_FIELDS,
+	GOOGLE_CLIENT_ID_FIELD,
 	STOREFRONT_FIELDS
 };

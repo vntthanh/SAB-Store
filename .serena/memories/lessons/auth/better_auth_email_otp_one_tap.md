@@ -14,6 +14,7 @@ Nguồn: `backend/lib/auth.js`, `backend/lib/auth-guards.js`, `backend/tests/aut
 - `accountLinking`: provider trusted bỏ qua kiểm `email_verified` của Google → phải guard (không link vào user staff chưa verify).
 - `requireLocalEmailVerified` mặc định true: chặn link vào user local chưa verify (đúng ý, đừng tắt).
 - Seam test One Tap = `globalThis.fetch` tới Google certs (không có tuỳ chọn inject).
+- Callback `/one-tap/callback` đọc `options.clientId` của plugin **mỗi request** (`audience = options?.clientId || socialProviders.google.clientId`, đọc source `plugins/one-tap/index.mjs`) → client id đổi lúc chạy được bằng cách sửa object options đã truyền vào `oneTap()`; SAB-Store làm vậy trong guard (`oneTapOptions`), client id lưu ở bảng settings. Đừng đưa Google vào `socialProviders` để lấy audience: bật luôn luồng redirect cần secret.
 
 ## Rate limit
 - Mặc định chỉ bật ở production; `customRules` ghi đè từng path; store là memory theo process (nhiều process = đếm riêng) → cap theo email/giờ lưu trong bảng `verification`.

@@ -34,7 +34,7 @@ router.get('/', async (req, res) => {
 					settings?.[field] ?? TEXT_DEFAULTS[field]
 				])),
 				// Public by design (the One Tap button needs it); not a secret.
-				googleClientId: process.env.GOOGLE_CLIENT_ID || null,
+				googleClientId: settings?.googleClientId || null,
 				// Whether the sign-in-by-code form can work; the SMTP details stay private.
 				otpAvailable: otpAvailable === true
 			}
