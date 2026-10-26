@@ -23,3 +23,14 @@ export const staffLogin = z.object({
 		.max(IDENTIFIER_MAX, IDENTIFIER_MESSAGE),
 	password: loginPassword.max(256, 'Mật khẩu không được vượt quá 256 ký tự'),
 });
+
+// The Google Cloud OAuth Web client id for One Tap. Public by design (the page
+// sends it to Google), so it is a setting, not a secret. Empty turns Google off.
+export const GOOGLE_CLIENT_ID_MAX_LENGTH = 200;
+const GOOGLE_CLIENT_ID_MESSAGE = 'Client ID phải có dạng xxxx.apps.googleusercontent.com';
+
+export const googleClientId = z
+	.string({ error: GOOGLE_CLIENT_ID_MESSAGE })
+	.trim()
+	.max(GOOGLE_CLIENT_ID_MAX_LENGTH, GOOGLE_CLIENT_ID_MESSAGE)
+	.regex(/^(?:|[A-Za-z0-9-]+\.apps\.googleusercontent\.com)$/, GOOGLE_CLIENT_ID_MESSAGE);

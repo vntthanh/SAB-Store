@@ -67,6 +67,12 @@ const settingsSchema = new mongoose.Schema({
 		default: DEFAULT_CONTACT.contactFacebookUrl,
 		description: 'Facebook page link shown in the public footer'
 	},
+	googleClientId: {
+		type: String,
+		trim: true,
+		default: '',
+		description: 'Google One Tap Web client id; empty turns Google sign-in off'
+	},
 	updatedAt: {
 		type: Date,
 		default: Date.now

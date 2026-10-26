@@ -270,6 +270,7 @@ const settingsShape = record({
 	paymentNotice: text(5000),
 	contactEmail: text(254),
 	contactFacebookUrl: text(500),
+	googleClientId: text(200),
 	updatedBy: text(200)
 }, ['_id', 'bankNameId', 'bankAccountId']);
 

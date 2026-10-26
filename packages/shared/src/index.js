@@ -58,4 +58,4 @@ export {
 	emailListUpdate,
 	emailListEntriesAdd,
 } from './schemas/storefront.js';
-export { otpRequest, otpVerify, staffLogin } from './schemas/auth.js';
+export { GOOGLE_CLIENT_ID_MAX_LENGTH, googleClientId, otpRequest, otpVerify, staffLogin } from './schemas/auth.js';

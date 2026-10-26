@@ -78,7 +78,7 @@ describe('upsertConfig', () => {
 		expect(await countRows('settings')).toBe(1);
 		expect(saved).toMatchObject({ ...BANK, prefixMessage: 'SABX', updatedBy: 'admin', ...DEFAULTS });
 		expect(Object.keys(saved).filter((key) => key !== '__v').sort()).toEqual([
-			'_id', 'bankAccountId', 'bankNameId', 'checkoutNotice', 'contactEmail', 'contactFacebookUrl', 'createdAt', 'eventNotice', 'key',
+			'_id', 'bankAccountId', 'bankNameId', 'checkoutNotice', 'contactEmail', 'contactFacebookUrl', 'createdAt', 'eventNotice', 'googleClientId', 'key',
 			'paymentNotice', 'prefixMessage', 'storeTitle', 'updatedAt', 'updatedBy',
 		]);
 		expect(saved.createdAt).toBeInstanceOf(Date);
