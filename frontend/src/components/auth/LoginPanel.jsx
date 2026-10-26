@@ -232,7 +232,7 @@ const LoginPanel = ({ onSignedIn, title, hint }) => {
 
 			{settings.status === 'error' && (
 				<p className="rounded-lg bg-yellow-50 p-3 text-sm text-yellow-800" role="status">
-					Không tải được các cách đăng nhập khác. Nhân viên vẫn có thể đăng nhập bằng mật khẩu.
+					Không tải được các cách đăng nhập khác. Tài khoản nội bộ vẫn có thể đăng nhập bằng mật khẩu.
 				</p>
 			)}
 
@@ -332,13 +332,13 @@ const LoginPanel = ({ onSignedIn, title, hint }) => {
 						aria-expanded="false"
 					>
 						<i className="fas fa-user-shield mr-2"></i>
-						Đăng nhập bằng mật khẩu (nhân viên)
+						Đăng nhập bằng mật khẩu (nội bộ)
 					</button>
 				) : (
 					<form onSubmit={submitPassword} noValidate className="space-y-3">
 						<p className="text-sm font-medium text-gray-700">
 							<i className="fas fa-user-shield mr-2"></i>
-							Đăng nhập bằng mật khẩu (nhân viên)
+							Đăng nhập bằng mật khẩu (nội bộ)
 						</p>
 						<FormField id={`${uid}-identifier`} label="Tên đăng nhập hoặc email">
 							<input

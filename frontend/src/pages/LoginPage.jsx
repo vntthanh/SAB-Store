@@ -48,7 +48,7 @@ const LoginPage = () => {
 					<div className="px-6 py-8">
 						<LoginPanel
 							title="Đăng nhập"
-							hint="Khách hàng đăng nhập bằng Google hoặc mã gửi qua email. Nhân viên có thể dùng mật khẩu."
+							hint="Khách hàng đăng nhập bằng Google hoặc mã gửi qua email. Tài khoản nội bộ có thể dùng mật khẩu."
 							onSignedIn={(session) => navigate(landingPath({ user: session.user, next }), { replace: true })}
 						/>
 					</div>
