@@ -8,7 +8,7 @@ import EmailImportDialog from './EmailImportDialog';
 
 const OR_HINT = 'Người xem được vào nếu khớp BẤT KỲ quy tắc nào (OR)';
 export const SMTP_BANNER_TEXT =
-	'Chưa bật SMTP: khách không nhận được mã đăng nhập qua email, chỉ còn đăng nhập bằng Google (nếu đã cấu hình GOOGLE_CLIENT_ID)';
+	'Chưa bật SMTP: khách không nhận được mã đăng nhập qua email, chỉ còn đăng nhập bằng Google (nếu đã nhập Google Client ID ở trang Cài đặt)';
 
 const TABS = [
 	{ type: 'EMAIL', label: 'Email', placeholder: 'ten@truong.edu.vn' },

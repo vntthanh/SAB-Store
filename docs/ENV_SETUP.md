@@ -93,10 +93,13 @@ Customers sign in with a one-time code mailed to them, or with Google One Tap. S
 
 - **Email code needs SMTP.** The code travels by the mail configured above; with the master
   switch off, sending a code is refused and customers cannot use that method.
-- **`GOOGLE_CLIENT_ID`** is optional. It is the Google Cloud OAuth **Web** client id, with the
-  authorized JavaScript origin set to `PUBLIC_URL`. When it is empty the backend does not register
-  One Tap and the frontend hides the button (`backend/lib/auth.js`, `GET /api/settings`).
-  `backend/check-env.js` rejects a value that does not end in `.apps.googleusercontent.com`.
+- **Google sign-in is an admin setting**, not an environment variable: the "Google Client ID"
+  field on the admin Settings page. It takes the Google Cloud OAuth **Web** client id, whose
+  authorized JavaScript origin must be `PUBLIC_URL`. No redirect URI is needed: the button runs in
+  popup mode and hands the ID token to the page, which posts it to the backend. No client secret
+  either. Empty turns Google off: the button is hidden and `/api/auth/one-tap/callback` answers
+  503. A saved change applies to the next sign-in without a restart (`backend/lib/auth-guards.js`,
+  `oneTapOptions`). An old `GOOGLE_CLIENT_ID` environment variable is ignored and can be deleted.
 - `APPSCRIPT_URL` no longer exists; remove it from any environment that still carries it.
 
 ## `ADMIN_*` and `INIT_EMPTY_DATABASE`

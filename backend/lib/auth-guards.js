@@ -12,6 +12,7 @@ const { isValidEmail } = require('@sab/shared');
 const { ERROR_CODES, ERROR_MESSAGES } = require('../constants/errorCodes');
 // Reached as a module object (`mailer.sendMail`) so tests can spy on the mail edge.
 const mailer = require('../services/mailer');
+const data = require('../data');
 
 const OTP_EXPIRES_IN_SECONDS = 300;
 const OTP_COOLDOWN_SECONDS = 60;
@@ -277,13 +278,34 @@ async function guardEmailCode(ctx) {
 }
 
 /**
+ * The options object handed to Better Auth's oneTap plugin. Its callback reads
+ * `options.clientId` on every request (better-auth 1.7 plugins/one-tap), so the guard
+ * below can point it at the admin-saved client id just before the token is verified:
+ * a change in Settings applies to the next sign-in without a restart. Each callback
+ * writes the value it has just read, so concurrent callbacks can see different ids
+ * only while an admin is saving a new one, and each still verifies against a saved id.
+ */
+const oneTapOptions = { clientId: undefined };
+
+async function loadGoogleClientId() {
+	const settings = await data.settings.findStorefront();
+	return typeof settings?.googleClientId === 'string' ? settings.googleClientId : '';
+}
+
+/**
+ * Refuses with 503 while no client id is saved, before anything reads the token.
+ *
  * Better Auth links Google to an existing local user whenever `google` is a trusted
  * provider, without looking at the token's `email_verified`. Refuse an unverified
  * Google address here, before the plugin runs. The claim is read without checking the
  * signature on purpose: the check can only refuse, and the plugin verifies the
  * signature next, so a forged token gains nothing.
  */
-function guardOneTap(ctx) {
+async function guardOneTap(ctx) {
+	const clientId = await loadGoogleClientId();
+	if (!clientId) throw apiError('SERVICE_UNAVAILABLE', ERROR_CODES.GOOGLE_SIGN_IN_UNAVAILABLE);
+	oneTapOptions.clientId = clientId;
+
 	const idToken = ctx.body?.idToken;
 	if (typeof idToken !== 'string') return;
 	let verified = false;
@@ -419,6 +441,7 @@ async function beforeUserCreate(user, ctx) {
 
 module.exports = {
 	OTP_EXPIRES_IN_SECONDS,
+	oneTapOptions,
 	CUSTOMER_ROLE,
 	isStaffRole,
 	guardAuthRequest,

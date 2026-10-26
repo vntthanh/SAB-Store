@@ -6,7 +6,7 @@ import MarkdownEditor from '../../components/admin/MarkdownEditor';
 import MailSettingsSection from '../../components/admin/MailSettingsSection';
 import useFieldErrors from '../../hooks/use-field-errors';
 import FormField from '../../components/form/FormField';
-import { contactEmail, contactUrl, CONTACT_EMAIL_MAX_LENGTH, CONTACT_URL_MAX_LENGTH } from '@sab/shared';
+import { contactEmail, contactUrl, googleClientId, CONTACT_EMAIL_MAX_LENGTH, CONTACT_URL_MAX_LENGTH, GOOGLE_CLIENT_ID_MAX_LENGTH } from '@sab/shared';
 
 const firstIssue = (schema, value) => {
 	const result = schema.safeParse(value);
@@ -24,7 +24,8 @@ const SETTINGS_RULES = {
 	bankAccountId: (value) => (value.trim() ? null : 'Số tài khoản là bắt buộc'),
 	prefixMessage: (value) => (value.trim() ? null : 'Prefix message là bắt buộc'),
 	contactEmail: (value) => firstIssue(contactEmail, value),
-	contactFacebookUrl: (value) => firstIssue(contactUrl, value)
+	contactFacebookUrl: (value) => firstIssue(contactUrl, value),
+	googleClientId: (value) => firstIssue(googleClientId, value)
 };
 
 // Footer contact lines; both optional, empty hides the line.
@@ -33,6 +34,8 @@ const CONTACTS = [
 	{ field: 'contactFacebookUrl', label: 'Link Facebook Page', type: 'url', maxLength: CONTACT_URL_MAX_LENGTH, placeholder: 'VD: https://facebook.com/...' }
 ];
 const CONTACT_FIELDS = CONTACTS.map(({ field }) => field);
+// Trimmed single-line fields saved as typed; empty hides the line or, for Google, turns it off.
+const TEXT_FIELDS = [...CONTACT_FIELDS, 'googleClientId'];
 
 // Where each customer reminder appears; the preview reuses that box's text colour.
 const NOTICES = [
@@ -41,6 +44,9 @@ const NOTICES = [
 	{ field: 'paymentNotice', label: 'Lời nhắc phía trên mã QR thanh toán', previewClassName: 'text-red-600' }
 ];
 const NOTICE_FIELDS = NOTICES.map(({ field }) => field);
+
+// A row saved before a text field existed has none; the inputs need a string.
+const withTextFields = (data) => ({ ...data, ...Object.fromEntries(TEXT_FIELDS.map(field => [field, data[field] ?? ''])) });
 
 const SettingsManagement = () => {
 	const [loading, setLoading] = useState(false);
@@ -54,7 +60,8 @@ const SettingsManagement = () => {
 		eventNotice: '',
 		paymentNotice: '',
 		contactEmail: '',
-		contactFacebookUrl: ''
+		contactFacebookUrl: '',
+		googleClientId: ''
 	});
 	const [originalSettings, setOriginalSettings] = useState(null);
 	const { errors, validateField, onFieldChange, validateAll, focusFirstError, reset: resetFieldErrors } = useFieldErrors(SETTINGS_RULES);
@@ -69,8 +76,9 @@ const SettingsManagement = () => {
 		try {
 			const response = await api.get('/admin/settings');
 			if (response.data.success) {
-				setSettings(response.data.data);
-				setOriginalSettings(response.data.data);
+				const loaded = withTextFields(response.data.data);
+				setSettings(loaded);
+				setOriginalSettings(loaded);
 			}
 		} catch (error) {
 			if (error.response?.status === 404) {
@@ -131,13 +139,14 @@ const SettingsManagement = () => {
 				prefixMessage: settings.prefixMessage.trim(),
 				storeTitle: settings.storeTitle.trim(),
 				...Object.fromEntries(NOTICE_FIELDS.map(field => [field, settings[field]])),
-				...Object.fromEntries(CONTACT_FIELDS.map(field => [field, settings[field].trim()]))
+				...Object.fromEntries(TEXT_FIELDS.map(field => [field, settings[field].trim()]))
 			});
 
 			if (response.data.success) {
 				toast.success('Cập nhật cấu hình thành công');
-				setSettings(response.data.data);
-				setOriginalSettings(response.data.data);
+				const saved = withTextFields(response.data.data);
+				setSettings(saved);
+				setOriginalSettings(saved);
 				settingsService.clearPublicSettingsCache();
 			}
 		} catch (error) {
@@ -161,7 +170,7 @@ const SettingsManagement = () => {
 			settings.bankAccountId !== originalSettings.bankAccountId ||
 			settings.prefixMessage !== originalSettings.prefixMessage ||
 			settings.storeTitle !== originalSettings.storeTitle ||
-			[...NOTICE_FIELDS, ...CONTACT_FIELDS].some(field => settings[field] !== originalSettings[field])
+			[...NOTICE_FIELDS, ...TEXT_FIELDS].some(field => settings[field] !== originalSettings[field])
 		);
 	};
 
@@ -211,6 +220,29 @@ const SettingsManagement = () => {
 								/>
 							</FormField>
 						))}
+
+						<h2 className="text-lg font-semibold text-gray-800 pt-2">Đăng nhập bằng Google</h2>
+						<p className="text-sm text-gray-500 -mt-4">
+							Tạo OAuth client loại <strong>Web application</strong> trong{' '}
+							<a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">Google Cloud Console</a>,
+							thêm <code>{window.location.origin}</code> vào <em>Authorized JavaScript origins</em> (không cần redirect URI, không cần client secret).
+							Để trống để tắt nút Google.
+						</p>
+
+						<FormField id="settings-googleClientId" label="Google Client ID" error={errors.googleClientId}>
+							<input
+								type="text"
+								name="googleClientId"
+								value={settings.googleClientId}
+								onChange={handleChange}
+								onBlur={handleBlur}
+								placeholder="VD: 1234567890-abc.apps.googleusercontent.com"
+								maxLength={GOOGLE_CLIENT_ID_MAX_LENGTH}
+								autoComplete="off"
+								spellCheck={false}
+								className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+							/>
+						</FormField>
 
 						<h2 className="text-lg font-semibold text-gray-800 pt-2">Thanh toán VietQR</h2>
 

@@ -1,13 +1,11 @@
-// Read when lib/auth.js loads (the plugin is registered only when this is set), so it
-// must be in place before anything below pulls the app in.
 const CLIENT_ID = 'sab-test-client.apps.googleusercontent.com';
-process.env.GOOGLE_CLIENT_ID = CLIENT_ID;
 
 const request = require('supertest');
+const { settings: settingsRepo } = require('../../data');
 const { generateKeyPairSync, createSign, randomUUID } = require('crypto');
 const { buildTestApp } = require('../helpers/app');
 const { createAccount, signInSession } = require('../helpers/factories');
-const { findUser, findAuthRows, countRows } = require('../helpers/db');
+const { findUser, findAuthRows, countRows, insertRawSettings } = require('../helpers/db');
 const { uniqueEmail, authPost, setUserColumns } = require('./auth-test-kit');
 
 // The plugin verifies the ID token against Google's published keys, fetched over the
@@ -44,7 +42,12 @@ describe('Google One Tap sign-in', () => {
 		app = buildTestApp();
 	});
 
-	beforeEach(() => {
+	// The client id is an admin setting; every test starts from a saved one because the
+	// harness empties the database after each test.
+	const saveClientId = (googleClientId) => settingsRepo.upsertConfig({ googleClientId });
+
+	beforeEach(async () => {
+		await saveClientId(CLIENT_ID);
 		vi.stubGlobal('fetch', vi.fn(async (input, init) => {
 			const url = typeof input === 'string' ? input : input.url ?? String(input);
 			if (url.startsWith(GOOGLE_CERTS_URL)) {
@@ -128,6 +131,18 @@ describe('Google One Tap sign-in', () => {
 		expect(await countRows('user', { email })).toBe(0);
 	});
 
+	it('verifies against the client id saved now, without a restart', async () => {
+		const other = 'sab-other-client.apps.googleusercontent.com';
+		const email = uniqueEmail('switched');
+		await saveClientId(other);
+
+		const forOldId = await tap(idToken({ email }));
+		const forNewId = await tap(idToken({ email, aud: other }));
+
+		expect(forOldId.status).toBe(400);
+		expect(forNewId.status).toBe(200);
+	});
+
 	it('refuses a banned staff account a session', async () => {
 		const account = await createAccount({ role: 'seller', prefix: 'tapbanned' });
 		await setUserColumns(account.email, { banned: true, banReason: 'test' });
@@ -137,5 +152,38 @@ describe('Google One Tap sign-in', () => {
 		expect(res.status).toBe(403);
 		expect(res.body.code).toBe('BANNED_USER');
 		expect(res.headers['set-cookie']).toBeUndefined();
+	});
+});
+
+describe('Google One Tap sign-in without a saved client id', () => {
+	let app;
+
+	beforeAll(() => {
+		app = buildTestApp();
+	});
+
+	beforeEach(() => {
+		vi.stubGlobal('fetch', vi.fn(globalThis.fetch));
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it.each([
+		['turned off with an empty value', () => settingsRepo.upsertConfig({ googleClientId: '' })],
+		['never set (a row saved before the setting existed)', () => insertRawSettings({ bankNameId: 'MB', bankAccountId: '0123456789' })],
+		['never set (no settings row at all)', async () => {}]
+	])('is unavailable while the client id is %s, without contacting Google', async (_label, arrange) => {
+		const email = uniqueEmail('nogoogle');
+		await arrange();
+
+		const res = await authPost(app, '/one-tap/callback', { idToken: idToken({ email }) });
+
+		expect(res.status).toBe(503);
+		expect(res.body.code).toBe('GOOGLE_SIGN_IN_UNAVAILABLE');
+		expect(res.headers['set-cookie']).toBeUndefined();
+		expect(await countRows('user', { email })).toBe(0);
+		expect(globalThis.fetch.mock.calls.some(([input]) => String(input?.url ?? input).startsWith(GOOGLE_CERTS_URL))).toBe(false);
 	});
 });

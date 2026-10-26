@@ -66,4 +66,5 @@ chưa xác minh không bao giờ khớp quy tắc nào.
 
 - **Bật SMTP** ở trang Cài đặt: không có SMTP thì không gửi được mã, khách không đăng nhập bằng mã
   được. Cấu hình SMTP: [`ENV_SETUP.md`](ENV_SETUP.md).
-- **`GOOGLE_CLIENT_ID`** (tuỳ chọn) để hiện nút Google; để trống thì ẩn.
+- **Google Client ID** (tuỳ chọn) ở trang Cài đặt để hiện nút Google; để trống thì ẩn. Cách tạo:
+  [`ENV_SETUP.md`](ENV_SETUP.md).
