@@ -1,7 +1,6 @@
 /**
  * Stock-ledger storage on Postgres: StockMovement rows and the one write of the
- * Product stock cache. Same functions, arguments and plain records as
- * data/mongo/stock-ledger.js.
+ * product and variant stock caches.
  *
  * `applyClaimed` is the only function in the code base that changes
  * `products.stock_quantity` or `product_variants.stock_quantity` after the row
@@ -124,8 +123,8 @@ function createMovement(record, tx) {
 /**
  * Movements of the same product apply in `seq` order. `seq` is drawn at insert,
  * not at commit, so the guarantee is insertion order among COMMITTED rows: a
- * lower `seq` whose transaction commits later is invisible here (the same gap
- * Mongo's createdAt ordering has). The mitigation is the sweeper, which only
+ * lower `seq` whose transaction commits later is invisible here (a gap that
+ * timestamp ordering has too). The mitigation is the sweeper, which only
  * picks movements older than an age threshold (`listPendingIdsCreatedBefore`),
  * by which time such a straggler has committed.
  */

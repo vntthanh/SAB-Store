@@ -1,11 +1,9 @@
 /**
- * Product catalogue on Postgres: the same functions, arguments and plain records
- * as data/mongo/products.js.
+ * Product catalogue on Postgres, as plain records (see data/index.js).
  *
- * Differences a caller can see, all deliberate:
- * - A record has no `__v`, and an optional field that is NULL (description, sku,
- *   weight, dimensions, salePrice, the sale dates) is absent, as it is on a
- *   Mongo document that never set it. `maxOrderQuantity` stays `null`, as there.
+ * What a caller can rely on:
+ * - An optional field that is NULL (description, sku, weight, dimensions,
+ *   salePrice, the sale dates) is absent. `maxOrderQuantity` stays `null`.
  * - There is no "row without salesChannel": the column is NOT NULL, default 'all',
  *   so the channel rule is a plain `IN ('all', channel)`.
  * - `findSellable` returns oldest first and every list orders by its key and then
@@ -66,7 +64,7 @@ const CUSTOMER_INCLUDE = { options: OPTIONS_INCLUDE, variants: CUSTOMER_VARIANTS
 
 const clientOf = (tx) => tx || prisma;
 
-// Optional fields a Mongo document simply lacks when they were never set.
+// Optional fields: a product that never set one has no such key.
 const OMITTED_WHEN_NULL = new Set(['description', 'sku', 'weight', 'salePrice', 'saleStartDate', 'saleEndDate']);
 
 /**
@@ -349,7 +347,7 @@ async function listCategories() {
  * @returns {Promise<{data: object[], meta: {page: number, limit: number, total: number, totalPages: number}}>}
  */
 async function listPage({ page, limit, search, category, available, salesChannel, storefrontId }) {
-	// A channel the enum does not have matches nothing, as it does on Mongo.
+	// A channel the enum does not have matches nothing instead of raising an error.
 	const channel = !salesChannel ? {} : SALES_CHANNELS.includes(salesChannel) ? { salesChannel } : { id: { in: [] } };
 	const where = { ...searchWhere(search), ...channel, ...listStorefrontWhere(storefrontId), ...(category && { category }), ...(available !== undefined && { available }) };
 

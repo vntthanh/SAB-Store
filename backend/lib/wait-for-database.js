@@ -1,7 +1,6 @@
 const { connectDB } = require('./database');
-const { backendName } = require('../data/backend-name');
 
-const DATABASE_LABEL = backendName === 'postgres' ? 'PostgreSQL' : 'MongoDB';
+const DATABASE_LABEL = 'PostgreSQL';
 
 /**
  * Connects, retrying while the database is not ready: still starting, or (on

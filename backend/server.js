@@ -49,7 +49,7 @@ function createApp() {
 
 	// Parse query strings into plain strings or arrays only. Pinned on purpose
 	// even though 'simple' is Express 5's default: if the default ever changed to
-	// a nesting parser, ?status[$ne]= would become an object and reach Mongo as
+	// a nesting parser, ?status[$ne]= would become an object and reach a query filter as
 	// a live operator.
 	app.set('query parser', 'simple');
 

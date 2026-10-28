@@ -1,6 +1,5 @@
 /**
- * Orders on Postgres: the same functions, arguments and plain records as
- * data/mongo/orders.js (record shape: data/postgres/order-records.js).
+ * Orders on Postgres, as plain records (record shape: data/postgres/order-records.js).
  *
  * Concurrency. An order is changed by taking its row lock first
  * (`SELECT ... FOR NO KEY UPDATE`: it blocks other writers of the same order but
@@ -129,7 +128,7 @@ function listWhere({ status, search, searchFields = [], createdFrom, createdTo, 
 	const text = asString(search, SEARCH_MAX_LENGTH);
 	const match = text ? containsInsensitive(text) : undefined;
 	return {
-		// A status the enum does not have matches nothing, as it does on Mongo.
+		// A status the enum does not have matches nothing instead of raising an error.
 		...(status && (STATUS_VALUES.includes(status) ? { status } : { id: { in: [] } })),
 		...(storefrontId !== undefined && storefrontFilter(storefrontId)),
 		...(match && searchFields.length > 0 && { OR: searchFields.map((field) => ({ [field]: match })) }),
@@ -149,7 +148,7 @@ function sortOf(sort) {
 /**
  * Prisma `orderBy` for a sort: the id follows the direction and breaks ties, so a
  * page boundary never repeats or drops a row. A missing `orderNumber` sorts first
- * ascending and last descending, which is where Mongo puts a missing field.
+ * ascending and last descending, so a missing value always reads as the smallest.
  */
 function orderByOf({ field, direction }) {
 	const key = field === 'orderNumber' ? { orderNumber: { sort: direction, nulls: direction === 'asc' ? 'first' : 'last' } } : { [field]: direction };
@@ -157,8 +156,8 @@ function orderByOf({ field, direction }) {
 }
 
 /**
- * A page sorted by status. The enum sorts by declaration order in Postgres and
- * alphabetically in Mongo, and Prisma cannot cast in `orderBy`, so the statuses
+ * A page sorted by status. The enum sorts by declaration order in Postgres, which is not
+ * alphabetical, and Prisma cannot cast in `orderBy`, so the statuses
  * are walked in alphabetical order: a grouped count says how many rows each holds
  * and one bounded `findMany` per status covers the page.
  */

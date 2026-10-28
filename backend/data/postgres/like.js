@@ -21,8 +21,7 @@ function escapeLike(value) {
 
 /**
  * Prisma filter for "contains `value`", ignoring case. Neither side ignores
- * diacritics (Mongo's regex does not either), and `value` is not trimmed: the
- * Mongo search it replaces does not trim.
+ * diacritics, and `value` is not trimmed.
  *
  * @param {string} value
  * @returns {{contains: string, mode: 'insensitive'}}

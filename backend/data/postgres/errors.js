@@ -2,8 +2,8 @@
  * Translation of Prisma/driver write errors into the domain errors of
  * data/errors.js, so callers never test a Prisma code or a SQLSTATE.
  *
- * Field names follow the record (camelCase), which is also what Mongo reports,
- * so a retry loop asking `isDuplicateKeyOn(err, 'orderCode')` works on both.
+ * Field names follow the record (camelCase), not the column, so a retry loop
+ * asking `isDuplicateKeyOn(err, 'orderCode')` does not depend on the SQL names.
  */
 const { InvalidIdError, DuplicateKeyError, RecordValidationError, ConflictError, CONFLICT_CODES } = require('../errors');
 

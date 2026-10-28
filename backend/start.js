@@ -75,7 +75,6 @@ async function startServer() {
 			CORS_ORIGIN: process.env.CORS_ORIGIN,
 			PORT: process.env.PORT,
 			DATABASE_URL: process.env.DATABASE_URL,
-			MONGODB_URI: process.env.MONGODB_URI,
 			JWT_SECRET: process.env.JWT_SECRET,
 			BASE_URL: process.env.BASE_URL
 		}

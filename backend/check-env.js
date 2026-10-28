@@ -7,14 +7,9 @@
  * in logs and pasted into chats.
  */
 require('dotenv').config({ quiet: true });
-const { backendName } = require('./data/backend-name');
-
-// The store DATA_BACKEND selects decides which connection string is needed.
-const DATABASE_VARIABLE = backendName === 'postgres' ? 'DATABASE_URL' : 'MONGODB_URI';
-
 // Missing any of these means the process cannot serve traffic correctly.
 const REQUIRED = [
-	DATABASE_VARIABLE,
+	'DATABASE_URL',
 	'JWT_SECRET',
 	'CORS_ORIGIN',
 	// The storage container refuses default or short keys, so there is no
@@ -25,7 +20,6 @@ const REQUIRED = [
 
 // Absent values fall back to a working default, so they are reported but not fatal.
 const OPTIONAL = [
-	'DATA_BACKEND',
 	'NODE_ENV',
 	'PORT',
 	'BASE_URL',

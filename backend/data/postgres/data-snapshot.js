@@ -9,7 +9,7 @@
  *
  * Restore replaces every section inside the caller's transaction. Ids of every
  * form are mapped to uuids with the function that mapped the rows when the store
- * moved from Mongo (`normalizeRecordId`): row ids, the ids a row points at, the
+ * moved to Postgres (`normalizeRecordId`): row ids, the ids a row points at, the
  * ids inside the JSON of `comboInfo` and the item-edit history, and the ids that
  * idempotency keys are built from. Mapping is by key, never by guess, and it
  * leaves a uuid unchanged, so a file exported here restores to itself.
@@ -36,8 +36,7 @@
  * default variant holding its stock and points the product's order lines and
  * movements at it, as the migration that introduced variants did.
  *
- * An export from here holds uuid ids; the Mongo backend's id check accepts only
- * 24-hex, so it cannot be restored onto Mongo.
+ * An export from here holds uuid ids.
  */
 const { prisma } = require('../../lib/prisma');
 const { normalizeRecordId } = require('../ids');
@@ -228,7 +227,7 @@ function orderRows(order, legacy, defaultVariants) {
 		order: {
 			...cleaned(rest, ['createdAt', 'updatedAt', 'statusUpdatedAt']),
 			id,
-			// An empty phone is not a phone: the column's CHECK refuses '' where Mongo stored it.
+			// An empty phone is not a phone: the column's CHECK refuses '', which old backup files can hold.
 			...(phoneNumber ? { phoneNumber } : {}),
 			...(createdBy ? { createdBy: normalizeRecordId(createdBy) } : {}),
 			...(comboInfo ? { comboInfo: mapJsonIds(comboInfo) } : {}),

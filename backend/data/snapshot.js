@@ -3,13 +3,12 @@
  * storage engine: its format, the checks a file must pass before anything is
  * deleted, and the total rule of a stored order.
  *
- * Wire form: every record is a complete JSON document. Ids are record ids (24-hex
- * strings from a Mongo store, uuid strings from a Postgres one), dates are ISO
- * strings, nothing is renamed. An engine's repository
+ * Wire form: every record is a complete JSON document. Ids are record ids (uuid
+ * strings; a file made before the move to Postgres holds 24-hex ids instead),
+ * dates are ISO strings, nothing is renamed. An engine's repository
  * (`data/<engine>/data-snapshot.js`) turns its rows into this form and back; this
- * file never touches a database. A file exported from Postgres (uuid ids) cannot
- * be restored onto the Mongo backend, which accepts only 24-hex ids; the reverse
- * works, since a Postgres restore maps hex ids to uuids.
+ * file never touches a database. The restore maps legacy 24-hex ids to uuids, so
+ * an old backup file still loads.
  *
  * Fields outside a collection's list are rejected, not dropped: the restore
  * writes whole rows, so an unknown key must stop the file instead of being
