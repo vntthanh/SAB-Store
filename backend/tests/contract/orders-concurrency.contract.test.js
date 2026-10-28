@@ -10,7 +10,8 @@ const { editOrderItems } = require('../../services/order-edit');
 const { applyMovement, reconcile } = require('../../services/stock-ledger');
 const { RecordValidationError } = require('../../data/errors');
 const {
-	newId, insertRawProduct, findOrder, movements, stockOf, countRows, withTransaction
+	newId, insertRawProduct, findOrder, movements, stockOf, countRows, withTransaction,
+	stockKeyIdOf,
 } = require('../helpers/db');
 
 const { orders } = data;
@@ -281,7 +282,8 @@ describe('item edits through the service', () => {
 		expect(stored.itemsHistory[0].previousItems.map((line) => [String(line.productId), line.quantity])).toEqual([[a._id, 2]]);
 		const editMovements = await movements({ type: 'order_edit' });
 		expect(editMovements.map((movement) => [String(movement.productId), movement.delta]).sort()).toEqual([[a._id, 1], [b._id, -1]].sort());
-		expect(editMovements.map((movement) => movement.idempotencyKey).sort()).toEqual([`order:${order._id}:${a._id}:edit:1`, `order:${order._id}:${b._id}:edit:1`].sort());
+		expect(editMovements.map((movement) => movement.idempotencyKey).sort())
+			.toEqual([`order:${order._id}:${await stockKeyIdOf(a._id)}:edit:1`, `order:${order._id}:${await stockKeyIdOf(b._id)}:edit:1`].sort());
 		await applyAllPending();
 		expect([await stockOf(a._id), await stockOf(b._id)]).toEqual([-1, -1]);
 	});

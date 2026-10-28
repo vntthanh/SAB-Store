@@ -83,6 +83,16 @@ describe('renderOrderMail', () => {
 			expect(html).toContain('Nội dung chuyển khoản');
 		});
 
+		it('names the variant of a line after the product, escaped', () => {
+			const { html, text } = renderOrderMail('order_created', full({
+				items: [{ productName: 'Áo', variantLabel: 'Đỏ / <M>', price: 10000, quantity: 1 }, { productName: 'Thẻ', price: 5000, quantity: 1 }]
+			}), 'SAB');
+
+			expect(html).toContain('Áo — Đỏ / &lt;M&gt; × 1');
+			expect(html).toContain('Thẻ × 1');
+			expect(text).toContain('Áo — Đỏ / <M>');
+		});
+
 		it('renders an apostrophe as &#39;, the output of the custom escaper', () => {
 			const { html } = renderOrderMail('order_created', full({ fullName: "O'Brien" }), 'SAB');
 

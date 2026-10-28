@@ -265,7 +265,15 @@ async function listSellable(channel, { category, search, forCustomers = false, s
  */
 function findSellableForPricing(channel, ids, fields, tx, { storefrontId } = {}) {
 	return translating(async () => {
-		const where = { id: { in: ids.map((id) => recordId(id)) }, ...sellableWhere(channel), ...storefrontWhere(storefrontId) };
+		const productIds = ids.map((id) => recordId(id));
+		const where = { id: { in: productIds }, ...sellableWhere(channel), ...storefrontWhere(storefrontId) };
+		// Inside an order's transaction the priced variants stay until it commits: a
+		// DELETE of a variant takes a row lock that conflicts with KEY SHARE, while the
+		// ledger's NO KEY UPDATE does not wait on it. Taken in id order, like every
+		// other multi-row lock, so two lockers cannot cross.
+		if (tx && fields.includes('variants')) {
+			await tx.$queryRaw`SELECT id FROM product_variants WHERE product_id = ANY(${productIds}::uuid[]) ORDER BY id FOR KEY SHARE`;
+		}
 		const rows = await clientOf(tx).product.findMany({ where, select: selectOf(fields) });
 		return rows.map(toRecord);
 	});

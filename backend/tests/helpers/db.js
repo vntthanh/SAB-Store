@@ -355,7 +355,11 @@ const failProductCatalogReads = (message) => handleOf(vi.spyOn(data.products, 'f
 	throw new Error(message);
 }));
 
+/** The id an order movement's key names for a product without options: the product itself here (no variants). */
+const stockKeyIdOf = async (productId) => String(productId);
+
 const mongoOracle = {
+	stockKeyIdOf,
 	newId,
 	findProduct,
 	findProductByName,

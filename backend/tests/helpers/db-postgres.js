@@ -456,7 +456,42 @@ const failProductCatalogReads = (message) => handleOf(vi.spyOn(data.products, 'f
 	throw new Error(message);
 }));
 
+/**
+ * A product with options and one variant per given combination, bypassing every
+ * repository. `options` is `[{name, values}]`; each variant is
+ * `{optionValues, price?, stockQuantity?, isActive?, imageUrl?}`. The product's
+ * stock is the sum of its variants'. Returns `{ product, variants }` with the
+ * variant rows in the given order (`_id` is the uuid string).
+ */
+async function insertRawProductWithOptions({ options, variants, ...fields }) {
+	const stock = variants.reduce((sum, variant) => sum + (variant.stockQuantity ?? 0), 0);
+	const product = await insertRawProduct({ ...fields, stockQuantity: stock, withDefaultVariant: false });
+	for (const [position, option] of options.entries()) {
+		await db().query('INSERT INTO product_options (id, product_id, position, name, "values") VALUES ($1::uuid, $2::uuid, $3, $4, $5)',
+			[uuidv7(), product._id, position, option.name, option.values]);
+	}
+	const rows = [];
+	for (const [position, variant] of variants.entries()) {
+		const { rows: inserted } = await db().query(
+			`INSERT INTO product_variants (id, product_id, position, option_values, price, stock_quantity, is_active, image_url)
+			 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8) RETURNING *`,
+			[uuidv7(), product._id, position, variant.optionValues, variant.price ?? null, variant.stockQuantity ?? 0, variant.isActive ?? true, variant.imageUrl ?? null]
+		);
+		rows.push(toPlain(inserted[0]));
+	}
+	return { product, variants: rows };
+}
+
+/** The id an order movement's key names for a product without options: its default variant. */
+async function stockKeyIdOf(productId) {
+	const { rows } = await db().query(`SELECT id FROM product_variants WHERE product_id = $1::uuid AND option_values = '{}'`, [String(productId)]);
+	if (rows.length !== 1) throw new Error(`product ${productId} has no default variant`);
+	return rows[0].id;
+}
+
 module.exports = {
+	stockKeyIdOf,
+	insertRawProductWithOptions,
 	newId,
 	findProduct,
 	findProductByName,

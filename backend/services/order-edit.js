@@ -5,8 +5,9 @@
  * by the same engine that priced the order (today's prices and combos, the
  * order's channel) and is accepted only when it adds up to exactly that total.
  * The total is never taken from the request and never rewritten, so an edit can
- * swap a colour or move units between products but cannot change what the
- * customer owes.
+ * swap a colour or a size (another variant) or move units between products but
+ * cannot change what the customer owes. A variant the order already holds stays
+ * priceable after it is retired, so the rest of the order can still be edited.
  *
  * The write is a compare-and-set on `status` and `itemsRevision`, and the stock
  * movements for the unit differences commit in the same transaction, so an order
@@ -39,7 +40,20 @@ function unitDifferences(previousItems, nextItems) {
 }
 
 /**
- * @param {{orderId: string, items: Array<{productId: string, quantity: number}>,
+ * A stored line that names no variant (an imported order) as the default variant
+ * of its product, when the new pricing loaded that product: otherwise the same
+ * units would compare as one removed and one added. A product the edit dropped,
+ * or a store without variants, leaves the line as it is.
+ */
+function withDefaultVariant(item, products) {
+	if (item.variantId != null) return item;
+	const variants = products.get(String(item.productId))?.variants;
+	const fallback = variants && variants.find((variant) => variant.optionValues.length === 0);
+	return fallback ? { ...item, variantId: fallback._id } : item;
+}
+
+/**
+ * @param {{orderId: string, items: Array<{productId: string, variantId?: string|null, quantity: number}>,
  *          expectedRevision: number, reason: string, actor: string}} edit
  * @returns {Promise<{outcome: 'not_found'|'final'|'changed'|'total_changed'|'unchanged'|'ok',
  *                    order?: object, movements?: Array<object>,
@@ -70,13 +84,14 @@ function editOrderItems({ orderId, items, expectedRevision, reason, actor }) {
 			// counter order (null) keeps the unrestricted scope it was sold under.
 			scope: { storefrontId: existing.storefrontId ?? null },
 			// The admin is amending an order that already exists, not selling to a customer.
-			enforceQuantityLimits: false
+			enforceQuantityLimits: false,
+			keepVariantIds: existing.items.filter((item) => item.variantId != null).map((item) => String(item.variantId))
 		});
 		if (pricing.totalAmount !== existing.totalAmount) {
 			return { outcome: 'total_changed', expected: existing.totalAmount, actual: pricing.totalAmount };
 		}
 
-		const differences = unitDifferences(existing.items, pricing.orderItems);
+		const differences = unitDifferences(existing.items.map((item) => withDefaultVariant(item, pricing.products)), pricing.orderItems);
 		if (differences.size === 0) return { outcome: 'unchanged', order: existing };
 
 		const newRevision = currentRevision + 1;

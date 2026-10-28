@@ -11,7 +11,13 @@ import {
 } from './primitives.js';
 
 const PRODUCT_ID_INVALID = 'ID sản phẩm không hợp lệ';
+const VARIANT_ID_INVALID = 'ID phân loại không hợp lệ';
 const ORDER_ID_INVALID = 'ID đơn hàng không hợp lệ';
+
+// The variant a cart line buys. Left out for a product without options (its one
+// default variant): a cart saved before variants existed has no such key, and a
+// product with options is refused by the pricing engine when it is missing.
+export const lineVariantId = recordId(VARIANT_ID_INVALID).nullish();
 
 const NAME_PATTERN = /^[a-zA-ZÀ-ỹ\s]+$/;
 const PHONE_PATTERN = /^0[0-9]{9}$/;
@@ -80,6 +86,7 @@ export const orderCreate = z.object({
 		.array(
 			arrayElement({
 				productId: recordId(PRODUCT_ID_INVALID),
+				variantId: lineVariantId,
 				quantity: wholeNumber({ min: 1, max: 100, message: 'Số lượng phải từ 1-100' }),
 			}),
 			{ error: ORDER_ITEMS_REQUIRED },
@@ -88,16 +95,20 @@ export const orderCreate = z.object({
 	expectedTotal,
 });
 
-// A counter sale. Only the product id of each line is checked here, as a record
-// id. The list itself, the quantities and the over-the-limit override are checked
+// A counter sale. Only the product and variant ids of each line are checked here,
+// as record ids. The list itself, the quantities and the over-the-limit override are checked
 // by the route and the pricing engine, which answer with their own error shapes,
 // so a line that is not an object is left to them.
 const productIdField = recordId(PRODUCT_ID_INVALID);
 const directOrderItems = z.unknown().optional().superRefine((items, ctx) => {
 	if (!Array.isArray(items)) return;
 	items.forEach((item, index) => {
-		if (isPlainObject(item) && !productIdField.safeParse(item.productId).success) {
+		if (!isPlainObject(item)) return;
+		if (!productIdField.safeParse(item.productId).success) {
 			ctx.addIssue({ code: 'custom', message: PRODUCT_ID_INVALID, path: [index, 'productId'] });
+		}
+		if (!lineVariantId.safeParse(item.variantId).success) {
+			ctx.addIssue({ code: 'custom', message: VARIANT_ID_INVALID, path: [index, 'variantId'] });
 		}
 	});
 });
@@ -135,6 +146,7 @@ export const orderItemsEdit = z.object({
 		.array(
 			arrayElement({
 				productId: recordId(PRODUCT_ID_INVALID),
+				variantId: lineVariantId,
 				quantity: wholeNumber({ min: 1, message: 'Số lượng phải là số nguyên từ 1 trở lên' }),
 			}),
 			{ error: EDIT_ITEMS_RANGE },

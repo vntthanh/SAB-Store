@@ -314,3 +314,27 @@ describe('wholeNumber', () => {
 		expect(unbounded.safeParse(9007199254740991).success).toBe(true);
 	});
 });
+
+describe('variantId on a cart line', () => {
+	const UUID = '01a17d54-00a5-740b-b344-d9e9a04838c4';
+	const lineWith = (variantId) => ({ productId: OID, quantity: 1, ...(variantId !== undefined && { variantId }) });
+
+	it('is optional and may be null, for a product without options', () => {
+		for (const items of [[lineWith(undefined)], [lineWith(null)], [lineWith(UUID)]]) {
+			expect(errorsOf(orderCreate, { ...validOrder(), items })).toBeNull();
+			expect(errorsOf(orderItemsEdit, { items, expectedRevision: 0, reason: 'x' })).toBeNull();
+			expect(errorsOf(makeComboItems({ maxUnits: 200 }), { items })).toBeNull();
+			expect(errorsOf(directOrder, { items, expectedTotal: 0 })).toBeNull();
+		}
+	});
+
+	it('must be a record id when given', () => {
+		for (const variantId of ['nope', 5, { $ne: null }, '']) {
+			const items = [lineWith(variantId)];
+			expect(pairs(errorsOf(orderCreate, { ...validOrder(), items }))).toEqual([['items[0].variantId', 'ID phân loại không hợp lệ']]);
+			expect(pairs(errorsOf(orderItemsEdit, { items, expectedRevision: 0, reason: 'x' }))).toEqual([['items[0].variantId', 'ID phân loại không hợp lệ']]);
+			expect(pairs(errorsOf(makeComboItems({ maxUnits: 200 }), { items }))).toEqual([['items[0].variantId', 'ID phân loại không hợp lệ']]);
+			expect(pairs(errorsOf(directOrder, { items, expectedTotal: 0 }))).toEqual([['items[0].variantId', 'ID phân loại không hợp lệ']]);
+		}
+	});
+});

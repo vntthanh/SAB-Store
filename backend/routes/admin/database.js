@@ -487,6 +487,16 @@ router.post('/import', upload.single('dataFile'), gated(async (req, res) => {
 					}
 					const dropped = [];
 					const picked = pick(raw, IMPORT_WHITELIST.orders, dropped);
+					// A merged product gets a fresh default variant, so a variant id from the
+					// file would name nothing here; the label keeps what was bought. A merged
+					// order holds no stock, so no movement ever needs the variant.
+					if (Array.isArray(picked.items)) {
+						picked.items = picked.items.map((item) => {
+							if (!item || typeof item !== 'object') return item;
+							const { variantId: _variantId, ...rest } = item;
+							return rest;
+						});
+					}
 
 					// F1: a combo order's total is comboInfo.finalTotal + the
 					// non-combo lines, never Σ(price × quantity) over every

@@ -33,7 +33,7 @@ const statusLabel = (status) => (ORDER_STATUSES.includes(status) ? STATUS_LABELS
 
 function itemLines(order) {
 	return (order.items || []).map((item) => ({
-		name: item.productName,
+		name: item.variantLabel ? `${item.productName} — ${item.variantLabel}` : item.productName,
 		quantity: item.quantity,
 		amount: formatCurrency(item.price * item.quantity)
 	}));

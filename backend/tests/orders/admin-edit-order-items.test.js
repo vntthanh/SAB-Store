@@ -12,6 +12,7 @@ const { reconcile } = require('../../services/stock-ledger');
 const {
 	findOrder, findOrderByCode, movements, countRows, patchProduct, patchOrder, unsetOrderField, failNextMovementInsert,
 	stockOf: cachedStock,
+	stockKeyIdOf,
 } = require('../helpers/db');
 const { POSTGRES } = require('../helpers/backend');
 
@@ -88,8 +89,8 @@ describe('PUT /api/admin/orders/:id/items', () => {
 
 		const movements = await editMovements();
 		expect(movements.map((m) => [String(m.productId), m.delta, m.status, m.idempotencyKey]).sort()).toEqual([
-			[String(a._id), 1, 'pending', `order:${order._id}:${a._id}:edit:1`],
-			[String(b._id), -1, 'pending', `order:${order._id}:${b._id}:edit:1`]
+			[String(a._id), 1, 'pending', `order:${order._id}:${await stockKeyIdOf(a._id)}:edit:1`],
+			[String(b._id), -1, 'pending', `order:${order._id}:${await stockKeyIdOf(b._id)}:edit:1`]
 		].sort());
 		expect(movements.every((m) => m.reason === `Sửa đơn ${order.orderCode}`)).toBe(true);
 

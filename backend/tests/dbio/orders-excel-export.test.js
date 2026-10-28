@@ -106,3 +106,23 @@ describe('GET /api/admin/orders/export/excel', () => {
 		expect([401, 403]).toContain(res.status);
 	});
 });
+
+describe('GET /api/admin/orders/export/excel, variant lines', () => {
+	it('names the variant after the product on each line', async () => {
+		const app = buildTestApp();
+		const { cookies } = await makeAdminSession(app);
+		await directSaleOrder({
+			orderCode: 'ORDXLS2',
+			items: [{ productId: '507f1f77bcf86cd799439011', productName: 'Áo SAB', variantLabel: 'Đỏ / M', price: 1000, quantity: 2 }],
+			totalAmount: 2000
+		});
+
+		const res = await request(app).get('/api/admin/orders/export/excel').set('Cookie', cookies).buffer(true).parse(bufferParser);
+
+		const workbook = new ExcelJS.Workbook();
+		await workbook.xlsx.load(res.body);
+		const cells = [];
+		workbook.getWorksheet('Đơn hàng').getRow(2).eachCell((cell) => cells.push(String(cell.value)));
+		expect(cells.some((value) => value.includes('Áo SAB (Đỏ / M) x2'))).toBe(true);
+	});
+});

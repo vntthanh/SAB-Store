@@ -268,6 +268,7 @@ router.get('/:orderCode', async (req, res) => {
 				paymentDescription: paymentDescription,
 				items: order.items.map(item => ({
 					productName: item.productName,
+					...(item.variantLabel && { variantLabel: item.variantLabel }),
 					quantity: item.quantity,
 					price: item.price
 				}))

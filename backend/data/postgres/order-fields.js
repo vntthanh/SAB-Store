@@ -129,7 +129,9 @@ function itemData(problems, item, at) {
 		quantity: number(`${at}.quantity`, given(item.quantity), { required: true, requiredMessage: requiredMessage(`${at}.quantity`), min: 1, minMessage: invalid(`${at}.quantity`), integer: true, integerMessage: invalid(`${at}.quantity`) }),
 		fromCombo: checkBoolean(problems, `${at}.fromCombo`, item.fromCombo),
 		comboId: id(`${at}.comboId`, item.comboId),
-		comboName: text(`${at}.comboName`, item.comboName, {})
+		comboName: text(`${at}.comboName`, item.comboName, {}),
+		variantId: id(`${at}.variantId`, item.variantId),
+		variantLabel: text(`${at}.variantLabel`, item.variantLabel, { trim: false })
 	});
 }
 
