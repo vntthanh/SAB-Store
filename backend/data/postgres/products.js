@@ -34,12 +34,13 @@ const { PUBLIC_CODE_PATTERN } = require('../../utils/public-code');
 const { asString } = require('../../utils/query-guard');
 const { translating } = require('./errors');
 const { containsInsensitive } = require('./like');
+const { lockVariants, saveVariantSetup, isImageInUse } = require('./product-variants');
 const { drawCodeAndSlug, slugFor, publicCodeBackfill } = require('./public-code');
 const { Problems, checkText, checkNumber, checkBoolean, checkEnum, checkDate, recordId } = require('./rules');
 
 // The only fields an edit may change. The stock cache is absent on purpose: it
 // changes only through a movement.
-const EDITABLE_FIELDS = ['name', 'description', 'price', 'category', 'imageUrl', 'available', 'salesChannel', 'minOrderQuantity', 'storefrontId'];
+const EDITABLE_FIELDS = ['name', 'description', 'price', 'category', 'imageUrl', 'images', 'available', 'salesChannel', 'minOrderQuantity', 'storefrontId'];
 
 const SEARCH_MAX_LENGTH = 100;
 const DIMENSION_COLUMNS = { length: 'dimensionLength', width: 'dimensionWidth', height: 'dimensionHeight' };
@@ -47,7 +48,7 @@ const DIMENSION_COLUMNS = { length: 'dimensionLength', width: 'dimensionWidth', 
 // A customer must never receive the stock level, the SKU or the retired flag.
 const CUSTOMER_HIDDEN = { stockQuantity: true, sku: true, isActive: true };
 
-const FALLBACK_IMAGE = '/fallback-product.png';
+const { FALLBACK_PRODUCT_IMAGE: FALLBACK_IMAGE, MAX_PRODUCT_IMAGES: MAX_IMAGES } = require('@sab/shared');
 
 const VARIANT_ORDER = [{ position: 'asc' }, { id: 'asc' }];
 const OPTIONS_INCLUDE = { orderBy: { position: 'asc' }, select: { name: true, values: true } };
@@ -168,6 +169,13 @@ function columnsOf(fields, { creating }) {
 		else tags = fields.tags.map((tag) => checkText(problems, 'tags', tag, {}));
 	}
 
+	let images;
+	if (fields.images !== undefined && fields.images !== null) {
+		if (!Array.isArray(fields.images) || fields.images.length > MAX_IMAGES || fields.images.some((url) => typeof url !== 'string' || url === '')) {
+			problems.add('images', `Danh sách ảnh không hợp lệ (tối đa ${MAX_IMAGES} ảnh)`);
+		} else images = fields.images;
+	}
+
 	let publicCode;
 	if (fields.publicCode !== undefined && fields.publicCode !== null) {
 		publicCode = fields.publicCode;
@@ -207,9 +215,15 @@ function columnsOf(fields, { creating }) {
 		publicCode
 	};
 	problems.throwIfAny();
-	// The single image the API sends is the whole gallery; the cover CHECK needs both.
-	if (columns.imageUrl === '') columns.imageUrl = FALLBACK_IMAGE;
-	if (columns.imageUrl !== undefined && fields.images === undefined) columns.images = columns.imageUrl === FALLBACK_IMAGE ? [] : [columns.imageUrl];
+	// The cover is the gallery's first image, which the cover CHECK enforces. A body
+	// with only the older single `imageUrl` makes that image the whole gallery.
+	if (images !== undefined) {
+		columns.images = images;
+		columns.imageUrl = images[0] ?? FALLBACK_IMAGE;
+	} else {
+		if (columns.imageUrl === '') columns.imageUrl = FALLBACK_IMAGE;
+		if (columns.imageUrl !== undefined) columns.images = columns.imageUrl === FALLBACK_IMAGE ? [] : [columns.imageUrl];
+	}
 	return Object.fromEntries(Object.entries(columns).filter(([, value]) => value !== undefined));
 }
 
@@ -384,9 +398,9 @@ async function existsByName(name) {
 }
 
 /** The product with this id, or null. @throws {InvalidIdError} */
-function findById(id) {
+function findById(id, tx) {
 	return translating(async () => {
-		const row = await prisma.product.findUnique({ where: { id: recordId(id) }, include: FULL_INCLUDE });
+		const row = await clientOf(tx).product.findUnique({ where: { id: recordId(id) }, include: FULL_INCLUDE });
 		return row ? toRecord(row) : null;
 	});
 }
@@ -434,21 +448,22 @@ function create(fields, openingStock, tx) {
  *
  * @param {string} id
  * @param {object} changes
+ * @param {object|null} [tx]
  * @returns {Promise<object|null>}
  * @throws {RecordValidationError|DuplicateKeyError|InvalidIdError}
  */
-function update(id, changes) {
+function update(id, changes, tx) {
 	const picked = Object.fromEntries(EDITABLE_FIELDS.filter((field) => changes[field] !== undefined).map((field) => [field, changes[field]]));
 	return translating(async () => {
 		const productId = recordId(id);
 		const columns = columnsOf(picked, { creating: false });
 		if (columns.name !== undefined) {
-			const stored = await prisma.product.findUnique({ where: { id: productId }, select: { publicCode: true } });
+			const stored = await clientOf(tx).product.findUnique({ where: { id: productId }, select: { publicCode: true } });
 			if (!stored) return null;
 			columns.slug = slugFor(columns.name, stored.publicCode);
 		}
 		try {
-			return toRecord(await prisma.product.update({ where: { id: productId }, data: columns, include: FULL_INCLUDE }));
+			return toRecord(await clientOf(tx).product.update({ where: { id: productId }, data: columns, include: FULL_INCLUDE }));
 		} catch (err) {
 			// Deleted between the lookup and the write.
 			if (err && err.code === 'P2025') return null;
@@ -483,6 +498,9 @@ module.exports = {
 	update,
 	remove,
 	findSellableForPricing,
+	lockVariants,
+	saveVariantSetup,
+	isImageInUse: (url) => isImageInUse(url, prisma),
 	storefrontIdsOf,
 	findAvailableNames,
 	listSellableInCategories

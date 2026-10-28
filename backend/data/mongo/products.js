@@ -11,6 +11,9 @@ const { translating } = require('./errors');
 const { safeSearch } = require('../../utils/query-guard');
 const { toSkipTake, buildPaginationMeta } = require('@sab/shared');
 const { publicCodeBackfill } = require('./public-code-backfill');
+const { RecordValidationError } = require('../errors');
+
+const { FALLBACK_PRODUCT_IMAGE: FALLBACK_IMAGE } = require('@sab/shared');
 
 const { assertSaleChannel, sellableQuery, productSellableFilter, SALES_CHANNELS } = sellable;
 
@@ -230,7 +233,9 @@ function findById(id) {
  */
 function create(fields, openingStock, tx) {
 	return translating(async () => {
-		const created = new Product({ ...fields, stockQuantity: openingStock });
+		const { images, ...rest } = fields;
+		// This store keeps one image: the gallery's cover.
+		const created = new Product({ ...rest, ...(Array.isArray(images) && { imageUrl: images[0] ?? FALLBACK_IMAGE }), stockQuantity: openingStock });
 		await created.save(tx ? { session: tx } : undefined);
 		return toRecord(created);
 	});
@@ -245,12 +250,35 @@ function create(fields, openingStock, tx) {
  * @returns {Promise<object|null>}
  * @throws {RecordValidationError|DuplicateKeyError|InvalidIdError}
  */
-function update(id, changes) {
+function update(id, changes, tx) {
 	const picked = Object.fromEntries(EDITABLE_FIELDS.filter((field) => changes[field] !== undefined).map((field) => [field, changes[field]]));
+	// This store keeps one image: the gallery's cover.
+	if (Array.isArray(changes.images)) picked.imageUrl = changes.images[0] ?? FALLBACK_IMAGE;
 	return translating(async () => {
-		const product = await Product.findByIdAndUpdate(id, picked, { new: true, runValidators: true });
+		const product = await Product.findByIdAndUpdate(id, picked, { new: true, runValidators: true, ...(tx && { session: tx }) });
 		return product ? toRecord(product) : null;
 	});
+}
+
+// This store has no variants: a product is its own stock, so there is nothing to lock.
+async function lockVariants() {}
+
+/**
+ * This store has no variants. A setup without options (one default variant) is
+ * accepted and changes nothing; options are refused.
+ *
+ * @throws {RecordValidationError}
+ */
+async function saveVariantSetup(_productId, setup) {
+	if (setup.options.length > 0) {
+		throw new RecordValidationError([{ field: 'options', message: 'Kho dữ liệu hiện tại không hỗ trợ phân loại sản phẩm' }]);
+	}
+	return { openings: [], archived: 0, deleted: 0 };
+}
+
+/** Whether an uploaded image is still a product's cover. */
+async function isImageInUse(url) {
+	return Boolean(await Product.exists({ imageUrl: url }));
 }
 
 /** Delete the product with this id; false when there was none. @throws {InvalidIdError} */
@@ -276,6 +304,9 @@ module.exports = {
 	update,
 	remove,
 	findSellableForPricing,
+	lockVariants,
+	saveVariantSetup,
+	isImageInUse,
 	storefrontIdsOf,
 	findAvailableNames,
 	listSellableInCategories

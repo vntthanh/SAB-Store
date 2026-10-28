@@ -27,6 +27,7 @@ const PRODUCT_CREATION_WRITERS = new Map([
 	['data/mongo/products.js', { writes: 1, why: 'create product: opening balance, recorded as an applied opening movement' }],
 	// Same contract on postgres: the `create` data names the column once, as the opening balance. The
 	// catalogue reads only name the field as `true` (select, omit, aggregate), which is not a write.
+	['data/postgres/product-variants.js', { writes: 2, why: 'create product with options: each variant\'s opening balance and the product\'s sum, recorded as applied opening movements' }],
 	['data/postgres/products.js', { writes: 2, why: 'create product and its default variant: opening balance, recorded as an applied opening movement' }],
 	['routes/admin/database.js', { writes: 1, why: 'database import: field whitelist of imported products, each with its opening movement' }],
 	['init-database.js', { writes: 2, why: 'first-run seed products' }],

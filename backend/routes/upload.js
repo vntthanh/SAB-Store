@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { uploadFile, deleteFile } = require('../lib/minio');
 const { validateImageFile, generateSecureFilename, sanitizeFilename, MAX_FILE_SIZE } = require('../utils/fileValidator');
 const ErrorLogger = require('../utils/errorLogger');
+const { MAX_PRODUCT_IMAGES } = require('@sab/shared');
 const router = express.Router();
 
 const storage = multer.memoryStorage();
@@ -87,7 +88,7 @@ router.post('/product-image', upload.single('image'), async (req, res) => {
 	}
 });
 
-router.post('/product-images', upload.array('images', 5), async (req, res) => {
+router.post('/product-images', upload.array('images', MAX_PRODUCT_IMAGES), async (req, res) => {
 	try {
 		if (!req.files || req.files.length === 0) {
 			return res.status(400).json({
