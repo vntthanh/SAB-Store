@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
-import { getStockReconcile } from '../../services/stock-api';
+import { adminService } from '../../services/api';
 import LoadingSpinner from '../LoadingSpinner';
 
 const StockReconcileModal = ({ isOpen, onClose }) => {
@@ -14,7 +14,7 @@ const StockReconcileModal = ({ isOpen, onClose }) => {
 		const load = async () => {
 			setLoading(true);
 			try {
-				const response = await getStockReconcile();
+				const response = await adminService.getStockReconcile();
 				if (!cancelled) setRows(response.data || []);
 			} catch (error) {
 				if (!cancelled) toast.error(error.message);
@@ -71,7 +71,7 @@ const StockReconcileModal = ({ isOpen, onClose }) => {
 							<table className="min-w-full divide-y divide-gray-200 text-sm">
 								<thead className="bg-gray-50">
 									<tr>
-										{['Sản phẩm', 'Tồn lưu', 'Tổng biến động', 'Lệch', 'Đang áp'].map((h) => (
+										{['Sản phẩm', 'Phân loại', 'Tồn lưu', 'Tổng biến động', 'Lệch', 'Đang áp'].map((h) => (
 											<th key={h} className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
 												{h}
 											</th>
@@ -80,8 +80,9 @@ const StockReconcileModal = ({ isOpen, onClose }) => {
 								</thead>
 								<tbody className="bg-white divide-y divide-gray-200">
 									{visible.map((r) => (
-										<tr key={r.productId} className={r.diff !== 0 ? 'bg-danger-50' : ''}>
+										<tr key={`${r.productId}:${r.variantId ?? ''}`} className={r.diff !== 0 ? 'bg-danger-50' : ''}>
 											<td className="px-3 py-2">{r.name}</td>
+											<td className="px-3 py-2 whitespace-nowrap">{r.variantId === undefined ? '—' : r.label ?? 'mặc định'}</td>
 											<td className="px-3 py-2 whitespace-nowrap">{r.cached}</td>
 											<td className="px-3 py-2 whitespace-nowrap">{r.ledgerSum}</td>
 											<td className={`px-3 py-2 whitespace-nowrap ${r.diff !== 0 ? 'text-danger-600 font-semibold' : ''}`}>

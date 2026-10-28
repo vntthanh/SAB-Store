@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { toast } from 'react-toastify';
-import { adjustStock } from '../../services/stock-api';
+import { adminService } from '../../services/api';
 import useFieldErrors from '../../hooks/use-field-errors';
 import FormField from '../form/FormField';
 
@@ -30,40 +30,55 @@ const STOCK_RULES = {
 	}
 };
 
-const StockAdjustPanel = ({ productId, onSubmitted }) => {
+// `variants` is empty for a product without options; otherwise the admin must pick which one to adjust.
+const StockAdjustPanel = ({ productId, variants = [], onSubmitted }) => {
 	const [mode, setMode] = useState('delta');
 	const [value, setValue] = useState('');
 	const [reason, setReason] = useState('');
+	const [variantId, setVariantId] = useState('');
 	const [submitting, setSubmitting] = useState(false);
 	const { errors, validateField, onFieldChange, validateAll, focusFirstError } = useFieldErrors(STOCK_RULES);
 	const formRef = useRef(null);
 
+	const needsVariant = variants.length > 0;
+	const valuesWith = (patch) => ({ mode, value, reason, variantId, needsVariant, ...patch });
+
 	const handleModeChange = (nextMode) => {
 		setMode(nextMode);
 		// The same number can be valid in one mode and not in the other.
-		onFieldChange('value', value, { mode: nextMode, value, reason });
+		onFieldChange('value', value, valuesWith({ mode: nextMode }));
 	};
 
 	const handleValueChange = (e) => {
 		setValue(e.target.value);
-		onFieldChange('value', e.target.value, { mode, value: e.target.value, reason });
+		onFieldChange('value', e.target.value, valuesWith({ value: e.target.value }));
 	};
 
 	const handleReasonChange = (e) => {
 		setReason(e.target.value);
-		onFieldChange('reason', e.target.value, { mode, value, reason: e.target.value });
+		onFieldChange('reason', e.target.value, valuesWith({ reason: e.target.value }));
+	};
+
+	const handleVariantChange = (e) => {
+		setVariantId(e.target.value);
+		onFieldChange('variantId', e.target.value, valuesWith({ variantId: e.target.value }));
 	};
 
 	const handleSubmit = async (e) => {
 		e.preventDefault();
 		if (submitting) return;
-		if (!validateAll({ mode, value, reason })) {
+		if (!validateAll(valuesWith({}))) {
 			focusFirstError(formRef);
 			return;
 		}
 		setSubmitting(true);
 		try {
-			await adjustStock(productId, { mode, value: Number(value), reason: reason.trim() });
+			await adminService.adjustStock(productId, {
+				mode,
+				value: Number(value),
+				reason: reason.trim(),
+				...(needsVariant && { variantId })
+			});
 			toast.success('Đã ghi điều chỉnh — tồn sẽ cập nhật trong giây lát');
 			setValue('');
 			setReason('');
@@ -93,6 +108,27 @@ const StockAdjustPanel = ({ productId, onSubmitted }) => {
 				))}
 			</div>
 
+			{needsVariant && (
+				<div className="sm:max-w-xs">
+					<FormField id="stock-adjust-variant" label="Phân loại" required error={errors.variantId}>
+						<select
+							value={variantId}
+							onChange={handleVariantChange}
+							onBlur={() => validateField('variantId', variantId, valuesWith({}))}
+							className="form-input"
+							disabled={submitting}
+						>
+							<option value="">Chọn phân loại</option>
+							{variants.map((variant) => (
+								<option key={variant._id} value={variant._id}>
+									{variant.label || 'Mặc định'} (tồn {variant.stockQuantity ?? 0}){variant.archivedAt ? ' - đã lưu trữ' : ''}
+								</option>
+							))}
+						</select>
+					</FormField>
+				</div>
+			)}
+
 			<div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
 				<FormField
 					id="stock-adjust-value"
@@ -105,7 +141,7 @@ const StockAdjustPanel = ({ productId, onSubmitted }) => {
 						step="1"
 						value={value}
 						onChange={handleValueChange}
-						onBlur={() => validateField('value', value, { mode, value, reason })}
+						onBlur={() => validateField('value', value, valuesWith({}))}
 						className="form-input"
 						placeholder={mode === 'delta' ? 'vd 10 hoặc -3' : 'vd 25'}
 						disabled={submitting}
@@ -122,7 +158,7 @@ const StockAdjustPanel = ({ productId, onSubmitted }) => {
 							type="text"
 							value={reason}
 							onChange={handleReasonChange}
-							onBlur={() => validateField('reason', reason, { mode, value, reason })}
+							onBlur={() => validateField('reason', reason, valuesWith({}))}
 							maxLength={REASON_MAX_LENGTH}
 							className="form-input"
 							placeholder="vd Nhập thêm hàng, kiểm kê"

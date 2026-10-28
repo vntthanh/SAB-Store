@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { toast } from 'react-toastify';
-import { getStockMovements } from '../../services/stock-api';
+import { adminService } from '../../services/api';
 import { formatDate } from '../../utils/helpers';
 import LoadingSpinner from '../LoadingSpinner';
 
@@ -24,14 +24,18 @@ const formatDelta = (movement) => {
 };
 
 // `refreshKey` lets the parent re-fetch after a new adjustment is recorded.
-const StockMovementsTable = ({ productId, refreshKey = 0 }) => {
+// `variants` is empty for a product without options, which hides the variant column and filter.
+const StockMovementsTable = ({ productId, variants = [], refreshKey = 0 }) => {
 	const [page, setPage] = useState(1);
 	const [items, setItems] = useState([]);
 	const [pagination, setPagination] = useState(null);
 	const [loading, setLoading] = useState(true);
+	const [variantId, setVariantId] = useState('');
+	const hasVariants = variants.length > 0;
 
 	useEffect(() => {
 		setPage(1);
+		setVariantId('');
 	}, [productId]);
 
 	useEffect(() => {
@@ -39,7 +43,7 @@ const StockMovementsTable = ({ productId, refreshKey = 0 }) => {
 		const load = async () => {
 			setLoading(true);
 			try {
-				const response = await getStockMovements(productId, { page, limit: PAGE_SIZE });
+				const response = await adminService.getStockMovements(productId, { page, limit: PAGE_SIZE, variantId });
 				if (cancelled) return;
 				setItems(response.data || []);
 				setPagination(response.meta || null);
@@ -53,13 +57,31 @@ const StockMovementsTable = ({ productId, refreshKey = 0 }) => {
 		return () => {
 			cancelled = true;
 		};
-	}, [productId, page, refreshKey]);
+	}, [productId, page, variantId, refreshKey]);
 
 	const totalPages = pagination?.totalPages || 1;
 
 	return (
 		<div>
-			<h3 className="text-sm font-semibold text-gray-900 mb-2">Lịch sử tồn kho</h3>
+			<div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+				<h3 className="text-sm font-semibold text-gray-900">Lịch sử tồn kho</h3>
+				{hasVariants && (
+					<select
+						value={variantId}
+						onChange={(e) => {
+							setVariantId(e.target.value);
+							setPage(1);
+						}}
+						className="form-input w-auto"
+						aria-label="Lọc theo phân loại"
+					>
+						<option value="">Tất cả phân loại</option>
+						{variants.map((variant) => (
+							<option key={variant._id} value={variant._id}>{variant.label || 'Mặc định'}</option>
+						))}
+					</select>
+				)}
+			</div>
 
 			{loading ? (
 				<div className="py-8 flex justify-center">
@@ -72,7 +94,7 @@ const StockMovementsTable = ({ productId, refreshKey = 0 }) => {
 					<table className="min-w-full divide-y divide-gray-200 text-sm">
 						<thead className="bg-gray-50">
 							<tr>
-								{['Loại', 'Delta', 'Tồn sau', 'Trạng thái', 'Lý do', 'Người', 'Thời điểm', 'Đơn liên quan'].map((h) => (
+								{['Loại', ...(hasVariants ? ['Phân loại'] : []), 'Delta', 'Tồn sau', 'Trạng thái', 'Lý do', 'Người', 'Thời điểm', 'Đơn liên quan'].map((h) => (
 									<th key={h} className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
 										{h}
 									</th>
@@ -83,6 +105,7 @@ const StockMovementsTable = ({ productId, refreshKey = 0 }) => {
 							{items.map((m) => (
 								<tr key={m._id}>
 									<td className="px-3 py-2 whitespace-nowrap">{TYPE_LABELS[m.type] || m.type}</td>
+									{hasVariants && <td className="px-3 py-2 whitespace-nowrap">{m.label || 'Mặc định'}</td>}
 									<td className={`px-3 py-2 whitespace-nowrap font-semibold ${m.delta < 0 ? 'text-danger-600' : m.delta > 0 ? 'text-success-600' : 'text-gray-500'}`}>
 										{formatDelta(m)}
 									</td>
