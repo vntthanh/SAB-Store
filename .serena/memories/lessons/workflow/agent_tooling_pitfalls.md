@@ -4,5 +4,7 @@
 - Tin nhắn cross-session (SendMessage) tới phiên khác permission mode bị **giữ rồi hết hạn**, không tới Claude bên kia. Đừng chờ hay gửi lại; với câu hỏi "repo kia làm thế nào", đọc thẳng repo anh em (chỉ đọc): JudgeHub ở `/Users/david0403/Github/JudgeHub` (AGENTS.md, `.husky/`, `.serena/memories/`).
 - zsh: `echo ======` lỗi (`=word` expansion) → luôn quote chuỗi bắt đầu bằng `=`.
 
+- `docker exec <c> cmd < file` without `-i` gives cmd an **empty stdin** (`pg_restore -l` reported "input file is too short (read 0)" on a good dump, 28/10/2026). When piping a file into a container, always use `docker exec -i`. And `cmd && echo ok` inside a `set -e` script does not stop when cmd fails, so a check step has to be on its own line or use `|| exit 1`.
+
 **Why:** đo 03/10/2026 (hook chặn copy script và đọc build; 2 tin gửi Judgehub hết hạn).
 **How to apply:** gặp "BLOCKED: Access to ... denied" từ scout-block thì đổi sang Write/script file, không sửa `.ckignore` khi user chưa yêu cầu.
