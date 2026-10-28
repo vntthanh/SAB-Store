@@ -12,9 +12,8 @@ describe('makeAdminSession', () => {
 		app = buildTestApp();
 	});
 
-	// Depends on tests/env.js pointing MONGODB_URI at the in-memory replica set,
-	// so better-auth's own MongoClient and mongoose share one database. Without
-	// that, anything reaching /api/auth/* fails on a refused connection.
+	// Depends on tests/env.js pointing DATABASE_URL at the per-file test database.
+	// Without that, anything reaching /api/auth/* fails on a refused connection.
 	it('grants access to an admin-only route', async () => {
 		const { cookies } = await makeAdminSession(app);
 		await makeCombo();

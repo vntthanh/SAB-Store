@@ -28,8 +28,7 @@ describe('requireMigrationsApplied', () => {
 		fs.rmSync(dir, { recursive: true, force: true });
 	});
 
-	// The two tests that read the real ledger open the Prisma pool; on the mongo
-	// backend nothing else would close it.
+	// The two tests that read the real ledger open the Prisma pool.
 	afterAll(async () => {
 		await require('../../lib/prisma').closeDb();
 	});

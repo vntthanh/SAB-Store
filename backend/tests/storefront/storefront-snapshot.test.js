@@ -4,11 +4,10 @@
  * default storefront, and a forged file is refused before anything is written
  * (or, where only the database can tell, rolled back whole).
  */
-const { POSTGRES } = require('../helpers/backend');
 const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 const { validateSnapshot, buildMetadata, STOREFRONT_SECTIONS } = require('../../data/snapshot');
 
-describe.skipIf(!POSTGRES)('storefront data in the backup file', () => {
+describe('storefront data in the backup file', () => {
 	let prisma;
 	let data;
 	let dataSnapshot;

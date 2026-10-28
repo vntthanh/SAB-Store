@@ -3,11 +3,10 @@
  * invariants the database cannot hold (never delete a used storefront, never
  * deactivate the last one), email lists and the storefront filter of the catalogue.
  */
-const { POSTGRES } = require('../helpers/backend');
 const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 const { isDuplicateKeyOn } = require('../../data/errors');
 
-describe.skipIf(!POSTGRES)('storefront repositories', () => {
+describe('storefront repositories', () => {
 	let prisma;
 	let data;
 	let factories;

@@ -3,7 +3,7 @@ const { buildTestApp } = require('../helpers/app');
 const { makeProduct } = require('../helpers/factories');
 
 // Exercises the full stack the other smoke suites don't touch: a real
-// mongoose document, written by createApp()'s real router, read back through
+// product row, written by createApp()'s real router, read back through
 // the actual query the public catalog endpoint runs. Proves the harness's DB
 // wiring (global-setup.js + setup.js) and factories.js work end to end, not
 // just that the app boots.

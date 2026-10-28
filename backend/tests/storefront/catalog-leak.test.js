@@ -4,7 +4,6 @@
  * are staff previewing). The server is the real app; only data is seeded.
  */
 const request = require('supertest');
-const { POSTGRES } = require('../helpers/backend');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeOrder, createAccount, signInSession, makeAdminSession, makeSellerSession } = require('../helpers/factories');
 const { setUserColumns } = require('../auth/auth-test-kit');
@@ -32,7 +31,7 @@ const expectNoSecrets = (res) => {
 	for (const secret of SECRETS) expect(textOf(res)).not.toContain(secret);
 };
 
-describe.skipIf(!POSTGRES)('private storefront leak', () => {
+describe('private storefront leak', () => {
 	let app;
 	let data;
 	let priv;

@@ -10,7 +10,6 @@ const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession } = require('../helpers/factories');
 const { insertRawProduct, findProduct } = require('../helpers/db');
 const { applyPendingMovements } = require('../helpers/stock');
-const { POSTGRES } = require('../helpers/backend');
 const { generatePublicCode } = require('../../utils/public-code');
 
 const prisma = () => require('../../lib/prisma').prisma;
@@ -25,7 +24,7 @@ async function sizedProduct() {
 
 const variantStock = async (id) => (await prisma().productVariant.findUnique({ where: { id } })).stockQuantity;
 
-describe.skipIf(!POSTGRES)('stock per variant through the admin routes', () => {
+describe('stock per variant through the admin routes', () => {
 	let app;
 	let cookies;
 

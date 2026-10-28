@@ -4,7 +4,6 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { POSTGRES } = require('../helpers/backend');
 const { DEFAULT_STOREFRONT_ID, DEFAULT_STOREFRONT_SLUG, DEFAULT_STOREFRONT_NAME } = require('../../data/default-storefront');
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -24,7 +23,7 @@ describe('default storefront constant', () => {
 	});
 });
 
-describe.skipIf(!POSTGRES)('default storefront rows', () => {
+describe('default storefront rows', () => {
 	let prisma;
 	let data;
 	let factories;

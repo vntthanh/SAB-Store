@@ -2,10 +2,10 @@ const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeAdminSession } = require('../helpers/factories');
 
-// Proves that Mongo-operator-shaped query input on the routes this phase owns
-// cannot reshape the query it feeds Mongoose — defence layer 1 is
-// `app.set('query parser', 'simple')` in server.js (Phase 00/04), defence
-// layer 2 is query-guard.js coercing everything to a primitive or dropping it.
+// Proves that operator-shaped query input (`?field[$ne]=x`) on the public
+// routes cannot reshape the query they feed the repositories — defence layer 1
+// is `app.set('query parser', 'simple')` in server.js, defence layer 2 is
+// query-guard.js coercing everything to a primitive or dropping it.
 describe('NoSQL operator injection — public product routes', () => {
 	let app;
 
@@ -23,7 +23,7 @@ describe('NoSQL operator injection — public product routes', () => {
 		expect(names).not.toContain(hidden.name);
 	});
 
-	it('drops an operator-shaped category filter instead of running it as Mongo', async () => {
+	it('drops an operator-shaped category filter instead of running it as an operator', async () => {
 		// A working `{ $ne: 'x' }` operator would exclude exactly the products
 		// whose category is "x", so one of those is in the fixture data: it is
 		// listed only if the object was dropped instead of run as an operator.

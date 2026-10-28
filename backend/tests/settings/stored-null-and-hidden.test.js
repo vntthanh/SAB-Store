@@ -43,7 +43,7 @@ describe('storefront settings read from a stored row', () => {
 		});
 	});
 
-	// A SQL column holds NULL, and Mongo can hold an explicit null: both mean "never set".
+	// A column holding NULL means "never set".
 	it('treats a stored null like an unset field and still keeps an empty string hidden', async () => {
 		await insertRawSettings({
 			...PAYMENT_FIELDS,

@@ -1,10 +1,9 @@
 const request = require('supertest');
 const { randomUUID } = require('crypto');
-const { POSTGRES } = require('../helpers/backend');
 const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession, makeSellerSession } = require('../helpers/factories');
 
-describe.skipIf(!POSTGRES)('admin email list API', () => {
+describe('admin email list API', () => {
 	let app;
 	let cookies;
 

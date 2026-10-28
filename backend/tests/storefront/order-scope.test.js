@@ -2,16 +2,14 @@
  * Which storefront an order belongs to and who may place it: the private order
  * matrix on POST /api/orders, the pricing scope (mixed carts, combos linked to
  * other storefronts), counter sales across storefronts and order edits.
- * Storefronts exist on Postgres only.
  */
 const request = require('supertest');
-const { POSTGRES } = require('../helpers/backend');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeOrder, createAccount, signInSession, makeSellerSession, makeAdminSession } = require('../helpers/factories');
 const { countRows } = require('../helpers/db');
 const { uniqueEmail, sendCode, signInWithCode, captureMail, codeOf, setUserColumns } = require('../auth/auth-test-kit');
 
-describe.skipIf(!POSTGRES)('storefront order scope', () => {
+describe('storefront order scope', () => {
 	let app;
 	let data;
 	let computeOrderPricing;

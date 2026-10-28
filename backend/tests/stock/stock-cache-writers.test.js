@@ -21,12 +21,10 @@ const LEDGER_STORAGE = /^data\/[^/]+\/stock-ledger\.js$/;
 // Everything else that legitimately sets the field: the number of lines that
 // write it, and why. A new write in one of these files changes the count.
 const PRODUCT_CREATION_WRITERS = new Map([
-	['models/Product.js', { writes: 1, why: 'schema definition of the field' }],
 	// The create route hands the opening balance to the repository, which sets the field on the new row;
-	// the route records the matching applied opening movement in the same transaction.
-	['data/mongo/products.js', { writes: 1, why: 'create product: opening balance, recorded as an applied opening movement' }],
-	// Same contract on postgres: the `create` data names the column once, as the opening balance. The
-	// catalogue reads only name the field as `true` (select, omit, aggregate), which is not a write.
+	// the route records the matching applied opening movement in the same transaction. The `create` data
+	// names the column once, as the opening balance. The catalogue reads only name the field as `true`
+	// (select, omit, aggregate), which is not a write.
 	['data/postgres/product-variants.js', { writes: 2, why: 'create product with options: each variant\'s opening balance and the product\'s sum, recorded as applied opening movements' }],
 	['data/postgres/products.js', { writes: 2, why: 'create product and its default variant: opening balance, recorded as an applied opening movement' }],
 	['routes/admin/database.js', { writes: 1, why: 'database import: field whitelist of imported products, each with its opening movement' }],
@@ -37,8 +35,7 @@ const PRODUCT_CREATION_WRITERS = new Map([
 	// cache with the restored ledger (reconcile) inside the same transaction and rolls back on a mismatch.
 	// The backup file format lists the field to validate a product row of a restore file; it writes nothing.
 	['data/snapshot.js', { writes: 3, why: 'restore file format: field checks of a product row and of a variant (shape, required key), no write' }],
-	['data/mongo/data-snapshot.js', { writes: 0, why: 'restore: whole product rows, cache verified against the restored ledger before commit' }],
-	// Same on postgres: rows are built from the file's own keys and inserted as a unit, so the field is never named.
+	// Rows are built from the file's own keys and inserted as a unit, so the field is never named.
 	['data/postgres/data-snapshot.js', { writes: 1, why: 'restore: whole product rows, and a file from before variants gives each product a default variant holding its stock; caches verified against the restored ledger before commit' }]
 ]);
 
@@ -59,8 +56,6 @@ const WRITE_PATTERNS = [
 	new RegExp(`\\b${COLUMN}\\b"?\\s*=(?!=)`),
 	// Assignment to the property, plain or compound.
 	new RegExp(`\\.${FIELD}\\s*(?:[+\\-*/%]|\\*\\*|\\|\\||&&|\\?\\?)?=(?!=)`),
-	// Mongoose document setter.
-	new RegExp(`\\.set\\(\\s*['"]${FIELD}['"]`),
 	// The bare name as a string, as in a field whitelist used for writes; a
 	// projection (`.select('stockQuantity')`) is a read.
 	new RegExp(`(?<!\\.select\\(\\s*)['"]${FIELD}['"]`)
@@ -141,7 +136,6 @@ describe('stockQuantity writers', () => {
 			'Product.updateOne({ _id }, { $set: { stockQuantity } })',
 			'Product.updateOne({ _id }, { $set: { name, stockQuantity, price } })',
 			'Product.updateOne({ _id }, {\n\t$set: {\n\t\tname,\n\t\tstockQuantity\n\t}\n})',
-			"product.set('stockQuantity', 3);",
 			"const FIELDS = ['name', 'stockQuantity'];",
 			'product.stockQuantity -= item.quantity;',
 			'product.stockQuantity = 5;',
