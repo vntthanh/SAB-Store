@@ -75,32 +75,28 @@ class ConflictError extends Error {
 
 /**
  * True when `err` reports a unique-constraint violation. Callers ask this
- * instead of looking at an engine-specific error code. Repositories that
- * translate their errors raise `DuplicateKeyError`; the ones not yet converted
- * let the engine's own error through, so this also recognises that signal
- * (MongoDB E11000).
+ * instead of looking at an engine-specific error code: the repositories
+ * translate Prisma's into `DuplicateKeyError`.
  *
  * @param {unknown} err
  * @returns {boolean}
  */
 function isDuplicateKeyError(err) {
-	return err instanceof DuplicateKeyError || (Boolean(err) && err.code === 11000);
-}
-
-/**
- * The field(s) a unique-constraint violation names, without the clashing value,
- * for an error that `isDuplicateKeyError` recognises. Falls back to a generic
- * phrase when the engine did not say.
- *
- * @param {unknown} err
- * @returns {string}
- */
-function duplicateKeyFields(err) {
-	if (err instanceof DuplicateKeyError) return err.fields.join(', ') || UNKNOWN_KEY_LABEL;
-	return indexFields(err).join(', ') || UNKNOWN_KEY_LABEL;
+	return err instanceof DuplicateKeyError;
 }
 
 const UNKNOWN_KEY_LABEL = 'khoá duy nhất';
+
+/**
+ * The field(s) a unique-constraint violation names, without the clashing value.
+ * Falls back to a generic phrase when the engine did not say.
+ *
+ * @param {DuplicateKeyError} err
+ * @returns {string}
+ */
+function duplicateKeyFields(err) {
+	return err.fields.join(', ') || UNKNOWN_KEY_LABEL;
+}
 
 /**
  * True when `err` is a unique-constraint violation on one of the named columns.
@@ -112,23 +108,7 @@ const UNKNOWN_KEY_LABEL = 'khoá duy nhất';
  * @returns {boolean}
  */
 function isDuplicateKeyOn(err, ...fields) {
-	if (!isDuplicateKeyError(err)) return false;
-	const named = err instanceof DuplicateKeyError ? err.fields : indexFields(err);
-	return named.some((field) => fields.includes(field));
+	return isDuplicateKeyError(err) && err.fields.some((field) => fields.includes(field));
 }
 
-/**
- * The column names a duplicate-key error is about, or none when it does not say.
- * A bulk write reports only the message ("... index: a_1_b_1 dup key: { ... }");
- * an index name is its fields each followed by a direction, so `a_1_b_-1` is a, b.
- *
- * @param {unknown} err
- * @returns {string[]}
- */
-function indexFields(err) {
-	if (err && err.keyPattern) return Object.keys(err.keyPattern);
-	const index = /index: (\S+)/.exec(String(err && err.message));
-	return index ? [...index[1].matchAll(/(.+?)_-?\d+(?:_|$)/g)].map((part) => part[1]) : [];
-}
-
-module.exports = { InvalidIdError, DuplicateKeyError, RecordValidationError, ConflictError, CONFLICT_CODES, isDuplicateKeyError, isDuplicateKeyOn, duplicateKeyFields, indexFields };
+module.exports = { InvalidIdError, DuplicateKeyError, RecordValidationError, ConflictError, CONFLICT_CODES, isDuplicateKeyError, isDuplicateKeyOn, duplicateKeyFields };

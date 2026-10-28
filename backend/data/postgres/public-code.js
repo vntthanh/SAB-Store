@@ -1,11 +1,11 @@
 /**
  * Public code and slug on Postgres. The columns are NOT NULL and unique, so a row
- * without a code cannot exist here: the repository functions that repair such rows
- * on Mongo (`listWithoutPublicCode`, `assignMissingPublicCode`, `ensureIndexes`)
- * keep the same shape for the contract tests and find nothing to do.
+ * without a code cannot exist here: the repair functions (`listWithoutPublicCode`,
+ * `assignMissingPublicCode`, `ensureIndexes`) keep a stable shape for the
+ * contract tests and find nothing to do.
  *
  * The draw is looked up on the util module object, not destructured, so a test
- * can stub it as it does on Mongo.
+ * can stub it.
  */
 const publicCodeUtil = require('../../utils/public-code');
 

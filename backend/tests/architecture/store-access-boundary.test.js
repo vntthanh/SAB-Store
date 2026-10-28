@@ -8,24 +8,22 @@ const BACKEND = path.resolve(__dirname, '../..');
 // that may touch the storage engine.
 const SCANNED = ['routes', 'services', 'utils', 'middleware', 'queues', 'scripts', 'lib', 'data', 'init-database.js'];
 
-// Connection and health check, the auth library's own adapter, the Mongo
-// implementation of the repositories, and the one-shot MongoDB -> PostgreSQL
-// loader, which reads the old store's raw collections by design.
+// The Prisma client itself, the connection and health check, the auth library's
+// own adapter, and the repositories.
 const ALLOWED = [
+	'lib/prisma.js',
 	'lib/database.js',
-	'lib/require-replica-set.js',
 	'lib/auth.js',
-	'data/mongo/',
-	'scripts/migrate-mongo-to-postgres.js',
-	'scripts/migrate-mongo/',
+	'data/',
 ];
 
 const REQUIRE = /require\(\s*(['"`])([^'"`]+)\1\s*\)/g;
 
 function touchesStorageEngine(specifier) {
-	return /^mongoose(\/|$)/.test(specifier)
-		|| /^mongodb(\/|$)/.test(specifier)
-		|| /(^|\/)models(\/|$)/.test(specifier);
+	return /^pg(\/|$)/.test(specifier)
+		|| /^@prisma\//.test(specifier)
+		|| /(^|\/)prisma(\/|$)/.test(specifier)
+		|| /(^|\/)generated(\/|$)/.test(specifier);
 }
 
 function sourceFiles(entry) {
@@ -67,7 +65,7 @@ function isAllowed(file) {
 // Out of scope: a `require(variable)` and ESM `import` cannot be matched by text
 // (the backend is CommonJS). The one dynamic require today is
 // scripts/bench-pricing.js:96, which loads the combo optimizer under test and
-// never a model.
+// never the database client.
 function violations() {
 	return SCANNED.flatMap(sourceFiles)
 		.filter((file) => !isAllowed(file))
@@ -75,14 +73,14 @@ function violations() {
 }
 
 describe('store access boundary', () => {
-	it('keeps models and the database driver out of routes, services, utils, middleware, queues and scripts', () => {
+	it('keeps the Prisma client and the database driver out of routes, services, utils, middleware, queues and scripts', () => {
 		const found = violations();
 
 		expect(
 			found,
 			`These files reach the store directly. Move the query into a repository function under ` +
-			`backend/data/mongo, expose it through backend/data/index.js, and call it from the ` +
-			`caller (see the header of data/index.js). Only ${ALLOWED.join(', ')} may require models or the driver.\n` +
+			`backend/data/postgres, expose it through backend/data/index.js, and call it from the ` +
+			`caller (see the header of data/index.js). Only ${ALLOWED.join(', ')} may require the client or the driver.\n` +
 			found.join('\n')
 		).toEqual([]);
 	});
@@ -92,19 +90,19 @@ describe('store access boundary', () => {
 			expect(fs.existsSync(path.join(BACKEND, entry)), `${entry} no longer exists; update SCANNED`).toBe(true);
 			expect(sourceFiles(entry).length, `${entry} yields no source file`).toBeGreaterThan(0);
 		}
-		expect(SCANNED.flatMap(sourceFiles)).toContain('data/mongo/orders.js');
+		expect(SCANNED.flatMap(sourceFiles)).toContain('data/postgres/orders.js');
 	});
 
 	it('flags the ways a file can reach the store and ignores comments and repositories', () => {
 		const flagged = [
-			"const Order = require('../models/Order');",
-			'const Order = require("../models/Order");',
-			"const models = require('../models');",
-			"const m = require('mongoose');",
-			"const lib = require('mongoose/lib/x');",
-			"const { MongoClient } = require('mongodb');",
-			"/* x */ const M = require('mongoose');",
-			"const M = require('mongoose'); // fine",
+			"const { prisma } = require('../lib/prisma');",
+			'const { prisma } = require("../lib/prisma");',
+			"const { PrismaClient } = require('../generated/prisma/client');",
+			"const { PrismaPg } = require('@prisma/adapter-pg');",
+			"const { Pool } = require('pg');",
+			"const { Client } = require('pg/lib/client');",
+			"/* x */ const p = require('../lib/prisma');",
+			"const p = require('../lib/prisma'); // fine",
 		];
 		for (const source of flagged) {
 			expect(violationsIn('routes/x.js', source), source).toHaveLength(1);
@@ -112,14 +110,15 @@ describe('store access boundary', () => {
 		const clean = [
 			"const { orders } = require('../data');",
 			"const helper = require('./model-helpers');",
-			"// const M = require('mongoose');",
-			"/**\n * require('mongoose')\n */\nconst a = 1;",
+			"const helper = require('./pg-helpers');",
+			"// const p = require('../lib/prisma');",
+			"/**\n * require('../lib/prisma')\n */\nconst a = 1;",
 		];
 		for (const source of clean) {
 			expect(violationsIn('routes/x.js', source), source).toEqual([]);
 		}
-		expect(violationsIn('routes/x.js', "\n\nconst m = require('mongoose');")[0]).toMatch(/^routes\/x\.js:3 /);
-		expect(isAllowed('data/mongo/orders.js')).toBe(true);
+		expect(violationsIn('routes/x.js', "\n\nconst p = require('../lib/prisma');")[0]).toMatch(/^routes\/x\.js:3 /);
+		expect(isAllowed('data/postgres/orders.js')).toBe(true);
 		expect(isAllowed('lib/auth.js')).toBe(true);
 		expect(isAllowed('lib/minio.js')).toBe(false);
 	});

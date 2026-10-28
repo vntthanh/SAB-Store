@@ -1,16 +1,15 @@
 const { ERROR_CODES } = require('../constants/errorCodes');
-const { backendName } = require('../data/backend-name');
 
 // Single segment after /api/orders only, so the collection itself keeps its path.
 const PUBLIC_ORDER_LOOKUP = /^\/api\/orders\/[^/]+\/?$/i;
 
-// scheme://user:password@host: Prisma, pg and MongoDB errors can quote the connection
+// scheme://user:password@host: Prisma and pg errors can quote the connection
 // string they were given. Greedy up to the last '@' of the token so a password that
 // contains a raw '@' or '/' is removed whole; the host stays for diagnosis.
 const CONNECTION_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s'"`]*@/gi;
 
 const REDACTED = '[redacted]';
-const CONNECTION_ENV_NAMES = ['DATABASE_URL', 'MONGODB_URI'];
+const CONNECTION_ENV_NAMES = ['DATABASE_URL'];
 // A shorter password would blank out ordinary words in every log line.
 const MIN_SECRET_LENGTH = 4;
 
@@ -131,7 +130,7 @@ class ErrorLogger {
 	static logDatabase(operation, error, details = {}) {
 		const context = {
 			operation,
-			database: backendName === 'postgres' ? 'postgresql' : 'mongodb',
+			database: 'postgresql',
 			collection: details.collection,
 			query: details.query,
 			errorName: error.name,

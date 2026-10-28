@@ -126,6 +126,12 @@ The system provides clear, specific error messages:
 6. **Limit file sizes** - Prevent resource exhaustion
 7. **Store files outside web root** - Use object storage (SeaweedFS)
 
+## Product galleries and clean-up
+
+- A product holds up to 9 images (`MAX_PRODUCT_IMAGES` in `@sab/shared`); `POST /api/upload/product-images` accepts as many files in one request.
+- A product image is either one of this store's uploads, `/uploads/products/<generated name>` (`PRODUCT_UPLOAD_PATTERN`), or an `http(s)://` address. Any other path or scheme is refused by the shared `productVariantSetup` schema, so a product can never name another object of the bucket.
+- When an admin edit or a product delete stops showing an upload, `routes/admin/products.js` deletes the object after the database change commits, and only if no product or variant still shows it. Only `/uploads/products/<file>` objects are ever deleted. A storage failure is logged and leaves an orphan object; the request still succeeds.
+
 ## Serving uploads (`/uploads/` proxy)
 
 Images are read by browsers straight from object storage through the frontend nginx

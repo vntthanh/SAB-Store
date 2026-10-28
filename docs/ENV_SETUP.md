@@ -28,21 +28,18 @@ instead of silently falling back to `localhost`.
 
 ## PostgreSQL and credential scoping
 
-PostgreSQL is the backend's default store (`DATA_BACKEND` unset or `postgres`, connection in
-`DATABASE_URL`). The dev stack (`compose.yml`) and production (`coolify.compose.yml`) run on it.
-`prod.compose.yml`, the fallback for a host without Coolify, runs the postgres service and the
-release job but still pins the backend to MongoDB (`DATA_BACKEND: mongo`); using it needs the
-same data migration first.
+PostgreSQL is the backend's only store; the connection is `DATABASE_URL`. The dev stack
+(`compose.yml`), production (`coolify.compose.yml`) and the fallback for a host without Coolify
+(`prod.compose.yml`) all run it.
 
-- `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB` are new credentials, never a reused Mongo
-  value. The user and database names use only `a-z 0-9 _`; the password is lowercase hex of at
+- `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB` are the database credentials. The user and database names use only `a-z 0-9 _`; the password is lowercase hex of at
   least 32 characters (`openssl rand -hex 24`) because it is embedded unescaped in
   `DATABASE_URL`. Otherwise the postgres container exits at start-up with the reason in its log.
 - The services that connect list them explicitly in their `environment:`: the postgres
-  service (`POSTGRES_*`), the release job (`DATABASE_URL`) and, when it runs on PostgreSQL, the
-  backend (`DATABASE_URL`). That scoping holds for `compose.yml` and `prod.compose.yml`.
+  service (`POSTGRES_*`), the release job (`DATABASE_URL`) and the backend (`DATABASE_URL`).
+  That scoping holds for `compose.yml` and `prod.compose.yml`.
   **Coolify does not scope**: it passes every variable of the app to every service, so
-  `SAB_PG_*`, `JWT_SECRET`, the Mongo root password and the rest are readable inside every
+  `SAB_PG_*`, `JWT_SECRET` and the rest are readable inside every
   container of the app, frontend, redis and seaweedfs included (measured on production
   2026-10-13). Treat shell access to any of them as access to all its secrets, including the
   session signing key. In Coolify, create
@@ -53,11 +50,8 @@ same data migration first.
   `pg_dump` to the backups volume and then runs `prisma migrate deploy`. A failed or empty dump
   stops it before any migration. The backend refuses to boot while migrations are pending.
 
-The Mongo variables (`MONGO_INITDB_*`, `MONGO_REPLICA_KEY`, `MONGODB_URI`) stay until MongoDB is
-removed, for the rollback path and `prod.compose.yml` only. In Coolify the backend runs with
-`DATA_BACKEND=postgres` and does not use `MONGODB_URI`, though Coolify still passes it in. In
-`prod.compose.yml` the Mongo root account still doubles as the app's credential; it retires
-with MongoDB instead of being split.
+An old `MONGODB_URI`, `MONGO_INITDB_*`, `MONGO_REPLICA_KEY` or `DATA_BACKEND` left in an
+environment is ignored and can be deleted.
 
 ## Object storage (SeaweedFS)
 
@@ -126,9 +120,8 @@ Settings before opening the store.
 
 1. Every secret in `prod.compose.yml` is `${VAR:?message}` — a missing one refuses to boot
    the container (`ADMIN_*` are not secrets of that kind; see above). See `docs/deployment.md` for the full pre-deploy checklist and the correct order
-   to rotate the Mongo password (rotating it in `.env` alone, without first running
-   `db.changeUserPassword()` against the live database, is a no-op against an existing data
-   volume).
+   to rotate the PostgreSQL password (changing `SAB_PG_PASSWORD` alone locks the backend out;
+   change it inside the running database first).
 2. Never commit `.env` (only `.env.example`) to version control.
 3. Use different secrets for production and development.
 

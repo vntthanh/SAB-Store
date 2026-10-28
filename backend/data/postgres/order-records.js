@@ -1,10 +1,9 @@
 /**
  * Orders as plain records. The order row and its four child tables (lines,
  * status history, internal notes, item-edit history) are read together and
- * shaped like the Mongo document's JSON: `_id` is the uuid string, nested arrays
+ * shaped like the JSON the API returns: `_id` is the uuid string, nested arrays
  * come back in `position` order, an optional column that is NULL is an absent
  * key, and `comboInfo` is always present (`null` when the order has no combo).
- * There is no `__v`.
  */
 const IN_ORDER = { orderBy: { position: 'asc' } };
 
@@ -23,7 +22,7 @@ function includeFor(omit = []) {
 	};
 }
 
-// Columns a Mongo document simply lacks when they were never set.
+// Optional columns: an order that never set one has no such key.
 const ABSENT_WHEN_NULL = new Set([
 	'orderNumber', 'phoneNumber', 'studentId', 'fullName', 'email', 'additionalNote', 'transactionCode', 'cancelReason', 'createdBy', 'storefrontId'
 ]);
@@ -38,7 +37,9 @@ const itemRecord = (item) => ({
 	quantity: item.quantity,
 	fromCombo: item.fromCombo,
 	comboId: item.comboId,
-	comboName: item.comboName
+	comboName: item.comboName,
+	// Absent on a line of a product deleted before variants existed, and the label on a default variant.
+	...present([['variantId', item.variantId], ['variantLabel', item.variantLabel]])
 });
 
 const historyRecord = (entry) => ({

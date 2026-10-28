@@ -6,10 +6,7 @@ const { decryptSecret } = require('../../lib/secret-box');
 const { mailSettings } = require('../../data');
 const { prisma } = require('../../lib/prisma');
 
-// The mongo rollback store has no table for mail settings.
-const describePostgres = process.env.DATA_BACKEND === 'mongo' ? describe.skip : describe;
-
-describePostgres('admin mail settings routes', () => {
+describe('admin mail settings routes', () => {
 	let app;
 	let cookies;
 	let admin;

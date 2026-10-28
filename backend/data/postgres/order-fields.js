@@ -1,8 +1,8 @@
 /**
- * The rules Mongoose enforced when an order was written (trim, case, required,
+ * The rules an order must pass when it is written (trim, case, required,
  * length, minimum, enum, regex), for the paths that reach the repository without
  * request validation: the merge import, scripts, and any caller that builds an
- * order itself. Messages are those of the schema they replace.
+ * order itself. Messages keep the wording the admin UI already shows.
  *
  * Each function returns the cleaned column values and child rows (without
  * `orderId` or `position`, which the repository assigns) and throws one
@@ -15,7 +15,7 @@ const { mapJsonIds } = require('./json-ids');
 
 const STATUS_VALUES = Object.values(OrderStatus);
 const PHONE = /^0[0-9]{9}$/;
-// Same language as the Mongo model's pattern, written so a failing match is linear: with
+// The accepted address language is the order schema's historical one, written so a failing match is linear: with
 // `([.-]?\w+)*` a long address that does not match backtracks exponentially, and a private
 // storefront's order stores the session's address, which no earlier gate bounds.
 const EMAIL = /^\w+(?:[.-]\w+)*@\w+(?:[.-]\w+)*(?:\.\w{2,3})+$/;
@@ -129,7 +129,9 @@ function itemData(problems, item, at) {
 		quantity: number(`${at}.quantity`, given(item.quantity), { required: true, requiredMessage: requiredMessage(`${at}.quantity`), min: 1, minMessage: invalid(`${at}.quantity`), integer: true, integerMessage: invalid(`${at}.quantity`) }),
 		fromCombo: checkBoolean(problems, `${at}.fromCombo`, item.fromCombo),
 		comboId: id(`${at}.comboId`, item.comboId),
-		comboName: text(`${at}.comboName`, item.comboName, {})
+		comboName: text(`${at}.comboName`, item.comboName, {}),
+		variantId: id(`${at}.variantId`, item.variantId),
+		variantLabel: text(`${at}.variantLabel`, item.variantLabel, { trim: false })
 	});
 }
 
@@ -212,7 +214,7 @@ function newOrder(fields) {
 	const columns = defined({
 		orderCode: typeof orderCode === 'string' ? orderCode.toUpperCase() : orderCode,
 		orderNumber: text('orderNumber', fields.orderNumber, {}),
-		// An empty phone is not a phone: the CHECK on the column would refuse '' where Mongoose stored it.
+		// An empty phone is not a phone: the CHECK on the column would refuse '', which orders from before the CHECK can hold.
 		phoneNumber: phoneNumber === '' ? null : phoneNumber,
 		studentId: customer('studentId', fields.studentId, { max: 20, maxMessage: 'Mã số sinh viên không được vượt quá 20 ký tự' }),
 		fullName: customer('fullName', fields.fullName, { max: 100, maxMessage: 'Họ tên không được vượt quá 100 ký tự' }),

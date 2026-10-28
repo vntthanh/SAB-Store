@@ -13,6 +13,7 @@ import {
 	saveCart,
 	writeActiveStorefront
 } from '../lib/cart-storage';
+import { lineKey, lineTitle, linesNamedByError, toRequestItem } from '../lib/cart-line';
 
 // Cart Context
 const CartContext = createContext();
@@ -40,13 +41,14 @@ const cartReducer = (state, action) => {
 
 		case CART_ACTIONS.ADD_ITEM: {
 			const { quantity = 1, ...line } = action.payload;
-			const existingItem = state.items.find(item => item.productId === line.productId);
+			const key = lineKey(line);
+			const existingItem = state.items.find(item => lineKey(item) === key);
 
 			if (existingItem) {
 				return {
 					...state,
 					items: state.items.map(item =>
-						item.productId === line.productId
+						lineKey(item) === key
 							? { ...item, quantity: Math.min(CART_MAX_QUANTITY, item.quantity + quantity) }
 							: item
 					)
@@ -61,23 +63,23 @@ const cartReducer = (state, action) => {
 		case CART_ACTIONS.REMOVE_ITEM:
 			return {
 				...state,
-				items: state.items.filter(item => item.productId !== action.payload)
+				items: state.items.filter(item => lineKey(item) !== action.payload)
 			};
 
 		case CART_ACTIONS.UPDATE_QUANTITY: {
-			const { productId, quantity } = action.payload;
+			const { key, quantity } = action.payload;
 
 			if (quantity <= 0) {
 				return {
 					...state,
-					items: state.items.filter(item => item.productId !== productId)
+					items: state.items.filter(item => lineKey(item) !== key)
 				};
 			}
 
 			return {
 				...state,
 				items: state.items.map(item =>
-					item.productId === productId
+					lineKey(item) === key
 						? { ...item, quantity }
 						: item
 				)
@@ -225,10 +227,7 @@ export const CartProvider = ({ children }) => {
 		setComboDetection(prev => ({ ...prev, isChecking: true }));
 
 		try {
-			const items = cart.items.map(item => ({
-				productId: item.productId,
-				quantity: item.quantity
-			}));
+			const items = cart.items.map(toRequestItem);
 
 			const result = await comboService.calculatePricing(items);
 			if (requestId !== pricingRequestId.current) return;
@@ -305,9 +304,22 @@ export const CartProvider = ({ children }) => {
 			const goneIds = error.details?.missingIds || [];
 			const gone = cart.items.filter(item => goneIds.includes(item.productId));
 			if (gone.length > 0) {
-				gone.forEach(item => dispatch({ type: CART_ACTIONS.REMOVE_ITEM, payload: item.productId }));
+				gone.forEach(item => dispatch({ type: CART_ACTIONS.REMOVE_ITEM, payload: lineKey(item) }));
 				toast.warning(
-					`Đã bỏ khỏi giỏ vì không còn bán: ${gone.map(item => item.productName).join(', ')}`,
+					`Đã bỏ khỏi giỏ vì không còn bán: ${gone.map(lineTitle).join(', ')}`,
+					{ position: "bottom-right", autoClose: 5000 }
+				);
+				return;
+			}
+			// A variant switched off, or a product that gained options since the cart was saved:
+			// only the named lines go, their sibling variants stay.
+			const badVariants = error.code === 'VARIANT_REQUIRED' || error.code === 'VARIANT_UNAVAILABLE'
+				? linesNamedByError(cart.items, error.details)
+				: [];
+			if (badVariants.length > 0) {
+				badVariants.forEach(item => dispatch({ type: CART_ACTIONS.REMOVE_ITEM, payload: lineKey(item) }));
+				toast.warning(
+					`Đã bỏ khỏi giỏ vì phân loại không còn bán: ${badVariants.map(lineTitle).join(', ')}`,
 					{ position: "bottom-right", autoClose: 5000 }
 				);
 				return;
@@ -334,70 +346,73 @@ export const CartProvider = ({ children }) => {
 	}, [cart, previousComboState]);
 
 	// Cart Actions
-	const addToCart = (product, quantity = 1) => {
+	const addToCart = (product, quantity = 1, variant = null) => {
 		// A staff preview of a private storefront may look, not order; the server refuses the order too.
 		if (!activeStorefront.canOrder) {
 			toast.warning('Tài khoản này không nằm trong danh sách được đặt hàng của gian hàng');
 			return;
 		}
-		dispatch({
-			type: CART_ACTIONS.ADD_ITEM,
-			payload: {
-				storefrontId: cart.storefrontId,
-				productId: product._id,
-				productName: product.name,
-				price: product.price,
-				image: product.imageUrl,
-				quantity
-			}
-		});
-		toast.success(`Đã thêm ${quantity > 1 ? `${quantity} × ` : ''}"${product.name}" vào giỏ hàng`, {
+		// Only a product with options carries a variant; without one its line key stays the same as in older carts.
+		const line = {
+			storefrontId: cart.storefrontId,
+			productId: product._id,
+			productName: product.name,
+			price: variant ? variant.effectivePrice : product.price,
+			image: variant?.imageUrl || product.imageUrl,
+			quantity
+		};
+		if (variant) {
+			line.variantId = variant._id;
+			line.variantLabel = variant.label;
+		}
+		dispatch({ type: CART_ACTIONS.ADD_ITEM, payload: line });
+		toast.success(`Đã thêm ${quantity > 1 ? `${quantity} × ` : ''}"${lineTitle(line)}" vào giỏ hàng`, {
 			position: "bottom-right",
 			autoClose: 2000
 		});
 	};
 
-	const removeFromCart = (productId) => {
-		const item = cart.items.find(item => item.productId === productId);
+	const removeFromCart = (key) => {
+		const item = cart.items.find(item => lineKey(item) === key);
 		if (item) {
 			dispatch({
 				type: CART_ACTIONS.REMOVE_ITEM,
-				payload: productId
+				payload: key
 			});
-			toast.info(`Đã xóa "${item.productName}" khỏi giỏ hàng`, {
+			toast.info(`Đã xóa "${lineTitle(item)}" khỏi giỏ hàng`, {
 				position: "bottom-right",
 				autoClose: 2000
 			});
 		}
 	};
 
-	const updateQuantity = (productId, quantity) => {
-		const item = cart.items.find(item => item.productId === productId);
+	const updateQuantity = (key, quantity) => {
+		const item = cart.items.find(item => lineKey(item) === key);
 
 		if (quantity <= 0) {
 			if (item) {
-				removeFromCart(productId);
+				removeFromCart(key);
 			}
 			return;
 		}
 
 		dispatch({
 			type: CART_ACTIONS.UPDATE_QUANTITY,
-			payload: { productId, quantity }
+			payload: { key, quantity }
 		});
 	};
 
-	const increaseQuantity = (productId) => {
-		const item = cart.items.find(item => item.productId === productId);
+	const increaseQuantity = (key) => {
+		const item = cart.items.find(item => lineKey(item) === key);
 		if (item && item.quantity < CART_MAX_QUANTITY) {
-			updateQuantity(productId, item.quantity + 1);
+			updateQuantity(key, item.quantity + 1);
 		}
 	};
 
-	const decreaseQuantity = (productId) => {
-		const item = cart.items.find(item => item.productId === productId);
+	const decreaseQuantity = (key) => {
+		const item = cart.items.find(item => lineKey(item) === key);
 		if (item) {
-			updateQuantity(productId, item.quantity - 1);
+			updateQuantity(key, item.quantity - 1);
 		}
 	};
 
@@ -420,13 +435,20 @@ export const CartProvider = ({ children }) => {
 		return cart.items.reduce((count, item) => count + item.quantity, 0);
 	};
 
-	const getItemQuantity = (productId) => {
-		const item = cart.items.find(item => item.productId === productId);
+	const getItemQuantity = (key) => {
+		const item = cart.items.find(item => lineKey(item) === key);
 		return item ? item.quantity : 0;
 	};
 
-	const isInCart = (productId) => {
-		return cart.items.some(item => item.productId === productId);
+	// All variants of a product together: what a card or a combo requirement counts.
+	const getProductQuantity = (productId) => {
+		return cart.items
+			.filter(item => item.productId === productId)
+			.reduce((sum, item) => sum + item.quantity, 0);
+	};
+
+	const isInCart = (key) => {
+		return cart.items.some(item => lineKey(item) === key);
 	};
 
 	// Format currency
@@ -464,6 +486,7 @@ export const CartProvider = ({ children }) => {
 		getCartTotal,
 		getCartItemCount,
 		getItemQuantity,
+		getProductQuantity,
 		isInCart,
 		formatCurrency,
 		comboDetection,

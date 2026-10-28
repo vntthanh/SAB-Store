@@ -188,14 +188,6 @@ router.post('/', validateOrder, gated(async (req, res) => {
 			});
 		}
 
-		if (error.name === 'MongoError' || error.name === 'MongoServerError') {
-			console.error('Database error creating order (details logged above)');
-			return res.status(500).json({
-				success: false,
-				message: 'Lỗi cơ sở dữ liệu'
-			});
-		}
-
 		res.status(500).json({
 			success: false,
 			message: 'Lỗi server khi tạo đơn hàng',
@@ -268,6 +260,7 @@ router.get('/:orderCode', async (req, res) => {
 				paymentDescription: paymentDescription,
 				items: order.items.map(item => ({
 					productName: item.productName,
+					...(item.variantLabel && { variantLabel: item.variantLabel }),
 					quantity: item.quantity,
 					price: item.price
 				}))

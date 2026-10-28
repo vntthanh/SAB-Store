@@ -222,7 +222,7 @@ router.put('/:id/items', validateOrderItemsEdit, gated(async (req, res) => {
 		// Validation does not rewrite the request, but the service needs numbers and the trimmed reason.
 		const result = await editOrderItems({
 			orderId: req.params.id,
-			items: items.map(({ productId, quantity }) => ({ productId, quantity: Number(quantity) })),
+			items: items.map(({ productId, variantId, quantity }) => ({ productId, variantId, quantity: Number(quantity) })),
 			expectedRevision: Number(req.body.expectedRevision),
 			reason: trimText(req.body.reason),
 			actor: req.admin.username

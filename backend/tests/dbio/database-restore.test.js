@@ -7,12 +7,11 @@ const {
 } = require('../helpers/db');
 const stockQueue = require('../../queues/stock-queue');
 const databaseRoutes = require('../../routes/admin/database');
-const { POSTGRES } = require('../helpers/backend');
 const { seedStore, readStore } = require('./snapshot-fixture');
 
 const PHRASE = 'KHOI PHUC';
 // Postgres exports the storefront sections too; its empty store still holds the default storefront.
-const SECTIONS = ['products', 'combos', 'orders', 'stockMovements', 'settings', ...(POSTGRES ? ['storefronts', 'storefrontAccessRules', 'emailLists', 'emailListEntries'] : [])];
+const SECTIONS = ['products', 'combos', 'orders', 'stockMovements', 'settings', 'storefronts', 'storefrontAccessRules', 'emailLists', 'emailListEntries'];
 const EMPTY_STORE_COUNTS = Object.fromEntries(SECTIONS.map((s) => [s, s === 'storefronts' ? 1 : 0]));
 
 const exportFile = async (app, cookies) => {
@@ -50,7 +49,7 @@ describe('POST /api/admin/database/restore', () => {
 			const seeded = await seedStore('a');
 			const first = await exportFile(app, cookies);
 			const rowsBefore = await readStore();
-			expect(first.metadata.collections).toEqual({ products: 3, combos: 2, orders: 4, stockMovements: 8, settings: 1, ...(POSTGRES && { storefronts: 1, storefrontAccessRules: 0, emailLists: 0, emailListEntries: 0 }) });
+			expect(first.metadata.collections).toEqual({ products: 3, combos: 2, orders: 4, stockMovements: 8, settings: 1, storefronts: 1, storefrontAccessRules: 0, emailLists: 0, emailListEntries: 0 });
 
 			await emptyStore();
 			expect(await countRows('order')).toBe(0);
@@ -59,7 +58,7 @@ describe('POST /api/admin/database/restore', () => {
 
 			expect(res.status).toBe(200);
 			expect(res.body.ok).toBe(true);
-			expect(res.body.restored).toEqual({ products: 3, combos: 2, orders: 4, stockMovements: 8, settings: 1, ...(POSTGRES && { storefronts: 1, storefrontAccessRules: 0, emailLists: 0, emailListEntries: 0 }) });
+			expect(res.body.restored).toEqual({ products: 3, combos: 2, orders: 4, stockMovements: 8, settings: 1, storefronts: 1, storefrontAccessRules: 0, emailLists: 0, emailListEntries: 0 });
 			const second = await exportFile(app, cookies);
 			expect(withoutExportedAt(second)).toEqual(withoutExportedAt(first));
 			expect(await readStore()).toEqual(rowsBefore);

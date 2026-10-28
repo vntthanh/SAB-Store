@@ -1,7 +1,6 @@
 const request = require('supertest');
 const ExcelJS = require('exceljs');
 const { randomUUID } = require('crypto');
-const { POSTGRES } = require('../helpers/backend');
 const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession, makeSellerSession, makeProduct, makeOrder } = require('../helpers/factories');
 const { uniqueEmail, sendCode, signInWithCode, captureMail, codeOf } = require('../auth/auth-test-kit');
@@ -13,7 +12,7 @@ function bufferParser(res, cb) {
 	res.on('end', () => cb(null, Buffer.concat(chunks)));
 }
 
-describe.skipIf(!POSTGRES)('admin storefront API', () => {
+describe('admin storefront API', () => {
 	let app;
 	let cookies;
 	let counter = 0;

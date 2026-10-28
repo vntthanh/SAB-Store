@@ -1,9 +1,9 @@
 const express = require('express');
 const { products: productRepo, storefronts: storefrontRepo } = require('../../data');
-const { productStorefrontLink } = require('@sab/shared');
+const { productStorefrontLink, PRODUCT_UPLOAD_PATTERN, FALLBACK_PRODUCT_IMAGE } = require('@sab/shared');
 const { ERROR_CODES } = require('../../constants/errorCodes');
 const { readStorefrontFilter, invalidStorefrontFilter, sendCoded } = require('./storefront-params');
-const { validateBody } = require('../../middleware/validation');
+const { validateBody, validateProductSetup } = require('../../middleware/validation');
 const { RecordValidationError, DuplicateKeyError, InvalidIdError } = require('../../data/errors');
 const { asString, asEnum, asPageLimit } = require('../../utils/query-guard');
 const { recordAppliedOpening, countPendingByProduct } = require('../../services/stock-ledger');
@@ -11,6 +11,61 @@ const { withTransaction } = require('../../utils/transaction');
 const { gated } = require('../../services/write-gate');
 const { withPublicCodeRetry } = require('../../utils/public-code');
 const router = express.Router();
+
+/** The product uploads a product shows: gallery, cover and variant images. Nothing else is ever deleted. */
+function uploadsOf(product) {
+	const urls = [product.imageUrl, ...(product.images || []), ...(product.variants || []).map((variant) => variant.imageUrl)];
+	return new Set(urls.filter((url) => typeof url === 'string' && PRODUCT_UPLOAD_PATTERN.test(url)));
+}
+
+/**
+ * Delete the uploaded objects among `urls` that no product or variant shows any
+ * more. Runs after the database change committed; a storage failure is logged
+ * and never fails the request (the object is then only an orphan).
+ */
+async function deleteUnusedUploads(urls) {
+	// Read at call time, so a test can stub the storage call.
+	const { deleteFile } = require('../../lib/minio');
+	for (const url of urls) {
+		try {
+			if (await productRepo.isImageInUse(url)) continue;
+			await deleteFile(url.replace('/uploads/', ''));
+		} catch (error) {
+			console.error('[PRODUCT IMAGES] Could not delete an unused image:', error.message);
+		}
+	}
+}
+
+const trimmed = (value) => (typeof value === 'string' ? value.trim() : value);
+const trimmedList = (list) => (Array.isArray(list) ? list.map(trimmed) : list);
+
+/** The gallery the body carries, trimmed as the shared schema checked it (validation does not rewrite the body). */
+const imagesOf = (body) => trimmedList(body.images);
+
+/**
+ * The options and variants the body carries (they come together; the shared
+ * schema enforces it), with every text trimmed as that schema checked it and
+ * only the fields the repository reads.
+ */
+function setupOf(body) {
+	if (body.options === undefined) return null;
+	return {
+		options: body.options.map((option) => ({
+			name: trimmed(option.name),
+			values: trimmedList(option.values),
+			...(option.previousName !== undefined && { previousName: trimmed(option.previousName) }),
+			...(option.previousValues !== undefined && { previousValues: trimmedList(option.previousValues) })
+		})),
+		variants: body.variants.map((variant) => ({
+			optionValues: trimmedList(variant.optionValues),
+			price: variant.price == null ? null : Number(variant.price),
+			sku: trimmed(variant.sku) || null,
+			imageUrl: trimmed(variant.imageUrl) || null,
+			isActive: variant.isActive !== false,
+			...(variant.openingStock !== undefined && { openingStock: Number(variant.openingStock) })
+		}))
+	};
+}
 
 /** `stockQuantity` must be a non-negative integer; anything else is rejected outright. */
 const isValidStockQuantity = (v) => Number.isInteger(v) && v >= 0;
@@ -65,11 +120,12 @@ router.get('/', async (req, res) => {
  * @desc    Create new product
  * @access  Private (Admin)
  */
-router.post('/', validateBody(productStorefrontLink), gated(async (req, res) => {
+router.post('/', validateBody(productStorefrontLink), validateProductSetup, gated(async (req, res) => {
 	try {
 		// stockQuantity is only the opening balance of a product that did not exist
 		// until now; it is recorded as an `opening` movement below. Every later
-		// change goes through POST /:id/stock-adjustments.
+		// change goes through POST /:id/stock-adjustments. With options and
+		// variants, each variant's `openingStock` is its own opening balance.
 		const {
 			name,
 			description,
@@ -82,6 +138,8 @@ router.post('/', validateBody(productStorefrontLink), gated(async (req, res) => 
 			stockQuantity,
 			storefrontId
 		} = req.body;
+		const images = imagesOf(req.body);
+		const setup = setupOf(req.body);
 
 		if (!isValidSalesChannel(salesChannel)) {
 			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
@@ -106,7 +164,7 @@ router.post('/', validateBody(productStorefrontLink), gated(async (req, res) => 
 			});
 		}
 
-		const openingStock = stockQuantity !== undefined ? stockQuantity : 0;
+		const openingStock = setup || stockQuantity === undefined ? 0 : stockQuantity;
 
 		// The product and its opening movement commit together, so the cache and
 		// the ledger agree from the first moment. The document is built inside the
@@ -119,16 +177,22 @@ router.post('/', validateBody(productStorefrontLink), gated(async (req, res) => 
 				price,
 				category,
 				imageUrl: imageUrl || undefined, // Let the schema default handle it
+				...(images !== undefined && { images }),
 				available: available !== undefined ? available : true,
 				...(salesChannel !== undefined && { salesChannel }),
 				...(storefrontId !== undefined && { storefrontId }),
 				minOrderQuantity: minOrderQuantity || 1
 			}, openingStock, session);
+			const createdBy = req.user && req.user.email;
+			if (setup) {
+				const { openings } = await productRepo.saveVariantSetup(created._id, setup, session, { creating: true });
+				for (const { variantId, quantity } of openings) {
+					await recordAppliedOpening({ productId: created._id, variantId, quantity, createdBy }, { session });
+				}
+				return productRepo.findById(created._id, session);
+			}
 			if (openingStock > 0) {
-				await recordAppliedOpening(
-					{ productId: created._id, quantity: openingStock, createdBy: req.user && req.user.email },
-					{ session }
-				);
+				await recordAppliedOpening({ productId: created._id, quantity: openingStock, createdBy }, { session });
 			}
 			return created;
 		}));
@@ -153,7 +217,7 @@ router.post('/', validateBody(productStorefrontLink), gated(async (req, res) => 
 		if (error instanceof DuplicateKeyError) {
 			return res.status(400).json({
 				success: false,
-				message: 'Sản phẩm với thông tin này đã tồn tại'
+				message: error.fields.includes('sku') ? 'SKU đã được dùng cho sản phẩm hoặc phân loại khác' : 'Sản phẩm với thông tin này đã tồn tại'
 			});
 		}
 
@@ -169,17 +233,19 @@ router.post('/', validateBody(productStorefrontLink), gated(async (req, res) => 
  * @desc    Update product
  * @access  Private (Admin)
  */
-router.put('/:id', validateBody(productStorefrontLink), gated(async (req, res) => {
+router.put('/:id', validateBody(productStorefrontLink), validateProductSetup, gated(async (req, res) => {
 	try {
 		const { id } = req.params;
 
-		// Explicit allow-list, not `{...req.body}`: mongoose `strict` drops
+		// Explicit allow-list, not `{...req.body}`: a store's `strict` mode drops
 		// unknown paths but every *real* schema path — including `sku`
-		// (unique; setting it to another product's value would 11000-block that
+		// (unique; setting it to another product's value would block that
 		// product's own future update) and `createdAt` — was still writable.
 		// `stockQuantity` is deliberately absent: it is a cache of the stock
 		// ledger and changes only through POST /:id/stock-adjustments.
 		const { name, description, price, category, imageUrl, available, salesChannel, minOrderQuantity, storefrontId } = req.body;
+		const images = imagesOf(req.body);
+		const setup = setupOf(req.body);
 
 		if (!isValidSalesChannel(salesChannel)) {
 			return res.status(400).json({ success: false, message: INVALID_SALES_CHANNEL_MESSAGE });
@@ -197,30 +263,45 @@ router.put('/:id', validateBody(productStorefrontLink), gated(async (req, res) =
 			});
 		}
 
+		// The older single-image body (no `images`) resends the cover on every edit: an
+		// unchanged one must leave the gallery alone; a new one replaces it.
+		const nextImages = images !== undefined ? images
+			: imageUrl && imageUrl !== existing.imageUrl ? (imageUrl === FALLBACK_PRODUCT_IMAGE ? [] : [imageUrl]) : undefined;
 		const updateData = {
 			...(name !== undefined && { name }),
 			...(description !== undefined && { description }),
 			...(price !== undefined && { price }),
 			...(category !== undefined && { category }),
-			...(imageUrl && { imageUrl }), // empty string: let existing value remain
+			...(nextImages !== undefined && { images: nextImages }),
 			...(available !== undefined && { available }),
 			...(salesChannel !== undefined && { salesChannel }),
 			...(minOrderQuantity !== undefined && { minOrderQuantity }),
 			...(storefrontId !== undefined && { storefrontId })
 		};
 
-		let product = existing;
-
-		if (Object.keys(updateData).length > 0) {
-			product = await productRepo.update(id, updateData);
-			// Deleted between the lookup above and the update.
-			if (!product) {
-				return res.status(404).json({
-					success: false,
-					message: 'Không tìm thấy sản phẩm'
-				});
-			}
+		// A gallery change without a new variant setup must keep every image a variant shows.
+		if (nextImages !== undefined && !setup && (existing.variants || []).some((variant) => variant.imageUrl && !nextImages.includes(variant.imageUrl))) {
+			return res.status(400).json({ success: false, message: 'Ảnh đang được dùng cho một tổ hợp phân loại; đổi ảnh của tổ hợp trước' });
 		}
+
+		const product = await withTransaction(async (tx) => {
+			// The variants are locked before the product row, in the stock ledger's order.
+			if (setup) await productRepo.lockVariants(id, tx);
+			const updated = Object.keys(updateData).length > 0 ? await productRepo.update(id, updateData, tx) : existing;
+			if (!updated || !setup) return updated;
+			await productRepo.saveVariantSetup(id, setup, tx);
+			return productRepo.findById(id, tx);
+		});
+		// Deleted between the lookup above and the update.
+		if (!product) {
+			return res.status(404).json({
+				success: false,
+				message: 'Không tìm thấy sản phẩm'
+			});
+		}
+
+		const kept = uploadsOf(product);
+		await deleteUnusedUploads([...uploadsOf(existing)].filter((url) => !kept.has(url)));
 
 		res.json({
 			success: true,
@@ -250,7 +331,7 @@ router.put('/:id', validateBody(productStorefrontLink), gated(async (req, res) =
 		if (error instanceof DuplicateKeyError) {
 			return res.status(400).json({
 				success: false,
-				message: 'Sản phẩm với thông tin này đã tồn tại'
+				message: error.fields.includes('sku') ? 'SKU đã được dùng cho sản phẩm hoặc phân loại khác' : 'Sản phẩm với thông tin này đã tồn tại'
 			});
 		}
 
@@ -279,18 +360,8 @@ router.delete('/:id', gated(async (req, res) => {
 			});
 		}
 
-		if (product.imageUrl && product.imageUrl !== '/fallback-product.png' && product.imageUrl.startsWith('/uploads/')) {
-			try {
-				const objectName = product.imageUrl.replace('/uploads/', '');
-				const { deleteFile } = require('../../lib/minio');
-				await deleteFile(objectName);
-				console.log(`[DELETE PRODUCT] Deleted image: ${objectName}`);
-			} catch (imageError) {
-				console.error('[DELETE PRODUCT] Error deleting image:', imageError);
-			}
-		}
-
 		await productRepo.remove(id);
+		await deleteUnusedUploads(uploadsOf(product));
 
 		res.json({
 			success: true,

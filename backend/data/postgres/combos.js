@@ -1,6 +1,5 @@
 /**
- * Combos on Postgres: the same functions, arguments and plain records as
- * data/mongo/combos.js. The category requirements are rows of
+ * Combos on Postgres, as plain records (see data/index.js). The category requirements are rows of
  * `combo_category_requirements`, read back in `position` order, and the nested
  * `_id` of a requirement is that row's uuid string.
  *

@@ -17,6 +17,8 @@ const PAGE_SIZE = 20;
 
 const StockModal = ({ product, onClose, onChanged }) => {
 	const [refreshKey, setRefreshKey] = useState(0);
+	// A product without options has one hidden default variant: the tools address the product itself.
+	const variants = product.options?.length > 0 ? product.variants || [] : [];
 
 	const handleSubmitted = () => {
 		setRefreshKey((k) => k + 1);
@@ -36,14 +38,23 @@ const StockModal = ({ product, onClose, onChanged }) => {
 									<span className="text-gray-500"> (đang cập nhật, còn {product.pendingMovements} biến động chưa áp)</span>
 								)}
 							</p>
+							{variants.length > 0 && (
+								<ul className="mt-1 text-sm text-gray-600 flex flex-wrap gap-x-4">
+									{variants.map((variant) => (
+										<li key={variant._id}>
+											{variant.label}: <span className="font-semibold">{variant.stockQuantity ?? 0}</span>
+										</li>
+									))}
+								</ul>
+							)}
 						</div>
 						<button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-700">
 							<i className="fas fa-times text-xl"></i>
 						</button>
 					</div>
 
-					<StockAdjustPanel productId={product._id} onSubmitted={handleSubmitted} />
-					<StockMovementsTable productId={product._id} refreshKey={refreshKey} />
+					<StockAdjustPanel productId={product._id} variants={variants} onSubmitted={handleSubmitted} />
+					<StockMovementsTable productId={product._id} variants={variants} refreshKey={refreshKey} />
 				</div>
 			</div>
 		</div>
@@ -170,9 +181,7 @@ const ProductsManagement = () => {
 		}
 	};
 
-	const handleUploadImage = async (imageFile) => {
-		return await adminService.uploadImage(imageFile);
-	};
+	const handleUploadImages = (imageFiles) => adminService.uploadImages(imageFiles);
 
 	const handleDelete = async (productId) => {
 		const result = await Swal.fire({
@@ -263,7 +272,7 @@ const ProductsManagement = () => {
 				onClose={handleCloseModal}
 				product={editingProduct}
 				onSubmit={handleSubmitProduct}
-				onUploadImage={handleUploadImage}
+				onUploadImages={handleUploadImages}
 				storefronts={storefronts}
 				defaultStorefrontId={storefrontId || pickDefaultStorefrontId(storefronts)}
 			/>

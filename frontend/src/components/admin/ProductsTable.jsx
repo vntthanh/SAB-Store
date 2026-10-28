@@ -4,6 +4,16 @@ import { SALES_CHANNEL_LABELS, normalizeSalesChannel } from '../../utils/sales-c
 import { productPath } from '../../utils/share-links';
 import ShareButton from '../ShareButton';
 
+// Variants a customer could pick: a product without options has only its hidden default one.
+const variantsOf = (product) =>
+	product.options?.length > 0 ? (product.variants || []).filter((variant) => !variant.archivedAt) : [];
+
+const stockBreakdown = (product) => {
+	const variants = variantsOf(product);
+	if (variants.length === 0) return undefined;
+	return variants.map((variant) => `${variant.label}: ${variant.stockQuantity ?? 0}`).join('\n');
+};
+
 const ProductsTable = ({ products, onEdit, onDelete, onManageStock, storefrontName }) => {
 	if (products.length === 0) {
 		return (
@@ -52,7 +62,7 @@ const ProductsTable = ({ products, onEdit, onDelete, onManageStock, storefrontNa
 							<td className="px-6 py-4">
 								<div className="flex items-center">
 									<img
-										src={getImageUrl(product.imageUrl)}
+										src={getImageUrl(product.images?.[0] || product.imageUrl)}
 										alt={product.name}
 										className="w-16 h-16 object-cover rounded-lg mr-4"
 										onError={(e) => {
@@ -62,6 +72,9 @@ const ProductsTable = ({ products, onEdit, onDelete, onManageStock, storefrontNa
 									<div>
 										<div className="text-sm font-medium text-gray-900">
 											{product.name}
+											{variantsOf(product).length > 0 && (
+												<span className="badge badge-primary ml-2">{variantsOf(product).length} phân loại</span>
+											)}
 										</div>
 										<div className="text-sm text-gray-500 line-clamp-2">
 											{product.description}
@@ -82,7 +95,7 @@ const ProductsTable = ({ products, onEdit, onDelete, onManageStock, storefrontNa
 								{formatCurrency(product.price)}
 							</td>
 							<td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-								<span className={`${product.stockQuantity <= 5 ? 'text-danger-600 font-semibold' : 'text-gray-900'}`}>
+								<span title={stockBreakdown(product)} className={`${product.stockQuantity <= 5 ? 'text-danger-600 font-semibold' : 'text-gray-900'}`}>
 									{product.stockQuantity || 0} sản phẩm
 								</span>
 								{product.pendingMovements > 0 && (

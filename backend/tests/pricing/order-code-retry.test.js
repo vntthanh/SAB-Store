@@ -3,7 +3,7 @@
  * generateOrderCode() picking a code an existing order already has (caught
  * by the pre-save findOne check), and the rarer race where two requests
  * generate the same fresh code between that check and the insert — that one
- * only surfaces as a Mongo E11000 from Order.save().
+ * only surfaces as a duplicate-key error from the order insert.
  */
 // routes/orders.js destructures generateOrderCode when it loads, so the spy has
 // to be installed on the helpers module before the app (and with it that route)
@@ -14,18 +14,14 @@ const generateOrderCode = vi.spyOn(helpers, 'generateOrderCode');
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeOrder } = require('../helpers/factories');
-const { ensureMovementStore, failNextOrderInsertAsDuplicateCode, failNextOrderInsertAsDuplicateOn, listOrders } = require('../helpers/db');
+const { failNextOrderInsertAsDuplicateCode, failNextOrderInsertAsDuplicateOn, listOrders } = require('../helpers/db');
 const { makeAdminSession } = require('../helpers/factories');
 
 describe('POST /api/orders — orderCode collision retry', () => {
 	let app;
 
-	beforeAll(async () => {
+	beforeAll(() => {
 		app = buildTestApp();
-		// The first insert into a collection that does not exist yet aborts the
-		// surrounding transaction with a retryable WriteConflict, and that retry
-		// would draw an extra order code the mocked sequence below does not cover.
-		await ensureMovementStore();
 	});
 
 	afterEach(() => {
@@ -64,7 +60,7 @@ describe('POST /api/orders — orderCode collision retry', () => {
 		expect(generateOrderCode).toHaveBeenCalledTimes(2);
 	});
 
-	it('retries when Order.save() rejects with E11000 (findOne saw no conflict, save raced with another insert)', async () => {
+	it('retries when Order.save() rejects with a duplicate-key error (the check saw no conflict, the insert raced with another)', async () => {
 		const product = await makeProduct({ price: 5000 });
 
 		generateOrderCode.mockReturnValueOnce('CCCCC').mockReturnValueOnce('DDDDD');
@@ -123,9 +119,8 @@ describe('POST /api/seller/orders/direct — order number collision retry', () =
 	let app;
 	let cookies;
 
-	beforeAll(async () => {
+	beforeAll(() => {
 		app = buildTestApp();
-		await ensureMovementStore();
 	});
 
 	beforeEach(async () => {

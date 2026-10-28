@@ -1,8 +1,6 @@
 /**
- * Record ids on each backend: the same input rules, and on postgres the legacy
- * 24-hex ids (carts, queued jobs, old backups) map to the uuid the row was
- * migrated under. `pnpm test` runs the postgres half and `pnpm test:contract:mongo`
- * the mongo half.
+ * Record ids: the input rules, and how the legacy 24-hex ids (carts, queued
+ * jobs, old backups) map to the uuid the row was migrated under.
  */
 const { objectIdToUuidV7 } = require('@sab/shared');
 const { products } = require('../../data');
@@ -11,16 +9,15 @@ const { isRecordId, normalizeRecordId } = require('../../data/ids');
 const { recordAppliedOpening } = require('../../services/stock-ledger');
 const { insertRawProduct, newId, findProduct, movements } = require('../helpers/db');
 
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
 const LEGACY_HEX = '6acc24c7924609c6bfb78bef';
-const mapped = (hex) => (POSTGRES ? objectIdToUuidV7(hex) : hex);
+const mapped = objectIdToUuidV7;
 
 afterAll(async () => {
-	if (POSTGRES) await require('../../lib/prisma').closeDb();
+	await require('../../lib/prisma').closeDb();
 });
 
 describe('record ids', () => {
-	it('normalises an uppercase hex id, mapping it to its uuid on postgres', () => {
+	it('normalises an uppercase hex id, mapping it to its uuid', () => {
 		expect(normalizeRecordId(LEGACY_HEX.toUpperCase())).toBe(mapped(LEGACY_HEX));
 		expect(normalizeRecordId(LEGACY_HEX)).toBe(mapped(LEGACY_HEX));
 	});
@@ -40,8 +37,8 @@ describe('record ids', () => {
 		}
 	);
 
-	it('accepts the other backend\'s id form only on postgres', () => {
-		expect(isRecordId(objectIdToUuidV7(LEGACY_HEX))).toBe(POSTGRES);
+	it('accepts both a uuid and a legacy hex id', () => {
+		expect(isRecordId(objectIdToUuidV7(LEGACY_HEX))).toBe(true);
 		expect(isRecordId(LEGACY_HEX)).toBe(true);
 	});
 
@@ -84,7 +81,7 @@ describe('record ids', () => {
 		expect((await products.findById(row._id.toUpperCase()))._id).toBe(row._id);
 	});
 
-	it.skipIf(!POSTGRES)('does not mistake a legacy hex id for a row stored under another id', async () => {
+	it('does not mistake a legacy hex id for a row stored under another id', async () => {
 		await insertRawProduct({ name: 'Other' });
 
 		expect(await products.findById(LEGACY_HEX)).toBeNull();

@@ -3,13 +3,12 @@
  * storage engine: its format, the checks a file must pass before anything is
  * deleted, and the total rule of a stored order.
  *
- * Wire form: every record is a complete JSON document. Ids are record ids (24-hex
- * strings from a Mongo store, uuid strings from a Postgres one), dates are ISO
- * strings, nothing is renamed. An engine's repository
+ * Wire form: every record is a complete JSON document. Ids are record ids (uuid
+ * strings; a file made before the move to Postgres holds 24-hex ids instead),
+ * dates are ISO strings, nothing is renamed. An engine's repository
  * (`data/<engine>/data-snapshot.js`) turns its rows into this form and back; this
- * file never touches a database. A file exported from Postgres (uuid ids) cannot
- * be restored onto the Mongo backend, which accepts only 24-hex ids; the reverse
- * works, since a Postgres restore maps hex ids to uuids.
+ * file never touches a database. The restore maps legacy 24-hex ids to uuids, so
+ * an old backup file still loads.
  *
  * Fields outside a collection's list are rejected, not dropped: the restore
  * writes whole rows, so an unknown key must stop the file instead of being
@@ -21,6 +20,14 @@
  * references must resolve inside the file, and nothing may name a storefront the
  * file does not hold: the restore deletes every storefront, so a dangling
  * reference could not be repaired afterwards.
+ *
+ * Variants: a product row carries `images`, `options` and `variants` (all three or
+ * none, and every product alike). A file made before variants existed has none,
+ * and restores with one default variant per product holding its stock, every
+ * order line and movement of the product pointed at it. In a file that has them,
+ * an order line or movement of a product in the file must name one of that
+ * product's variants. Stock against the ledger is checked after the rows are
+ * written (`reconcile`), as for products.
  */
 const { isRecordId, normalizeRecordId } = require('./ids');
 const { PUBLIC_CODE_PATTERN } = require('../utils/public-code');
@@ -146,6 +153,17 @@ const email = leaf((v) => typeof v === 'string' && v.length <= 254 && v === v.to
 
 const PUBLIC_CODE = leaf((v) => typeof v === 'string' && PUBLIC_CODE_PATTERN.test(v), 'không phải mã công khai hợp lệ');
 
+const variantShape = record({
+	_id: id,
+	optionValues: listOf(text(30)),
+	price: whole(0),
+	sku: text(200),
+	imageUrl: text(2000),
+	isActive: bool,
+	archivedAt: date,
+	stockQuantity: anyWhole
+}, ['_id', 'optionValues', 'stockQuantity']);
+
 const productShape = record({
 	...stamps,
 	publicCode: PUBLIC_CODE,
@@ -169,7 +187,10 @@ const productShape = record({
 	salePrice: whole(0),
 	saleStartDate: date,
 	saleEndDate: date,
-	storefrontId: id
+	storefrontId: id,
+	images: listOf(text(2000)),
+	options: listOf(record({ name: text(30), values: listOf(text(30)) }, ['name', 'values'])),
+	variants: listOf(variantShape)
 }, ['_id', 'name', 'price', 'category']);
 
 const comboShape = record({
@@ -194,7 +215,9 @@ const orderItemShape = record({
 	quantity: whole(1),
 	fromCombo: bool,
 	comboId: id,
-	comboName: text(500)
+	comboName: text(500),
+	variantId: id,
+	variantLabel: text(200)
 }, ['productId', 'productName', 'price', 'quantity']);
 
 const orderShape = record({
@@ -243,6 +266,7 @@ const movementShape = record({
 	createdAt: date,
 	__v: whole(0),
 	productId: id,
+	variantId: id,
 	type: oneOf(MOVEMENT_TYPES),
 	delta: anyWhole,
 	target: anyWhole,
@@ -458,6 +482,82 @@ function checkStorefrontLinks(data, problems) {
 	}, 'email', 'emailListEntries', problems);
 }
 
+const VARIANT_FIELDS = ['images', 'options', 'variants'];
+const MAX_IMAGES = 9;
+const FALLBACK_IMAGE = '/fallback-product.png';
+
+/** Variants are in the file (every product has them) or not at all; null when the products disagree. */
+function variantsMode(products) {
+	const rows = products.filter(isObject);
+	const withAll = rows.filter((row) => VARIANT_FIELDS.every((field) => isGiven(row[field])));
+	const withAny = rows.filter((row) => VARIANT_FIELDS.some((field) => isGiven(row[field])));
+	if (withAny.length === 0) return 'legacy';
+	return withAll.length === rows.length ? 'variants' : null;
+}
+
+/**
+ * Variant rules a file must keep: each product has at least one variant, one value
+ * per option and no repeated combination, at most nine images with the first one
+ * as `imageUrl`; a movement of a product in the file names one of its variants,
+ * and a line or movement of a product in the file names one of its variants. A
+ * file without variants may not name one anywhere.
+ */
+function checkVariants(data, problems) {
+	const mode = variantsMode(data.products);
+	if (mode === null) {
+		problems.push(`Mọi sản phẩm phải cùng có hoặc cùng không có ${VARIANT_FIELDS.join(', ')}`);
+		return;
+	}
+	const productVariants = new Map();
+	if (mode === 'variants') {
+		const allIds = [];
+		data.products.forEach((product, index) => {
+			if (!isObject(product)) return;
+			const where = `products[${index}]`;
+			const { variants, options } = product;
+			if (!Array.isArray(variants) || !Array.isArray(options)) return;
+			if (variants.length === 0) problems.push(`${where}: phải có ít nhất một phân loại`);
+			const combos = new Set();
+			variants.forEach((variant, position) => {
+				if (!isObject(variant) || !Array.isArray(variant.optionValues)) return;
+				if (variant.optionValues.length !== options.length) problems.push(`${where}.variants[${position}]: số giá trị không khớp số loại phân loại`);
+				const key = JSON.stringify(variant.optionValues);
+				if (combos.has(key)) problems.push(`${where}.variants[${position}]: phân loại bị trùng`);
+				combos.add(key);
+				allIds.push({ _id: variant._id });
+			});
+			const productId = canonicalId(product._id);
+			if (productId !== null) productVariants.set(productId, idsOf(variants));
+			if (Array.isArray(product.images)) {
+				if (product.images.length > MAX_IMAGES) problems.push(`${where}.images: tối đa ${MAX_IMAGES} ảnh`);
+				const cover = product.images[0] ?? FALLBACK_IMAGE;
+				if ((product.imageUrl ?? FALLBACK_IMAGE) !== cover) problems.push(`${where}.imageUrl phải là ảnh đầu tiên của images`);
+			}
+		});
+		checkUnique(allIds, '_id', 'products[].variants', problems);
+	}
+
+	const names = (rows, where, field, required) => rows.forEach((row, index) => {
+		if (!isObject(row)) return;
+		if (!isGiven(row.variantId)) {
+			// A movement must move some variant's stock; one of a product the file holds
+			// would otherwise be settled as gone and its units lost.
+			if (required && mode === 'variants' && productVariants.has(canonicalId(row[field]))) problems.push(`${where(index)}: thiếu "variantId"`);
+			return;
+		}
+		if (mode === 'legacy') {
+			problems.push(`${where(index)}: trường "variantId" cần đi cùng phân loại của sản phẩm`);
+			return;
+		}
+		const known = productVariants.get(canonicalId(row[field]));
+		if (known && !known.has(canonicalId(row.variantId))) problems.push(`${where(index)}.variantId không phải phân loại của sản phẩm`);
+	});
+	data.orders.forEach((order, orderIndex) => {
+		if (isObject(order) && Array.isArray(order.items)) names(order.items, (index) => `orders[${orderIndex}].items[${index}]`, 'productId', false);
+	});
+	names(data.stockMovements, (index) => `stockMovements[${index}]`, 'productId', true);
+}
+
 function checkOrderTotals(orders, problems) {
 	orders.forEach((order, index) => {
 		if (!isObject(order) || !Number.isSafeInteger(order.totalAmount)) return;
@@ -517,6 +617,7 @@ function validateSnapshot(metadata, data) {
 	if (Array.isArray(data.settings) && data.settings.length > 1) problems.push('Phần "settings" chỉ được có tối đa một bản ghi');
 	if (Array.isArray(data.orders)) checkOrderTotals(data.orders, problems);
 	if (SNAPSHOT_SECTIONS.every((section) => Array.isArray(data[section]))) {
+		checkVariants(data, problems);
 		if (storefrontSections.length === STOREFRONT_SECTIONS.length && storefrontSections.every((section) => Array.isArray(data[section]))) checkStorefrontLinks(data, problems);
 		else if (storefrontSections.length === 0) checkNoStorefrontFields(data, problems);
 	}

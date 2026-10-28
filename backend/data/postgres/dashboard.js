@@ -1,7 +1,6 @@
 /**
- * Figures for the admin dashboard on Postgres: the same `stats` as
- * data/mongo/dashboard.js, with every count, sum and tally computed by the
- * database. Nothing here returns a BigInt: counts come from Prisma as numbers
+ * Figures for the admin dashboard on Postgres, with every count, sum and tally
+ * computed by the database. Nothing here returns a BigInt: counts come from Prisma as numbers
  * and the raw query casts its sums to int.
  */
 const { prisma } = require('../../lib/prisma');

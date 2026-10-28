@@ -2,8 +2,8 @@
  * Coercion helpers for untrusted query-string input.
  *
  * Express hands query values through as strings, arrays or objects depending on
- * what the caller sent, so `{ status: { $ne: null } }` arrives as a live Mongo
- * operator if it is passed into a query unexamined. Every helper here returns
+ * what the caller sent, so `{ status: { $ne: null } }` arrives as a live query
+ * operator if it is passed into a filter unexamined. Every helper here returns
  * either a value of the expected primitive type or `undefined`, so a rejected
  * input drops the filter instead of reshaping the query.
  *
@@ -20,7 +20,7 @@ const asString = (v, max = 100) => (typeof v === 'string' ? v.slice(0, max) : un
 const asEnum = (v, allowed) => (allowed.includes(v) ? v : undefined);
 
 /**
- * Build a Mongo sort object from untrusted field/direction input.
+ * Build a sort object (`{ field: 1 | -1 }`) from untrusted field/direction input.
  *
  * An unrecognised field falls back to `fallback` rather than being dropped, so
  * the query keeps a deterministic order instead of relying on natural order.

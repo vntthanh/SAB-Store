@@ -5,7 +5,6 @@
  */
 const { orders, withTransaction } = require('../../data');
 const { DuplicateKeyError, InvalidIdError, RecordValidationError, isDuplicateKeyOn } = require('../../data/errors');
-const { translateWriteError } = require('../../data/mongo/errors');
 const { makeProduct, makeOrder } = require('../helpers/factories');
 const { findProduct, deleteProduct } = require('../helpers/db');
 
@@ -156,20 +155,13 @@ describe('orders repository: writes', () => {
 });
 
 describe('isDuplicateKeyOn', () => {
-	const rawDuplicate = (extra) => Object.assign(new Error('E11000'), { code: 11000, ...extra });
-
 	it('matches only a unique-key violation that names one of the columns', () => {
-		expect(isDuplicateKeyOn(rawDuplicate({ keyPattern: { orderCode: 1 } }), 'orderCode')).toBe(true);
-		expect(isDuplicateKeyOn(rawDuplicate({ keyPattern: { orderNumber: 1 } }), 'orderCode', 'orderNumber')).toBe(true);
-		expect(isDuplicateKeyOn(rawDuplicate({ keyPattern: { idempotencyKey: 1 } }), 'orderCode', 'orderNumber')).toBe(false);
-		expect(isDuplicateKeyOn(rawDuplicate({}), 'orderCode')).toBe(false);
+		expect(isDuplicateKeyOn(new DuplicateKeyError(['orderCode']), 'orderCode')).toBe(true);
+		expect(isDuplicateKeyOn(new DuplicateKeyError(['orderNumber']), 'orderCode', 'orderNumber')).toBe(true);
+		expect(isDuplicateKeyOn(new DuplicateKeyError(['idempotencyKey']), 'orderCode', 'orderNumber')).toBe(false);
+		expect(isDuplicateKeyOn(new DuplicateKeyError([]), 'orderCode')).toBe(false);
 		expect(isDuplicateKeyOn(new Error('boom'), 'orderCode')).toBe(false);
 		expect(isDuplicateKeyOn(null, 'orderCode')).toBe(false);
-	});
-
-	it('reads the column from the translated error and from a bulk-write message', () => {
-		expect(isDuplicateKeyOn(translateWriteError(rawDuplicate({ keyPattern: { orderCode: 1 } })), 'orderCode')).toBe(true);
-		expect(isDuplicateKeyOn(rawDuplicate({ message: 'E11000 duplicate key error collection: x index: orderCode_1 dup key: {}' }), 'orderCode')).toBe(true);
 	});
 });
 

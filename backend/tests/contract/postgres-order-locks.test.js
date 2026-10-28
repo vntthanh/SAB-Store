@@ -1,12 +1,9 @@
 /**
- * The order row lock, observed from a second connection. Skipped on the mongo
- * backend, which serialises racing writers of one order through write conflicts.
+ * The order row lock, observed from a second connection.
  */
 const { Client } = require('pg');
 const { POOL_OPTIONS } = require('../helpers/postgres');
 const { insertRawProduct, insertRawOrder, findOrder, stockOf } = require('../helpers/db');
-
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
 
 /**
  * Resolves once another session of this database is blocked by the lock this
@@ -26,7 +23,7 @@ async function waitForLockWait(client, timeoutMs = 10000) {
 	throw new Error('no session was ever blocked by the order lock held by the test');
 }
 
-describe.skipIf(!POSTGRES)('postgres order row lock', () => {
+describe('postgres order row lock', () => {
 	let other;
 	let data;
 

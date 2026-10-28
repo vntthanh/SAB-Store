@@ -3,6 +3,8 @@ import { orderCreate } from '@sab/shared';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useCart } from '../context/CartContext';
+import { lineKey, toRequestItem } from '../lib/cart-line';
+import { getImageUrl } from '../utils/helpers';
 import { orderService, PRICE_CHANGED } from '../services/api';
 import LoadingSpinner from '../components/LoadingSpinner';
 import MarkdownContent from '../components/MarkdownContent';
@@ -51,6 +53,8 @@ const CheckoutPage = () => {
 	const { errors, validateField, onFieldChange, validateAll, setServerErrors, focusFirstError } = useFieldErrors(CHECKOUT_RULES);
 	const formRef = useRef(null);
 	const [isSubmitting, setIsSubmitting] = useState(false);
+	// State updates land after a re-render; a second Enter in the same tick must still be refused.
+	const submittingRef = useRef(false);
 	const [orderCompleted, setOrderCompleted] = useState(false);
 
 	// Redirect if cart is empty (but not if order was just completed)
@@ -83,6 +87,7 @@ const CheckoutPage = () => {
 
 	const handleSubmit = async (e) => {
 		e.preventDefault();
+		if (submittingRef.current) return;
 
 		if (!canOrder) {
 			toast.error('Tài khoản này không nằm trong danh sách được đặt hàng');
@@ -104,6 +109,7 @@ const CheckoutPage = () => {
 			return;
 		}
 
+		submittingRef.current = true;
 		setIsSubmitting(true);
 
 		try {
@@ -117,10 +123,7 @@ const CheckoutPage = () => {
 				email: values.email.trim().toLowerCase(),
 				phoneNumber: values.phoneNumber.trim(),
 				additionalNote: values.additionalNote.trim(),
-				items: cart.items.map(item => ({
-					productId: item.productId,
-					quantity: item.quantity
-				})),
+				items: cart.items.map(toRequestItem),
 				expectedTotal
 			};
 
@@ -166,6 +169,12 @@ const CheckoutPage = () => {
 				checkForCombos();
 				return;
 			}
+			if (error.code === 'VARIANT_REQUIRED' || error.code === 'VARIANT_UNAVAILABLE') {
+				// The pricing check drops exactly the lines the server named.
+				toast.error(error.message);
+				checkForCombos();
+				return;
+			}
 			if (error.status === 400 && error.fieldErrors?.length) {
 				const leftovers = setServerErrors(error);
 				if (leftovers.length < error.fieldErrors.length) focusFirstError(formRef);
@@ -175,6 +184,7 @@ const CheckoutPage = () => {
 			console.error('Order creation error:', error);
 			toast.error(error.message || 'Có lỗi xảy ra khi tạo đơn hàng');
 		} finally {
+			submittingRef.current = false;
 			setIsSubmitting(false);
 		}
 	};
@@ -316,11 +326,23 @@ const CheckoutPage = () => {
 								{/* Order Items */}
 								<div className="space-y-3 mb-6">
 									{cart.items.map(item => (
-										<div key={item.productId} className="flex justify-between items-start">
-											<div className="flex-1 mr-2">
+										<div key={lineKey(item)} className="flex justify-between items-start">
+											<img
+												src={getImageUrl(item.image)}
+												alt={item.productName}
+												className="w-12 h-12 object-cover rounded-lg flex-shrink-0 mr-3"
+												onError={(e) => {
+													e.target.onerror = null;
+													e.target.src = '/fallback-product.png';
+												}}
+											/>
+											<div className="flex-1 min-w-0 mr-2">
 												<h4 className="font-medium text-gray-900 text-sm line-clamp-2">
 													{item.productName}
 												</h4>
+												{item.variantLabel && (
+													<p className="text-gray-500 text-xs break-words">{item.variantLabel}</p>
+												)}
 												<p className="text-gray-600 text-sm">
 													{formatCurrency(item.price)} x {item.quantity}
 												</p>

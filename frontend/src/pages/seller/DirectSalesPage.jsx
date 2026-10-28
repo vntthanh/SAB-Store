@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'react-toastify';
 import { productService, sellerService, comboService, PRICE_CHANGED } from '../../services/api';
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -6,6 +6,40 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 // The server answers a counter sale over a product's maximum with this code and
 // the lines concerned; the cashier decides whether to sell anyway.
 const QUANTITY_OVER_MAX = 'QUANTITY_OVER_MAX';
+// The server names the lines it rejected for a missing or retired variant.
+const VARIANT_ERROR_CODES = ['VARIANT_REQUIRED', 'VARIANT_UNAVAILABLE'];
+
+// A product without options is sold as one line with an empty variant part and sent
+// without variantId; a product with options sells one line per active variant.
+const lineKey = (productId, variantId) => `${productId}:${variantId ?? ''}`;
+
+const sellableLines = (products) =>
+	products.flatMap((product) => {
+		const hasOptions = Array.isArray(product.options) && product.options.length > 0;
+		if (!hasOptions) {
+			return [{ key: lineKey(product._id), productId: product._id, price: product.price, name: product.name }];
+		}
+		return (product.variants || [])
+			.filter((variant) => variant.isActive !== false && !variant.archivedAt)
+			.map((variant) => ({
+				key: lineKey(product._id, variant._id),
+				productId: product._id,
+				variantId: variant._id,
+				label: variant.label,
+				price: variant.effectivePrice ?? product.price,
+				stock: variant.stockQuantity,
+				name: product.name,
+			}));
+	});
+
+const toPayloadItems = (lines, quantities) =>
+	lines
+		.filter((line) => quantities[line.key] > 0)
+		.map((line) => ({
+			productId: line.productId,
+			...(line.variantId && { variantId: line.variantId }),
+			quantity: quantities[line.key],
+		}));
 
 const DirectSalesPage = () => {
 	const [products, setProducts] = useState([]);
@@ -25,48 +59,43 @@ const DirectSalesPage = () => {
 	// Refs for input focus management
 	const inputRefs = useRef({});
 
-	// Fetch products
-	useEffect(() => {
-		const fetchProducts = async () => {
-			try {
-				const response = await productService.getDirectSalesProducts();
-				if (response.success) {
-					setProducts(response.data.products);
-					// Initialize quantities
-					const initialQuantities = {};
-					response.data.products.forEach(product => {
-						initialQuantities[product._id] = 0;
-					});
-					setQuantities(initialQuantities);
-				}
-			} catch (error) {
-				toast.error('Lỗi khi tải danh sách sản phẩm');
-			} finally {
-				setLoading(false);
+	const fetchProducts = async () => {
+		try {
+			const response = await productService.getDirectSalesProducts();
+			if (response.success) {
+				setProducts(response.data.products);
 			}
-		};
+		} catch (error) {
+			toast.error('Lỗi khi tải danh sách sản phẩm');
+		} finally {
+			setLoading(false);
+		}
+	};
 
+	useEffect(() => {
 		fetchProducts();
 	}, []);
 
+	const lines = useMemo(() => sellableLines(products), [products]);
+
 	// Auto-focus first input when products are loaded
 	useEffect(() => {
-		if (products.length > 0 && !loading) {
-			const firstProductId = products[0]._id;
+		if (lines.length > 0 && !loading) {
+			const firstKey = lines[0].key;
 			const timer = setTimeout(() => {
-				if (inputRefs.current[firstProductId]) {
-					inputRefs.current[firstProductId].focus();
+				if (inputRefs.current[firstKey]) {
+					inputRefs.current[firstKey].focus();
 				}
 			}, 100);
 			return () => clearTimeout(timer);
 		}
-	}, [products, loading]);
+	}, [lines, loading]);
 
-	const updateQuantity = (productId, delta) => {
+	const updateQuantity = (key, delta) => {
 		setQuantities(prev => {
 			const newQuantities = {
 				...prev,
-				[productId]: Math.max(0, (prev[productId] || 0) + delta)
+				[key]: Math.max(0, (prev[key] || 0) + delta)
 			};
 
 			// Trigger pricing calculation
@@ -78,12 +107,7 @@ const DirectSalesPage = () => {
 
 	// Calculate optimal pricing for current selection
 	const calculatePricing = async (currentQuantities = quantities) => {
-		const items = Object.entries(currentQuantities)
-			.filter(([_, qty]) => qty > 0)
-			.map(([productId, quantity]) => ({
-				productId,
-				quantity
-			}));
+		const items = toPayloadItems(lines, currentQuantities);
 
 		if (items.length === 0) {
 			pricingRequestId.current++;
@@ -115,42 +139,39 @@ const DirectSalesPage = () => {
 	};
 
 	// Handle Tab navigation between quantity inputs
-	const focusNextInput = (currentProductId) => {
-		const currentIndex = products.findIndex(p => p._id === currentProductId);
-		const nextIndex = (currentIndex + 1) % products.length; // Loop back to first if at end
-		const nextProductId = products[nextIndex]._id;
-
-		if (inputRefs.current[nextProductId]) {
-			inputRefs.current[nextProductId].focus();
+	const focusLine = (index) => {
+		const target = lines[index];
+		if (target && inputRefs.current[target.key]) {
+			inputRefs.current[target.key].focus();
 		}
 	};
 
-	const focusPrevInput = (currentProductId) => {
-		const currentIndex = products.findIndex(p => p._id === currentProductId);
-		const prevIndex = currentIndex === 0 ? products.length - 1 : currentIndex - 1; // Loop to last if at first
-		const prevProductId = products[prevIndex]._id;
-
-		if (inputRefs.current[prevProductId]) {
-			inputRefs.current[prevProductId].focus();
-		}
+	const focusNextInput = (currentKey) => {
+		const currentIndex = lines.findIndex(l => l.key === currentKey);
+		focusLine((currentIndex + 1) % lines.length); // Loop back to first if at end
 	};
 
-	const handleKeyPress = (e, productId) => {
+	const focusPrevInput = (currentKey) => {
+		const currentIndex = lines.findIndex(l => l.key === currentKey);
+		focusLine(currentIndex === 0 ? lines.length - 1 : currentIndex - 1); // Loop to last if at first
+	};
+
+	const handleKeyPress = (e, key) => {
 		if (e.key === 'ArrowUp') {
 			e.preventDefault();
-			updateQuantity(productId, 1);
+			updateQuantity(key, 1);
 		} else if (e.key === 'ArrowDown') {
 			e.preventDefault();
-			updateQuantity(productId, -1);
+			updateQuantity(key, -1);
 		} else if (e.key === 'Enter') {
 			e.preventDefault();
 			handleCreateOrder();
 		} else if (e.key === 'Tab') {
 			e.preventDefault();
 			if (e.shiftKey) {
-				focusPrevInput(productId);
+				focusPrevInput(key);
 			} else {
-				focusNextInput(productId);
+				focusNextInput(key);
 			}
 		}
 	};
@@ -160,17 +181,7 @@ const DirectSalesPage = () => {
 		if (processing) return;
 
 		// Check if any products are selected
-		const selectedItems = Object.entries(quantities)
-			.filter(([_, qty]) => qty > 0)
-			.map(([productId, quantity]) => {
-				const product = products.find(p => p._id === productId);
-				return {
-					productId,
-					productName: product.name,
-					price: product.price,
-					quantity
-				};
-			});
+		const selectedItems = toPayloadItems(lines, quantities);
 
 		if (selectedItems.length === 0) {
 			toast.warning('Vui lòng chọn ít nhất một sản phẩm');
@@ -187,7 +198,7 @@ const DirectSalesPage = () => {
 			// Only ids and quantities plus the total shown on screen; the server
 			// recomputes the price and answers 409 if it differs.
 			const orderData = {
-				items: selectedItems.map(({ productId, quantity }) => ({ productId, quantity })),
+				items: selectedItems,
 				expectedTotal: pricingInfo.totalAmount,
 				...(allowOverMax && { allowOverMax: true })
 			};
@@ -215,6 +226,14 @@ const DirectSalesPage = () => {
 				setOverMaxLines(null);
 				toast.warning('Giá vừa thay đổi, vui lòng xem lại tổng tiền');
 				calculatePricing();
+			} else if (VARIANT_ERROR_CODES.includes(error.code)) {
+				// A variant was retired or changed since the list loaded: drop exactly the
+				// named lines and reload the list, so the next attempt can succeed.
+				setOverMaxLines(null);
+				const named = new Set((error.details?.lines || []).map((line) => lineKey(line.productId, line.variantId)));
+				setQuantities((prev) => Object.fromEntries(Object.entries(prev).filter(([key]) => !named.has(key))));
+				toast.error(`${error.message}. Đã bỏ dòng không còn bán, vui lòng kiểm tra lại.`);
+				fetchProducts();
 			} else {
 				setOverMaxLines(null);
 				toast.error('Lỗi khi tạo đơn hàng: ' + error.message);
@@ -263,12 +282,8 @@ const DirectSalesPage = () => {
 	const handleReset = () => {
 		setCurrentOrder(null);
 		setPaymentQR('');
-		// Reset quantities
-		const resetQuantities = {};
-		products.forEach(product => {
-			resetQuantities[product._id] = 0;
-		});
-		setQuantities(resetQuantities);
+		setQuantities({});
+		setPricingInfo(null);
 	};
 
 	const getTotalAmount = () => {
@@ -278,10 +293,7 @@ const DirectSalesPage = () => {
 		}
 
 		// Fallback to basic calculation
-		return Object.entries(quantities).reduce((total, [productId, quantity]) => {
-			const product = products.find(p => p._id === productId);
-			return total + (product ? product.price * quantity : 0);
-		}, 0);
+		return lines.reduce((total, line) => total + line.price * (quantities[line.key] || 0), 0);
 	};
 
 	const formatCurrency = (amount) => {
@@ -298,6 +310,63 @@ const DirectSalesPage = () => {
 			</div>
 		);
 	}
+
+	const renderLine = (line) => (
+		<div key={line.key} className="mb-4 last:mb-0">
+			{line.label && (
+				<p className="text-gray-900 font-medium">{line.label}</p>
+			)}
+			<p className="text-blue-700 font-bold mb-2">
+				{formatCurrency(line.price)}
+				{line.variantId && typeof line.stock === 'number' && (
+					<span className="ml-2 text-sm font-normal text-gray-500">Tồn: {line.stock}</span>
+				)}
+			</p>
+
+			{/* Quantity Input */}
+			<div className="flex items-center space-x-3">
+				<button
+					onClick={() => updateQuantity(line.key, -1)}
+					className="w-8 h-8 bg-gray-200 hover:bg-gray-300 rounded flex items-center justify-center"
+					disabled={!quantities[line.key]}
+				>
+					<i className="fas fa-minus text-sm"></i>
+				</button>
+
+				<input
+					ref={(el) => inputRefs.current[line.key] = el}
+					type="number"
+					value={quantities[line.key] || 0}
+					onChange={(e) => {
+						const newQuantities = {
+							...quantities,
+							[line.key]: Math.max(0, parseInt(e.target.value) || 0)
+						};
+						setQuantities(newQuantities);
+						calculatePricing(newQuantities);
+					}}
+					onKeyDown={(e) => handleKeyPress(e, line.key)}
+					className="w-16 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+					min="0"
+					tabIndex={lines.findIndex(l => l.key === line.key) + 1}
+					title="Sử dụng ↑↓ để thay đổi số lượng, Tab để chuyển sản phẩm, Enter để tạo đơn"
+				/>
+
+				<button
+					onClick={() => updateQuantity(line.key, 1)}
+					className="w-8 h-8 bg-gray-200 hover:bg-gray-300 rounded flex items-center justify-center"
+				>
+					<i className="fas fa-plus text-sm"></i>
+				</button>
+			</div>
+
+			{quantities[line.key] > 0 && (
+				<p className="text-sm text-gray-600 mt-2">
+					Tổng: {formatCurrency(line.price * quantities[line.key])}
+				</p>
+			)}
+		</div>
+	);
 
 	return (
 		<div className="container mx-auto px-4 py-8">
@@ -333,51 +402,9 @@ const DirectSalesPage = () => {
 									<p className="text-gray-600 text-sm mb-3">
 										{product.description}
 									</p>
-									<p className="text-blue-700 font-bold mb-4">
-										{formatCurrency(product.price)}
-									</p>
-
-									{/* Quantity Input */}
-									<div className="flex items-center space-x-3">
-										<button
-											onClick={() => updateQuantity(product._id, -1)}
-											className="w-8 h-8 bg-gray-200 hover:bg-gray-300 rounded flex items-center justify-center"
-											disabled={quantities[product._id] === 0}
-										>
-											<i className="fas fa-minus text-sm"></i>
-										</button>
-
-										<input
-											ref={(el) => inputRefs.current[product._id] = el}
-											type="number"
-											value={quantities[product._id] || 0}
-											onChange={(e) => {
-												const newQuantities = {
-													...quantities,
-													[product._id]: Math.max(0, parseInt(e.target.value) || 0)
-												};
-												setQuantities(newQuantities);
-												calculatePricing(newQuantities);
-											}}
-											onKeyDown={(e) => handleKeyPress(e, product._id)}
-											className="w-16 px-2 py-1 text-center border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-											min="0"
-											tabIndex={products.findIndex(p => p._id === product._id) + 1}
-											title="Sử dụng ↑↓ để thay đổi số lượng, Tab để chuyển sản phẩm, Enter để tạo đơn"
-										/>
-
-										<button
-											onClick={() => updateQuantity(product._id, 1)}
-											className="w-8 h-8 bg-gray-200 hover:bg-gray-300 rounded flex items-center justify-center"
-										>
-											<i className="fas fa-plus text-sm"></i>
-										</button>
-									</div>
-
-									{quantities[product._id] > 0 && (
-										<p className="text-sm text-gray-600 mt-2">
-											Tổng: {formatCurrency(product.price * quantities[product._id])}
-										</p>
+									{lines.filter(line => line.productId === product._id).map(line => renderLine(line))}
+									{product.options?.length > 0 && !lines.some(line => line.productId === product._id) && (
+										<p className="text-sm text-gray-500">Chưa có phân loại nào đang bán</p>
 									)}
 								</div>
 							))}
@@ -538,7 +565,7 @@ const DirectSalesPage = () => {
 						<ul className="mb-5 space-y-1 text-gray-900">
 							{overMaxLines.map((line) => (
 								<li key={line.productId}>
-									{line.productName}: {line.quantity} &gt; tối đa {line.max}
+									{line.productName}{line.variantLabel ? ` · ${line.variantLabel}` : ''}: {line.quantity} &gt; tối đa {line.max}
 								</li>
 							))}
 						</ul>

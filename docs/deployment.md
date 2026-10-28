@@ -16,7 +16,7 @@ covers `prod.compose.yml` on a host without Coolify and is kept as the fallback 
   running containers untouched.
 - **Downtime per deploy**: Coolify removes every container of the project before `compose up`, so
   the site is down from the first stop until the new frontend is healthy (measured ~100 s before
-  the tuning in `coolify.compose.yml`: slow nginx/mongod stops, a second image build at `up`,
+  the tuning in `coolify.compose.yml`: slow nginx stops, a second image build at `up`,
   serial health waits). Re-measure with a 1 req/s probe after changing anything that affects
   stop, start or healthcheck timing; getting close to zero needs Coolify to keep the old
   containers running until the new ones are healthy, which the compose build pack does not do.
@@ -84,10 +84,11 @@ covers `prod.compose.yml` on a host without Coolify and is kept as the fallback 
   is lost): stop the backend container, then
   `docker exec -i <postgres> sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --no-privileges --single-transaction --exit-on-error' < <dump>`,
   then start the backend. Day-to-day backups are the admin dashboard's export/import.
-- **MongoDB** still runs with no client, holding the data as it was at the cutover. Reverting the
-  cutover commit points the backend back at it and discards every write made on PostgreSQL since,
-  so it is only an option before the shop has taken any. After that, fix forward. The Mongo-only
-  sections below apply to `prod.compose.yml` and to that history.
+- **There is no way back to MongoDB.** No code, service or variable for it remains. To undo a
+  release, redeploy the previous `main` commit in Coolify; to undo a data migration, also restore
+  an admin export (Admin → Database). The old Mongo data directory stays untouched on the host at
+  `/srv/appdata/vol/sab-store_mongodb_data`, and a final `mongodump` archive is kept under
+  `~/backups/sab-store/`; neither is read by anything.
 - **`JWT_SECRET`** is better-auth's secret: it signs the session cookies and encrypts the jwks
   signing key stored in the database. Changing only the variable makes every session check answer
   500, because the stored key no longer decrypts. Rotate it as one step: new value (64 hex,
@@ -126,56 +127,6 @@ product, combo and online order into it. Order of work:
 Rollback is the usual one (redeploy the previous `main` commit); the migration is additive, but
 anything written to storefront tables is ignored by the older code.
 
-### Copying the database under a new name (MongoDB)
-
-The production database is `sabstore` (it was `sablanyard` until 2026-09-29; that copy is kept
-read-only for a while as the rollback). To copy a database under a new name again, on the
-server, inside `tmux`, with the backend stopped:
-
-1. Pick containers by Coolify labels, never by a name pattern (the host runs many projects):
-   `docker ps --filter label=com.docker.compose.service=<service> --filter label=<coolify project label>`.
-   Stop exactly the one backend container and confirm `db.currentOp()` shows nothing from it.
-2. Save the helper below as `db-rename.sh`. It authenticates with the mongo container's own
-   `MONGO_INITDB_ROOT_*` variables, so no password appears in argv, `ps` or shell history; the
-   dump/restore credentials live in a 0600 temp file removed on exit.
-3. `snapshot FROM TO` (read-only; aborts if TO exists) → `copy FROM TO` → `compare FROM TO`
-   (document counts and index keys per collection must print `MATCH`). On `MISMATCH`:
-   `drop-target FROM TO`, restart the backend on the old URI, stop.
-4. Change the path of `MONGODB_URI` (and `MONGO_INITDB_DATABASE`) in the Coolify environment,
-   then deploy. The backend refuses to start on a database without users, so a typo in the
-   name fails loudly; mongoose still creates empty collections for indexes there — drop that
-   stray database afterwards.
-5. Rollback is only safe while the store is still closed: point `MONGODB_URI` back. Once new
-   orders land in the new database, fix forward instead of copying back.
-
-```bash
-#!/bin/bash
-# Usage: db-rename.sh <mongo-container> <snapshot|copy|compare|drop-target> FROM TO
-set -euo pipefail
-M=$1; ACTION=$2; FROM=$3; TO=$4
-msh() { docker exec -i -e FROM="$FROM" -e TO="$TO" "$M" mongosh --nodb --quiet --file /dev/stdin; }
-AUTH='const conn = new Mongo("mongodb://localhost:27017"); const admin = conn.getDB("admin"); admin.auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD);'
-SNAP='function snap(name){ const d = conn.getDB(name); const out = {}; d.getCollectionNames().sort().forEach(c => { out[c] = { count: d.getCollection(c).countDocuments({}), indexes: d.getCollection(c).getIndexes().map(i => JSON.stringify(i.key) + (i.unique ? "!u" : "")).sort() }; }); return out; }'
-case "$ACTION" in
-  snapshot) echo "$AUTH $SNAP
-    const names = admin.adminCommand({listDatabases:1}).databases.map(d => d.name);
-    if (names.includes(process.env.TO)) { print('ABORT: target ' + process.env.TO + ' already exists'); quit(2); }
-    print(JSON.stringify(snap(process.env.FROM)));" | msh ;;
-  copy) docker exec -i -e FROM="$FROM" -e TO="$TO" "$M" bash -c 'set -euo pipefail
-    umask 077; CFG=$(mktemp)
-    trap "rm -f $CFG" EXIT
-    printf "uri: mongodb://%s:%s@localhost:27017/?authSource=admin\n" "$MONGO_INITDB_ROOT_USERNAME" "$MONGO_INITDB_ROOT_PASSWORD" > "$CFG"
-    mongodump --config="$CFG" --db="$FROM" --archive --quiet \
-      | mongorestore --config="$CFG" --archive --nsFrom="$FROM.*" --nsTo="$TO.*" --quiet
-    echo "copy done"' ;;
-  compare) echo "$AUTH $SNAP
-    const a = JSON.stringify(snap(process.env.FROM)), b = JSON.stringify(snap(process.env.TO));
-    print(a === b ? 'MATCH ' + Object.keys(snap(process.env.TO)).length + ' collections' : 'MISMATCH\n' + a + '\n' + b);
-    if (a !== b) quit(3);" | msh ;;
-  drop-target) echo "$AUTH conn.getDB(process.env.TO).dropDatabase(); print('dropped ' + process.env.TO);" | msh ;;
-esac
-```
-
 ## After pulling the workspace move (dev machines)
 
 - **Every machine** (Mac and Windows, they share the working tree through Syncthing): wait for
@@ -199,22 +150,19 @@ Single ingress: `store.sabies.vn` → NPM → `frontend` container (nginx, built
 `frontend/Dockerfile`) → `/api/*` proxied to `backend:5000`, `/uploads/*` proxied directly to
 `sabstore-seaweedfs:9000` (internal Docker network, never the public internet). There is no separate
 `nginx` service and no `api.store.sabies.vn` route — see `prod.compose.yml` (services
-`sabstore-postgres`, the one-shot `sabstore-release`, `mongodb`, `sabstore-redis`,
-`sabstore-seaweedfs`, `backend`, `frontend`; this fallback file still pins the backend to
-MongoDB, unlike `coolify.compose.yml`). `backend/server.js:48` sets
+`sabstore-postgres`, the one-shot `sabstore-release`, `sabstore-redis`,
+`sabstore-seaweedfs`, `backend`, `frontend`). `backend/server.js:48` sets
 `trust proxy` to `2` (NPM → frontend nginx → backend).
 
 ## 0. Prerequisites — read before touching the server
 
 1. **`.env` must be complete before `up -d`.** Every secret in `prod.compose.yml` uses
    `${VAR:?message}` (`PUBLIC_URL`, `JWT_SECRET`, `SAB_PG_USER`, `SAB_PG_PASSWORD`, `SAB_PG_DB`,
-   `MONGODB_URI`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `MINIO_ROOT_USER`,
-   `MINIO_ROOT_PASSWORD`, `REDIS_PASSWORD`; `ADMIN_*` are optional, read only to
+   `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `REDIS_PASSWORD`; `ADMIN_*` are optional, read only to
    create the first admin). A missing one means the container
    **will not boot** — this is by design (fail-fast), not a bug to work around. Same is true
    inside the backend process itself: `backend/lib/auth.js` throws at `require()` time if
-   `JWT_SECRET` or the store's connection string (`DATABASE_URL`, or `MONGODB_URI` with
-   `DATA_BACKEND=mongo`) are missing or `JWT_SECRET` is short/placeholder-looking.
+   `JWT_SECRET` or `DATABASE_URL` are missing or `JWT_SECRET` is short/placeholder-looking.
    Preflight check: `docker compose -f prod.compose.yml exec -T backend node check-env.js`
    (reports each required var as set/MISSING, never prints values, fails loudly on a
    placeholder-looking `JWT_SECRET`).
@@ -239,14 +187,12 @@ ssh -p 24700 david0403@ssh.noboroto.id.vn
 cd ~/github/SAB-Store
 cp .env .env.bak-$(date +%Y%m%d-%H%M)
 git log --oneline -1
-docker compose -f prod.compose.yml exec -T mongodb mongosh -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval '
-  ["orders","products","combos","accounts"]
-    .forEach(c=>print(c+": "+db.getSiblingDB("sabstore")[c].countDocuments()))' | tee /tmp/baseline.txt
+docker compose -f prod.compose.yml exec -T sabstore-postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "
+  select '"'"'orders'"'"', count(*) from orders union all select '"'"'products'"'"', count(*) from products
+  union all select '"'"'combos'"'"', count(*) from combos union all select '"'"'user'"'"', count(*) from \"user\""' | tee /tmp/baseline.txt
 ```
 
-Verify the DB name is the real one (`sabstore`), not the seed database (`minipreorder`) —
-see `plans/reports/correction-260914-1515-database-thuc-te-va-ket-qua-hotfix.md` for why that
-distinction matters here.
+Verify the database is the real one (`SAB_PG_DB`), not an empty or seed one.
 
 ## 3. Update `.env` on the server
 
@@ -255,18 +201,8 @@ Edit the server's `.env` (not `.env.example`) so it has every var listed in step
 `REACT_APP_API_URL`, `VITE_API_URL` lines (dead, but harmless if left — `prod.compose.yml`
 no longer reads them for origin config).
 
-**Rotating the Mongo password — order matters.** `MONGO_INITDB_ROOT_PASSWORD` only seeds the
-user on first container creation; changing it in `.env` against an **existing** data volume
-is a no-op and just breaks `MONGODB_URI` for the backend. Correct order:
-
-```sh
-# 1. Change the password on the running DB first
-docker compose -f prod.compose.yml exec -T mongodb mongosh -u "$MONGO_INITDB_ROOT_USERNAME" -p "<old password>" --authenticationDatabase admin --eval '
-  db.getSiblingDB("admin").changeUserPassword("'"$MONGO_INITDB_ROOT_USERNAME"'", "<new password>")'
-# 2. Only then update .env: MONGO_INITDB_ROOT_PASSWORD and the password embedded in MONGODB_URI
-# 3. Verify connectivity before moving on
-docker compose -f prod.compose.yml exec -T backend node -e "require('mongoose').connect(process.env.MONGODB_URI).then(()=>{console.log('OK');process.exit(0)}).catch(e=>{console.error(e.message);process.exit(1)})"
-```
+Rotating `SAB_PG_PASSWORD` follows the order in the PostgreSQL section above (change it inside
+the running database first, then `.env`).
 
 ## 4. Dry run the compose config
 
@@ -390,10 +326,7 @@ instead of a real zero). Issues no writes, prints order codes only, never names 
 IDs.
 
 ```sh
-# Against the MongoDB this runbook deploys; the backend defaults to PostgreSQL
-# (DATABASE_URL) unless DATA_BACKEND=mongo is set.
-docker exec -e DATA_BACKEND=mongo -e MONGODB_URI="$MONGODB_URI" sab-store-backend-1 \
-  node scripts/audit-combo-pricing.js
+docker exec sab-store-backend-1 node scripts/audit-combo-pricing.js
 ```
 
 ### Checking a share preview
@@ -431,12 +364,8 @@ probes (`/.env`, `*.php`, …) get an unlogged 404 straight from nginx.
   2026-04-25 and stopped shipping free images, so it no longer receives fixes. The compose
   files pin `chrislusf/seaweedfs` by digest; updating it means choosing a new tag and digest
   deliberately.
-- MongoDB runs as a **single-node replica set `rs0`** (since 2026-10-04) so multi-document
-  transactions work. The keyfile comes from the runtime variable `MONGO_REPLICA_KEY`
-  (base64, no newlines, 6–1024 chars, e.g. `openssl rand -base64 756 | tr -d '\n'`); the
-  healthcheck initiates the set on first start. `MONGODB_URI` carries `replicaSet=rs0`. The
-  backend refuses to boot against a standalone mongod, so the Vitest harness (also a replica
-  set) and production behave the same.
+- Multi-step writes (order + stock) run in one PostgreSQL transaction; external calls happen
+  only after it commits.
 
 ## Rollback
 
@@ -452,8 +381,5 @@ docker compose -f prod.compose.yml up -d
 cp .env.bak-<timestamp> .env   # only if .env was changed since that commit
 ```
 
-Volumes are untouched by any of this. Rolling MongoDB back to standalone: drop
-`--replSet`/`--keyFile` from the mongo service and `replicaSet=rs0` from `MONGODB_URI`, and
-revert the backend's replica-set startup check (`backend/lib/require-replica-set.js` call in
-`backend/lib/database.js`) in the same deploy — otherwise the backend refuses to start.
-mongod starts standalone on the same data dir.
+Volumes are untouched by any of this. To undo a data migration as well, restore an admin export
+(Admin → Database) or, for data loss, a release dump (see the PostgreSQL section).

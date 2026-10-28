@@ -1,7 +1,7 @@
 /**
- * Routes that take a record id in the path accept the store's own id form, and on
- * Postgres also a legacy 24-hex id (old links, carts and backups still carry it).
- * The path check must therefore be the backend-aware one, not a hex-only pattern.
+ * Routes that take a record id in the path accept a uuid and also a legacy 24-hex
+ * id (old links, carts and backups still carry it). The path check must
+ * therefore accept both forms, not a hex-only pattern.
  */
 const request = require('supertest');
 const { v7: uuidv7 } = require('uuid');
@@ -9,7 +9,6 @@ const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeAdminSession, makeSellerSession } =require('../helpers/factories');
 const { objectIdToUuidV7 } = require('@sab/shared');
 const data = require('../../data');
-const { POSTGRES } = require('../helpers/backend');
 
 const HEX = '507f1f77bcf86cd799439011';
 
@@ -23,7 +22,7 @@ describe('record ids in route paths', () => {
 	});
 
 	it('answers 404 for a well-formed id nothing has, on the public product route', async () => {
-		const unknown = POSTGRES ? uuidv7() : HEX;
+		const unknown = uuidv7();
 
 		const res = await request(app).get(`/api/products/${unknown}`);
 
@@ -31,7 +30,7 @@ describe('record ids in route paths', () => {
 	});
 
 	it('answers 404 for a well-formed id nothing has, on the admin order route', async () => {
-		const unknown = POSTGRES ? uuidv7() : HEX;
+		const unknown = uuidv7();
 
 		const res = await request(app).get(`/api/admin/orders/${unknown}`).set('Cookie', cookies);
 
@@ -61,18 +60,10 @@ describe('record ids in route paths', () => {
 		}
 	});
 
-	// Mongo only: a uuid is not an id there and is refused as malformed.
-	it.skipIf(POSTGRES)('refuses a uuid as a malformed id', async () => {
-		const res = await request(app).get(`/api/admin/products/${uuidv7()}/stock-movements`).set('Cookie', cookies);
-
-		expect(res.status).toBe(400);
-	});
-
-	// The request schema accepts a uuid on every backend. On Mongo the repository refuses
-	// it as a malformed id (400, never a 500); on Postgres it is a well-formed id nothing has (404).
+	// A well-formed uuid nothing has is a 404, never a 500.
 	describe('a uuid order id on a write route', () => {
-		const expected = POSTGRES ? 404 : 400;
-		const productId = POSTGRES ? uuidv7() : HEX;
+		const expected = 404;
+		const productId = uuidv7();
 
 		it(`answers ${expected} on the admin status update`, async () => {
 			const res = await request(app).put(`/api/admin/orders/${uuidv7()}`).set('Cookie', cookies).send({ status: 'paid' });
@@ -102,8 +93,8 @@ describe('record ids in route paths', () => {
 		});
 	});
 
-	// Postgres only: a legacy hex id is an alias of a uuid, which Mongo does not have.
-	it.skipIf(!POSTGRES)('reaches a product by its legacy hex id as well as by its uuid', async () => {
+	// A legacy hex id is an alias of a uuid.
+	it('reaches a product by its legacy hex id as well as by its uuid', async () => {
 		const product = await data.products.create({ name: 'Imported', price: 1000, category: 'general', available: true, _id: HEX }, 4);
 		expect(product._id).toBe(objectIdToUuidV7(HEX));
 

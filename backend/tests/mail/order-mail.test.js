@@ -8,8 +8,6 @@ const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession, makeProduct, makeOrder, makeSettings } = require('../helpers/factories');
 const { MAIL_BODY, stubTransport, watchOrderMail } = require('../helpers/mail');
 
-const describePostgres = process.env.DATA_BACKEND === 'mongo' ? describe.skip : describe;
-
 const customer = {
 	studentId: '24120001',
 	fullName: 'Nguyen Van A',
@@ -17,7 +15,7 @@ const customer = {
 	phoneNumber: '0987654321'
 };
 
-describePostgres('order mail', () => {
+describe('order mail', () => {
 	let app;
 	let cookies;
 	let hostCounter = 0;

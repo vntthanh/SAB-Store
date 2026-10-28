@@ -20,11 +20,14 @@ const { ERROR_CODES } = require('../constants/errorCodes');
  */
 class PricingError extends Error {
 	/**
-	 * @param {'EMPTY_CART'|'PRODUCT_UNAVAILABLE'|'PRODUCT_CHANNEL_MISMATCH'|'ORDER_MIXED_STOREFRONTS'|'INVALID_QUANTITY'|'CART_TOO_MANY_UNITS'|'CART_TOO_COMPLEX'|'PRICE_CHANGED'|'QUANTITY_OUT_OF_RANGE'|'QUANTITY_OVER_MAX'} code
+	 * @param {'EMPTY_CART'|'PRODUCT_UNAVAILABLE'|'PRODUCT_CHANNEL_MISMATCH'|'ORDER_MIXED_STOREFRONTS'|'INVALID_QUANTITY'|'CART_TOO_MANY_UNITS'|'CART_TOO_COMPLEX'|'PRICE_CHANGED'|'QUANTITY_OUT_OF_RANGE'|'QUANTITY_OVER_MAX'|'VARIANT_REQUIRED'|'VARIANT_UNAVAILABLE'} code
 	 * @param {{missingIds?: string[], productId?: string, productNames?: string[], channel?: string,
 	 *          expectedTotal?: number, totalAmount?: number, productName?: string, quantity?: number,
 	 *          min?: number, max?: number|null, reason?: 'below_min'|'above_max',
-	 *          lines?: Array<{productId: string, productName: string, quantity: number, max: number}>}} [details]
+	 *          lines?: Array<{productId: string, productName: string, quantity: number, max: number}>
+	 *                  |Array<{productId: string, variantId: string|null}>}} [details]
+	 *        `lines` depends on the code: QUANTITY_OVER_MAX lists the products over their
+	 *        maximum; VARIANT_REQUIRED and VARIANT_UNAVAILABLE list the cart lines at fault.
 	 */
 	constructor(code, details = {}) {
 		super(code);
@@ -36,10 +39,8 @@ class PricingError extends Error {
 }
 
 // Only what the engine reads, so the stock cache and other internals are never
-// loaded. The combo search itself stays in Node: a dynamic program as an
-// aggregation pipeline would run on the small mongod (512 MB, 0.25 GB cache)
-// and be slower than this in-memory one.
-const PRODUCT_FIELDS = ['_id', 'name', 'price', 'category', 'minOrderQuantity', 'maxOrderQuantity', 'available', 'salesChannel', 'storefrontId'];
+// loaded. The combo search itself stays in Node, an in-memory dynamic program.
+const PRODUCT_FIELDS = ['_id', 'name', 'price', 'category', 'minOrderQuantity', 'maxOrderQuantity', 'available', 'salesChannel', 'storefrontId', 'variants'];
 const COMBO_FIELDS = ['_id', 'name', 'price', 'categoryRequirements', 'priority', 'salesChannel', 'isActive', 'storefrontIds'];
 
 const CHANNEL_LABELS = { online: 'online', offline: 'tại quầy' };
@@ -57,6 +58,8 @@ const PRICING_ERROR_MESSAGES = {
 	PRODUCT_UNAVAILABLE: 'Một hoặc nhiều sản phẩm không tồn tại hoặc không khả dụng',
 	INVALID_QUANTITY: 'Số lượng sản phẩm không hợp lệ',
 	[ERROR_CODES.ORDER_MIXED_STOREFRONTS]: 'Đơn hàng chỉ được gồm sản phẩm của một gian hàng',
+	[ERROR_CODES.VARIANT_REQUIRED]: 'Vui lòng chọn phân loại cho sản phẩm',
+	[ERROR_CODES.VARIANT_UNAVAILABLE]: 'Phân loại sản phẩm không còn bán',
 };
 
 /** JSON body every route returns for a PricingError, so clients can branch on `code`. */
@@ -120,7 +123,7 @@ async function loadSellableProducts(ids, channel, tx = null) {
 }
 
 /**
- * Check each merged line against its product's `minOrderQuantity` /
+ * Check each product's units (all its variants together) against its `minOrderQuantity` /
  * `maxOrderQuantity`. The minimum is a hard limit everywhere. The maximum is
  * hard too, except that a counter sale may exceed it once the cashier has
  * confirmed (`allowOverMax`); the lines that did exceed it are returned so the
@@ -152,6 +155,80 @@ function checkQuantityLimits(lines, { channel, allowOverMax }) {
 		throw new PricingError(ERROR_CODES.QUANTITY_OVER_MAX, { lines: overMax });
 	}
 	return overMax;
+}
+
+const compareText = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const byProductThenKey = (a, b) => compareText(a.productId, b.productId) || compareText(a.key, b.key);
+
+/**
+ * The variant each requested line buys, with its unit price, merged per variant.
+ *
+ * A line naming a variant must name an active variant of its product. A line
+ * naming none buys the product's default variant (a product without options); a
+ * product with options needs the variant named, so an old cart line never buys
+ * an option the customer did not pick. Every bad line is reported at once, so a
+ * cart can drop exactly those. A variant in `keepVariantIds`
+ * is accepted even when it is no longer sold: an order that already holds it
+ * stays editable after the variant is retired.
+ *
+ * @param {Array<{productId: string, variantId: string|null, quantity: number}>} requested canonical ids
+ * @param {Map<string, object>} productMap
+ * @param {Set<string>} keepVariantIds
+ * @returns {Array<{key: string, productId: string, product: object, variant: object, unitPrice: number, quantity: number}>}
+ *          ordered by product, then variant; `key` is the variant id
+ * @throws {PricingError} VARIANT_UNAVAILABLE, VARIANT_REQUIRED
+ */
+function resolveVariants(requested, productMap, keepVariantIds) {
+	const lines = new Map();
+	const unavailable = [];
+	const required = [];
+	for (const { productId, variantId, quantity } of requested) {
+		const product = productMap.get(productId);
+		const variant = variantId === null
+			? product.variants.find((candidate) => candidate.optionValues.length === 0)
+			: product.variants.find((candidate) => candidate._id === variantId);
+		if (variantId === null && !variant) {
+			required.push({ productId, variantId: null });
+			continue;
+		}
+		if (!variant || (variant.isActive === false && !keepVariantIds.has(variant._id))) {
+			unavailable.push({ productId, variantId });
+			continue;
+		}
+		const key = variant._id;
+		const line = lines.get(key) || { key, productId, product, variant, unitPrice: variant.effectivePrice, quantity: 0 };
+		line.quantity += quantity;
+		lines.set(key, line);
+	}
+	if (unavailable.length > 0) throw new PricingError(ERROR_CODES.VARIANT_UNAVAILABLE, { lines: unavailable });
+	if (required.length > 0) throw new PricingError(ERROR_CODES.VARIANT_REQUIRED, { lines: required });
+	return [...lines.values()].sort(byProductThenKey);
+}
+
+/** Units per product across its variants, for the product's own min/max order quantity. */
+function productQuantities(lines) {
+	const byProduct = new Map();
+	for (const line of lines) {
+		const entry = byProduct.get(line.productId) || { id: line.productId, product: line.product, quantity: 0 };
+		entry.quantity += line.quantity;
+		byProduct.set(line.productId, entry);
+	}
+	return [...byProduct.values()];
+}
+
+/** The stored order line for `quantity` units of a resolved line, inside `combo` or retail. */
+function orderItemOf(line, quantity, combo) {
+	return {
+		productId: line.product._id,
+		variantId: line.variant._id,
+		productName: line.product.name,
+		...(line.variant.label && { variantLabel: line.variant.label }),
+		price: line.unitPrice,
+		quantity,
+		fromCombo: Boolean(combo),
+		comboId: combo ? combo._id : null,
+		comboName: combo ? combo.name : null,
+	};
 }
 
 /** The storefront a loaded product belongs to; null on a store or a legacy row that has none. */
@@ -226,12 +303,13 @@ function groupByStorefront(lines, present, sellableCombos) {
  * `available: false` stock. `channel` has no default: a caller that forgets it
  * would silently sell on the wrong channel, so it throws instead.
  *
- * Duplicate `productId` lines are merged rather than rejected, because a cart
- * legitimately reaches this point with the same product added twice. The
- * result is independent of line order.
+ * Duplicate lines of one variant are merged rather than rejected, because a
+ * cart legitimately reaches this point with the same variant added twice. Each
+ * unit costs its variant's own price, or the product's when the variant has
+ * none. The result is independent of line order.
  *
- * @param {Array<{productId: string, quantity: number}>} items
- *        Cart lines. Lines sharing a productId are summed.
+ * @param {Array<{productId: string, variantId?: string|null, quantity: number}>} items
+ *        Cart lines. Lines buying the same variant are summed (see `resolveVariants`).
  * @param {object} [opts]
  * @param {'online'|'offline'} opts.channel Required. Where the order is placed.
  * @param {object|null} [opts.tx=null]
@@ -249,6 +327,8 @@ function groupByStorefront(lines, present, sellableCombos) {
  *        the counter: a mix is priced, each combo counting only the lines of its
  *        own storefronts. `{storefrontId}` prices inside that storefront and
  *        refuses a product of another; a null id behaves as 'any'.
+ * @param {Iterable<string>} [opts.keepVariantIds] Order edits only: variants the
+ *        order already holds, priced even if they are no longer sold.
  * @param {boolean} [opts.allowOverMax=false] Counter sales only: the cashier
  *        confirmed selling above a maximum. Ignored on the online channel.
  * @param {number} [opts.stateBudget] Combo search limit; tests lower it to
@@ -259,27 +339,26 @@ function groupByStorefront(lines, present, sellableCombos) {
  *   totalAmount: number,
  *   savings: number,
  *   orderItems: Array<{
- *     productId: NativeId,
+ *     productId: string,
+ *     variantId: string,
  *     productName: string,
+ *     variantLabel?: string,
  *     price: number,
  *     quantity: number,
  *     fromCombo: boolean,
- *     comboId: NativeId|null,
+ *     comboId: string|null,
  *     comboName: string|null
  *   }>,
  *   comboInfo: {
  *     savings: number,
  *     originalTotal: number,
  *     finalTotal: number,
- *     combos: Array<{comboId: NativeId, comboName: string, applications: number, savings: number}>
+ *     combos: Array<{comboId: string, comboName: string, applications: number, savings: number}>
  *   }|null,
  *   overMaxLines: Array<{productId: string, productName: string, quantity: number, max: number}>,
  *   products: Map<string, object>
  * }>}
- *        `orderItems[].productId` and `comboId` (and `comboInfo.combos[].comboId`)
- *        are the store's native id: an ObjectId on MongoDB, a lowercase uuid
- *        string on postgres. Callers only `String()` them or compare the
- *        normalised form; nothing here depends on it being an object. Combo lines keep the
+ *        Ids are lowercase uuid strings. Combo lines keep the
  *        retail unit price; `totalAmount` is NOT their price x quantity.
  *        `comboInfo` covers the combo lines only: `originalTotal` is their retail
  *        value and `finalTotal` what the combos charge for them, so
@@ -305,23 +384,26 @@ async function computeOrderPricing(items, opts = {}) {
 		throw new PricingError('EMPTY_CART');
 	}
 
-	// Merge duplicate productId lines and reduce every id to its canonical form
-	// (lowercase; a uuid on postgres): a differently cased id would match the store but fail
-	// the strict string comparisons below against the form the store returns.
-	// Anything that is not a record id is rejected as an unknown product.
-	const qtyByProductId = new Map();
+	// Reduce every id to its canonical form (lowercase; a uuid on postgres): a
+	// differently cased id would match the store but fail the strict string
+	// comparisons below against the form the store returns. Anything that is not
+	// a record id is rejected as an unknown product (or variant).
+	const requested = [];
 	let totalUnits = 0;
 	for (const item of items) {
 		const rawId = item && item.productId;
 		if (!isRecordId(rawId)) {
 			throw new PricingError('PRODUCT_UNAVAILABLE', { missingIds: [String(rawId)] });
 		}
+		const rawVariantId = item.variantId;
+		if (rawVariantId != null && !isRecordId(rawVariantId)) {
+			throw new PricingError(ERROR_CODES.VARIANT_UNAVAILABLE, { lines: [{ productId: normalizeRecordId(rawId), variantId: String(rawVariantId) }] });
+		}
 		const quantity = Number(item.quantity);
 		if (!Number.isInteger(quantity) || quantity <= 0) {
 			throw new PricingError('INVALID_QUANTITY', { productId: String(rawId) });
 		}
-		const key = normalizeRecordId(rawId);
-		qtyByProductId.set(key, (qtyByProductId.get(key) || 0) + quantity);
+		requested.push({ productId: normalizeRecordId(rawId), variantId: rawVariantId == null ? null : normalizeRecordId(rawVariantId), quantity });
 		totalUnits += quantity;
 		// Checked inside the loop so a huge quantity cannot overflow the sum
 		// before the cap is applied.
@@ -332,11 +414,11 @@ async function computeOrderPricing(items, opts = {}) {
 
 	// Sorted so every derived structure (unit order, tie-breaks, orderItems)
 	// is the same for any ordering of the client's lines.
-	const ids = [...qtyByProductId.keys()].sort();
+	const ids = [...new Set(requested.map((line) => line.productId))].sort();
 
-	// Query 1/2 — products, filtered by the single sellable-on-channel rule.
+	// Query 1/2 — products and their variants, filtered by the single sellable-on-channel rule.
 	const productMap = await loadSellableProducts(ids, channel, tx);
-	const lines = ids.map((id) => ({ id, product: productMap.get(id), quantity: qtyByProductId.get(id) }));
+	const lines = resolveVariants(requested, productMap, new Set([...(opts.keepVariantIds || [])].map((id) => normalizeRecordId(id))));
 	const present = [...new Set(lines.map((line) => storefrontOf(line.product)))];
 	const outsideScope = scope.mode === 'scoped' ? present.some((id) => id !== scope.storefrontId) : scope.mode === 'single' && present.length > 1;
 	if (outsideScope) {
@@ -344,7 +426,7 @@ async function computeOrderPricing(items, opts = {}) {
 		throw new PricingError(ERROR_CODES.ORDER_MIXED_STOREFRONTS);
 	}
 	const overMaxLines = opts.enforceQuantityLimits
-		? checkQuantityLimits(lines, { channel, allowOverMax: opts.allowOverMax === true })
+		? checkQuantityLimits(productQuantities(lines), { channel, allowOverMax: opts.allowOverMax === true })
 		: [];
 
 	// Query 2/2 — combos that apply on this channel. One storefront in the cart:
@@ -354,7 +436,8 @@ async function computeOrderPricing(items, opts = {}) {
 	);
 
 	const comboById = new Map(sellableCombos.map((combo) => [combo._id.toString(), combo]));
-	const inComboByProduct = new Map();
+	const lineByKey = new Map(lines.map((line) => [line.key, line]));
+	const inComboByKey = new Map();
 	const orderItems = [];
 	const comboSummaries = [];
 	let comboRetailValue = 0;
@@ -362,15 +445,15 @@ async function computeOrderPricing(items, opts = {}) {
 	let optimizerSavings = 0;
 
 	for (const group of groupByStorefront(lines, present, sellableCombos)) {
-		// Units of one category, dearest first; equal prices fall back to product id.
+		// Units of one category, dearest first; equal prices fall back to product, then variant.
 		const unitsByCategory = new Map();
 		for (const line of group.lines) {
-			const { category, price } = line.product;
+			const { category } = line.product;
 			if (!unitsByCategory.has(category)) unitsByCategory.set(category, []);
-			for (let i = 0; i < line.quantity; i++) unitsByCategory.get(category).push({ productId: line.id, price });
+			for (let i = 0; i < line.quantity; i++) unitsByCategory.get(category).push({ line, price: line.unitPrice });
 		}
 		for (const units of unitsByCategory.values()) {
-			units.sort((a, b) => b.price - a.price || (a.productId < b.productId ? -1 : a.productId > b.productId ? 1 : 0));
+			units.sort((a, b) => b.price - a.price || byProductThenKey(a.line, b.line));
 		}
 
 		let solved;
@@ -405,26 +488,17 @@ async function computeOrderPricing(items, opts = {}) {
 				const start = nextUnit.get(category) || 0;
 				const end = start + quantity * count;
 				for (let i = start; i < end; i++) {
-					taken.set(units[i].productId, (taken.get(units[i].productId) || 0) + 1);
+					taken.set(units[i].line.key, (taken.get(units[i].line.key) || 0) + 1);
 				}
 				nextUnit.set(category, end);
 			}
 
 			let retailValue = 0;
-			for (const productId of [...taken.keys()].sort()) {
-				const product = productMap.get(productId);
-				const quantity = taken.get(productId);
-				retailValue += product.price * quantity;
-				inComboByProduct.set(productId, (inComboByProduct.get(productId) || 0) + quantity);
-				orderItems.push({
-					productId: product._id,
-					productName: product.name,
-					price: product.price,
-					quantity,
-					fromCombo: true,
-					comboId: combo._id,
-					comboName: combo.name,
-				});
+			for (const line of [...taken.keys()].map((key) => lineByKey.get(key)).sort(byProductThenKey)) {
+				const quantity = taken.get(line.key);
+				retailValue += line.unitPrice * quantity;
+				inComboByKey.set(line.key, (inComboByKey.get(line.key) || 0) + quantity);
+				orderItems.push(orderItemOf(line, quantity, combo));
 			}
 
 			const charged = count * combo.price;
@@ -436,21 +510,13 @@ async function computeOrderPricing(items, opts = {}) {
 
 	let retailTotal = 0;
 	for (const line of lines) {
-		const quantity = line.quantity - (inComboByProduct.get(line.id) || 0);
+		const quantity = line.quantity - (inComboByKey.get(line.key) || 0);
 		if (quantity <= 0) continue;
-		retailTotal += line.product.price * quantity;
-		orderItems.push({
-			productId: line.product._id,
-			productName: line.product.name,
-			price: line.product.price,
-			quantity,
-			fromCombo: false,
-			comboId: null,
-			comboName: null,
-		});
+		retailTotal += line.unitPrice * quantity;
+		orderItems.push(orderItemOf(line, quantity, null));
 	}
 
-	const originalTotal = lines.reduce((sum, line) => sum + line.product.price * line.quantity, 0);
+	const originalTotal = lines.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0);
 	const totalAmount = comboCharged + retailTotal;
 	const savings = originalTotal - totalAmount;
 

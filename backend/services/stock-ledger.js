@@ -64,8 +64,9 @@ function keyIdOf(id) {
 	return isRecordId(id) ? normalizeRecordId(id) : String(id);
 }
 
-function validateMovement({ productId, type, delta, target, idempotencyKey, reason, createdBy }) {
+function validateMovement({ productId, variantId, type, delta, target, idempotencyKey, reason, createdBy }) {
 	if (!isRecordId(productId)) throw new StockLedgerError('productId is not a valid id');
+	if (variantId !== undefined && variantId !== null && !isRecordId(variantId)) throw new StockLedgerError('variantId is not a valid id');
 	if (!MOVEMENT_TYPES.includes(type)) throw new StockLedgerError(`unknown movement type: ${String(type)}`);
 	if (typeof idempotencyKey !== 'string' || idempotencyKey.length === 0 || idempotencyKey.length > MAX_TEXT_LENGTH) {
 		throw new StockLedgerError('idempotencyKey must be a non-empty string of at most 200 characters');
@@ -93,7 +94,10 @@ function validateMovement({ productId, type, delta, target, idempotencyKey, reas
  * Idempotent on `idempotencyKey`: a repeated key returns the movement already
  * stored instead of recording a second one.
  *
- * @param {{productId, type, delta?, target?, orderId?, reason?, createdBy?, idempotencyKey}} movement
+ * `variantId` names the variant whose stock moves; without it the movement is the
+ * product's default variant's (refused by the store for a product with options).
+ *
+ * @param {{productId, variantId?, type, delta?, target?, orderId?, reason?, createdBy?, idempotencyKey}} movement
  * @param {{tx?: object|null, session?: object|null}} [opts] the transaction; callers may pass it as `tx` or `session`
  * @returns {Promise<object>} the stored movement
  */
@@ -118,9 +122,10 @@ async function recordMovement(movement, opts = {}) {
 	}
 }
 
-function buildDocument({ productId, type, delta, target, orderId, reason, createdBy, idempotencyKey }) {
+function buildDocument({ productId, variantId, type, delta, target, orderId, reason, createdBy, idempotencyKey }) {
 	return {
 		productId,
+		variantId: variantId || null,
 		type,
 		delta: type === 'set_target' ? null : delta,
 		target: type === 'set_target' ? target : null,
@@ -143,16 +148,17 @@ function buildDocument({ productId, type, delta, target, orderId, reason, create
  * @param {{productId, quantity: number, stockAfter?: number, createdBy?: string, reason?: string}} opening
  * @param {{tx?: object|null, session?: object|null}} [opts] the transaction; callers may pass it as `tx` or `session`
  */
-async function recordAppliedOpening({ productId, quantity, stockAfter = quantity, createdBy, reason }, opts = {}) {
+async function recordAppliedOpening({ productId, variantId, quantity, stockAfter = quantity, createdBy, reason }, opts = {}) {
 	const tx = opts.tx || opts.session || null;
-	const idempotencyKey = `opening:${keyIdOf(productId)}`;
-	validateMovement({ productId, type: 'opening', delta: quantity, idempotencyKey, createdBy, reason });
+	// A product's default variant keeps the key a product had before variants existed.
+	const idempotencyKey = variantId ? `opening:${keyIdOf(productId)}:${keyIdOf(variantId)}` : `opening:${keyIdOf(productId)}`;
+	validateMovement({ productId, variantId, type: 'opening', delta: quantity, idempotencyKey, createdBy, reason });
 
 	const existing = await store.findMovementByKey(idempotencyKey, tx);
 	if (existing) return existing;
 
 	return store.createMovement({
-		...buildDocument({ productId, type: 'opening', delta: quantity, createdBy, reason, idempotencyKey }),
+		...buildDocument({ productId, variantId, type: 'opening', delta: quantity, createdBy, reason, idempotencyKey }),
 		status: 'applied',
 		appliedAt: new Date(),
 		stockAfter
@@ -248,9 +254,11 @@ async function recordFailure(movement, err) {
 }
 
 /**
- * Compare each product's cache with the sum of its applied movements, from the
- * source and without touching the cache. Returns only products that disagree.
- * Pending movements are reported alongside but are not counted on either side.
+ * Compare each product's cache, and each variant's, with the sum of its applied
+ * movements, from the source and without touching a cache. Returns only those
+ * that disagree; a variant row carries `variantId` and its `label` (null for a
+ * default variant). Pending movements are reported alongside but are not counted
+ * on either side.
  *
  * Fix a discrepancy by recording an `adjust` movement, never by writing the cache.
  *
@@ -258,25 +266,36 @@ async function recordFailure(movement, err) {
  * be checked before it commits.
  *
  * @param {{tx?: object|null}} [opts]
- * @returns {Promise<Array<{productId: string, name: string, cached: number, ledgerSum: number, diff: number, pending: number}>>}
+ * @returns {Promise<Array<{productId: string, variantId?: string, label?: string|null, name: string,
+ *                          cached: number, ledgerSum: number, diff: number, pending: number}>>}
  */
 async function reconcile(opts = {}) {
-	const { appliedSumByProduct, pendingByProduct, products } = await store.readLedgerState(opts.tx || null);
+	const state = await store.readLedgerState(opts.tx || null);
 
 	const discrepancies = [];
-	for (const product of products) {
-		const id = product.productId;
-		const cached = product.stockQuantity || 0;
-		const ledgerSum = appliedSumByProduct.get(id) || 0;
-		if (cached === ledgerSum) continue;
-		discrepancies.push({
-			productId: id,
-			name: product.name,
-			cached,
-			ledgerSum,
-			diff: cached - ledgerSum,
-			pending: pendingByProduct.get(id) || 0
-		});
+	const reportIfDrifted = (row, cachedValue, ledgerSum, pending) => {
+		const cached = cachedValue || 0;
+		if (cached === ledgerSum) return null;
+		discrepancies.push({ ...row, cached, ledgerSum, diff: cached - ledgerSum, pending });
+		return cached - ledgerSum;
+	};
+	const productDiffs = new Map();
+	const names = new Map();
+	for (const product of state.products) {
+		names.set(product.productId, product.name);
+		const diff = reportIfDrifted({ productId: product.productId, name: product.name }, product.stockQuantity,
+			state.appliedSumByProduct.get(product.productId) || 0, state.pendingByProduct.get(product.productId) || 0);
+		if (diff !== null) productDiffs.set(product.productId, diff);
+	}
+	for (const variant of state.variants) {
+		// A default variant is its product's whole stock: the drift its product row
+		// already shows is not repeated, a different one is.
+		const variantDiff = (variant.stockQuantity || 0) - (state.appliedSumByVariant.get(variant.variantId) || 0);
+		if (variant.label === null && productDiffs.get(variant.productId) === variantDiff) continue;
+		reportIfDrifted(
+			{ productId: variant.productId, variantId: variant.variantId, label: variant.label, name: names.get(variant.productId) },
+			variant.stockQuantity, state.appliedSumByVariant.get(variant.variantId) || 0, state.pendingByVariant.get(variant.variantId) || 0
+		);
 	}
 	return discrepancies;
 }

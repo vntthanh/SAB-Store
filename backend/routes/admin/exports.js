@@ -98,7 +98,7 @@ router.get('/excel', async (req, res) => {
 		// Add data
 		orders.forEach(order => {
 			const itemDetails = order.items.map(item =>
-				`${item.productName} x${item.quantity} = ${formatCurrency(item.price * item.quantity)}`
+				`${item.productName}${item.variantLabel ? ` (${item.variantLabel})` : ''} x${item.quantity} = ${formatCurrency(item.price * item.quantity)}`
 			).join('\n');
 
 			worksheet.addRow({

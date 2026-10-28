@@ -59,7 +59,7 @@ const upload = multer({
  * Only these fields can be written by a merge-imported record.
  *
  * `createdAt`/`updatedAt` are absent from every whitelist on purpose:
- * Mongoose manages timestamps itself when the field is left out, so an
+ * the repository stamps them itself when the field is left out, so an
  * imported record cannot backdate itself. (A restore is the opposite case: it
  * reproduces the store's own rows, timestamps included.)
  *
@@ -142,8 +142,7 @@ const KNOWN_IMPORT_SECTIONS = [
  *
  * `_id` gets special handling: it is accepted only when it is a well-formed
  * record id string (see F2 doc comment on IMPORT_WHITELIST above) — a
- * missing/malformed/forged `_id` is silently dropped, same as before this
- * field was ever whitelisted, and Mongo assigns a fresh one.
+ * missing/malformed/forged `_id` is silently dropped, and the repository assigns a fresh one.
  *
  * `dropped` receives the name of every key of `obj` that was not carried over,
  * so the import can report what it left behind instead of hiding it.
@@ -171,7 +170,7 @@ function pick(obj, allowed, dropped = []) {
 }
 
 /**
- * Validate the whole import payload's shape before a single document is
+ * Validate the whole import payload's shape before a single record is
  * written. A merge import is deliberately not one transaction: it adds what is
  * missing record by record, and one bad record must not block the rest. So the
  * only all-or-nothing gate is refusing to start when the structure itself is
@@ -260,7 +259,7 @@ function importErrorMessage(error, { model, entity, publicCode }) {
  * GET /api/admin/database/export
  * Admin authentication handled by parent router
  *
- * The file holds complete documents (ids, timestamps, every sub-array), the stock
+ * The file holds complete records (ids, timestamps, every sub-array), the stock
  * ledger and the settings row, so a Restore can reproduce the store exactly.
  * Deliberately excludes users, accounts, sessions and jwks (Q7): this is a
  * business-data backup, so it never carries credential hashes or session and
@@ -487,6 +486,16 @@ router.post('/import', upload.single('dataFile'), gated(async (req, res) => {
 					}
 					const dropped = [];
 					const picked = pick(raw, IMPORT_WHITELIST.orders, dropped);
+					// A merged product gets a fresh default variant, so a variant id from the
+					// file would name nothing here; the label keeps what was bought. A merged
+					// order holds no stock, so no movement ever needs the variant.
+					if (Array.isArray(picked.items)) {
+						picked.items = picked.items.map((item) => {
+							if (!item || typeof item !== 'object') return item;
+							const { variantId: _variantId, ...rest } = item;
+							return rest;
+						});
+					}
 
 					// F1: a combo order's total is comboInfo.finalTotal + the
 					// non-combo lines, never Σ(price × quantity) over every
@@ -652,8 +661,8 @@ router.post('/restore', upload.single('dataFile'), async (req, res) => {
 		}
 	} catch (error) {
 		if (error instanceof StockMismatchError) {
-			const problems = error.mismatches.slice(0, 20).map(({ productId, name, cached, ledgerSum }) =>
-				`${name} (${productId}): tồn kho ${cached}, lịch sử nhập xuất cho ${ledgerSum}`);
+			const problems = error.mismatches.slice(0, 20).map(({ productId, variantId, label, name, cached, ledgerSum }) =>
+				`${name}${variantId ? ` — phân loại ${label ?? 'mặc định'}` : ''} (${variantId ?? productId}): tồn kho ${cached}, lịch sử nhập xuất cho ${ledgerSum}`);
 			return sendCodedError(res, ERROR_CODES.RESTORE_STOCK_MISMATCH, correlationId, problems);
 		}
 		if (isDuplicateKeyError(error)) {

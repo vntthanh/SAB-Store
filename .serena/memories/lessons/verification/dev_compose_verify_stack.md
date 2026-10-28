@@ -1,7 +1,7 @@
 # Dựng stack kiểm thử từ compose.yml (dev) để xem UI thật
 
 Lệnh đã chạy được (cổng theo quy ước SAB, ghi vào `/tmp/cc-ports.registry` trước):
-`JWT_SECRET=$(openssl rand -hex 32) ADMIN_PASSWORD='<mạnh>' NGINX_PORT=8088 MONGODB_PORT=27117 PUBLIC_URL=http://localhost:8088 docker compose -p sabstore-verify up -d --build` (build = việc nặng → qua khoá máy).
+`JWT_SECRET=$(openssl rand -hex 32) ADMIN_PASSWORD='<mạnh>' NGINX_PORT=8088 PUBLIC_URL=http://localhost:8088 docker compose -p sabstore-verify up -d --build` (build = việc nặng → qua khoá máy).
 
 Cạm bẫy đã đo:
 - Mặc định `JWT_SECRET` trong compose.yml < 32 ký tự → `backend/lib/auth.js` throw lúc boot, backend restart loop. Luôn truyền secret dùng một lần.

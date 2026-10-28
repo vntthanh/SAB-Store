@@ -170,8 +170,13 @@ model Product {
   slug             String
   storefrontId     String       @map("storefront_id") @db.Uuid
   storefront       Storefront   @relation(fields: [storefrontId], references: [id], onDelete: Restrict)
+  // Gallery order; the first image is the cover, which image_url mirrors (a CHECK
+  // in the product_variants migration keeps the two equal).
+  images           String[]     @default([])
   createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  options          ProductOption[]
+  variants         ProductVariant[]
 
   @@index([category])
   @@index([storefrontId])
@@ -180,6 +185,46 @@ model Product {
   @@index([featured])
   @@index([createdAt(sort: Desc)])
   @@map("products")
+}
+
+// An option type of a product ("Màu", "Size") and its ordered value labels.
+model ProductOption {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  position  Int
+  name      String   @db.VarChar(30)
+  values    String[]
+
+  @@unique([productId, position])
+  @@unique([productId, name])
+  @@map("product_options")
+}
+
+// One sellable combination: one value label per option, in option position order.
+// A product without options has exactly one variant whose option_values is empty
+// (the default variant), so pricing, orders and the stock ledger always work per
+// variant. stock_quantity is written only by the stock ledger worker, like the
+// product's, which is the sum of its variants. An archived variant was removed
+// from the options but has history, so it keeps its labels and its stock.
+model ProductVariant {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  productId     String    @map("product_id") @db.Uuid
+  product       Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  position      Int
+  optionValues  String[]  @map("option_values")
+  price         Int?
+  sku           String?   @unique
+  imageUrl      String?   @map("image_url")
+  isActive      Boolean   @default(true) @map("is_active")
+  archivedAt    DateTime? @map("archived_at") @db.Timestamptz(3)
+  stockQuantity Int       @default(0) @map("stock_quantity")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@unique([productId, optionValues])
+  @@index([productId, position])
+  @@map("product_variants")
 }
 
 model Combo {
@@ -263,6 +308,11 @@ model OrderItem {
   fromCombo   Boolean @default(false) @map("from_combo")
   comboId     String? @map("combo_id") @db.Uuid
   comboName   String? @map("combo_name")
+  // No foreign key, like product_id. NULL when the line names no variant (a line of
+  // a product deleted before variants existed). The label ("Đỏ / M") is a snapshot;
+  // NULL for a default variant.
+  variantId    String? @map("variant_id") @db.Uuid
+  variantLabel String? @map("variant_label")
 
   @@unique([orderId, position])
   @@index([productId])
@@ -316,6 +366,8 @@ model OrderItemsEdit {
 model StockMovement {
   id             String         @id @default(uuid(7)) @db.Uuid
   productId      String         @map("product_id") @db.Uuid
+  // No foreign key, like product_id: a movement outlives a deleted variant.
+  variantId      String         @map("variant_id") @db.Uuid
   type           MovementType
   delta          Int?
   target         Int?
@@ -333,6 +385,7 @@ model StockMovement {
   seq            Int            @unique @default(autoincrement())
 
   @@index([productId, status, seq])
+  @@index([variantId, status])
   @@map("stock_movements")
 }
 

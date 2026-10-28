@@ -8,11 +8,9 @@ const { makeAdminSession } = require('../helpers/factories');
 const { MAIL_BODY, stubTransport } = require('../helpers/mail');
 const { sendMail } = require('../../services/mailer');
 
-const describePostgres = process.env.DATA_BACKEND === 'mongo' ? describe.skip : describe;
-
 const message = { to: 'someone@example.com', subject: 'Mã đăng nhập', html: '<p>123456</p>', text: '123456' };
 
-describePostgres('mailer sendMail', () => {
+describe('mailer sendMail', () => {
 	let app;
 	let cookies;
 	let hostCounter = 0;

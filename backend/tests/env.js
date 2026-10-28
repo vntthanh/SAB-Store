@@ -2,16 +2,10 @@
  * Environment defaults for tests.
  *
  * Loaded first in vitest `setupFiles`, which run before any test module is imported.
- * That ordering is required: lib/auth.js reads DATABASE_URL (or MONGODB_URI) and
- * JWT_SECRET at require time and opens its own connection there, so setting these
- * from a beforeAll hook would be too late and better-auth would hold a client
- * pointed at a server that does not exist.
- *
- * On the mongo backend MONGODB_URI has to be the real in-memory server, not a
- * placeholder: mongoose and better-auth each open their own connection from it and
- * must land in the SAME database, or an account written through one is invisible to
- * the other. On postgres MONGODB_URI stays unset, so code that reaches for Mongo by
- * mistake fails at once instead of finding a server.
+ * That ordering is required: lib/auth.js reads DATABASE_URL and JWT_SECRET at
+ * require time and opens its own connection there, so setting these from a
+ * beforeAll hook would be too late and better-auth would hold a client pointed at
+ * a server that does not exist.
  */
 
 // Each test file runs in its own forked process, so the pid names a database no
@@ -20,16 +14,7 @@
 // down against the same database.
 const workerDb = `test_${process.pid}`;
 
-if (process.env.MONGO_TEST_URI) {
-	// getUri() yields mongodb://host:port/?replicaSet=... — set the path without
-	// disturbing the query string that selects the replica set.
-	const uri = new URL(process.env.MONGO_TEST_URI);
-	uri.pathname = `/${workerDb}`;
-	process.env.MONGODB_URI = uri.toString();
-}
-
-// PostgreSQL: the same per-file naming; setup.js creates the database from the
-// template before any test runs.
+// setup.js creates the database from the template before any test runs.
 if (process.env.PG_TEST_URI) {
 	process.env.PG_TEST_DB = workerDb;
 	process.env.DATABASE_URL = require('./helpers/postgres').databaseUrl(process.env.PG_TEST_URI, workerDb);

@@ -37,6 +37,17 @@ export {
 export { objectIdToUuidV7, uuidV7ToObjectId, isUuid, isRecordId } from './ids.js';
 export { RESTORE_CONFIRMATION } from './schemas/restore.js';
 export { makeComboItems } from './schemas/combo.js';
+export {
+	MAX_PRODUCT_IMAGES,
+	FALLBACK_PRODUCT_IMAGE,
+	PRODUCT_UPLOAD_PATTERN,
+	MAX_VARIANT_COMBINATIONS,
+	MAX_OPTION_VALUES,
+	OPTION_TEXT_MAX,
+	optionCombinations,
+	combinationCount,
+	productVariantSetup,
+} from './schemas/product.js';
 export { CONTACT_EMAIL_MAX_LENGTH, CONTACT_URL_MAX_LENGTH, contactEmail, contactUrl } from './schemas/contact.js';
 export { MAX_PAGE_LIMIT, DEFAULT_PAGE_LIMIT, paginationQuery, toSkipTake, buildPaginationMeta } from './schemas/pagination.js';
 export { mailSettingsUpdate, mailTestRequest } from './schemas/mail.js';

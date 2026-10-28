@@ -1,21 +1,18 @@
 /**
- * The PostgreSQL implementation of tests/helpers/db.js, selected by
- * DATA_BACKEND=postgres. Same function names, same plain shapes: ids are uuid
- * strings, `_id` is the row id, columns come back camelCased, `seq` is dropped.
+ * The PostgreSQL implementation behind tests/helpers/db.js (which documents the
+ * interface). Plain shapes: ids are uuid strings, `_id` is the row id, columns
+ * come back camelCased, `seq` is dropped.
  *
  * Reads and writes go through a separate `pg` pool with plain SQL, not through
  * the repositories or Prisma models under test. Only the fault seams touch the
- * code under test, and only at the boundary the header of db.js names for them.
- *
- * `unsetOrderField` can never apply (a column cannot be missing) and throws.
+ * code under test, and only at the repository boundary.
  *
  * The login tables (`user`, `account`, `session`, `jwks`, `verification`) belong
  * to the auth library and keep its camelCase column names, unlike the store
  * tables, so their helpers address columns by the key as given.
  *
- * Fault seams: see db.js. Here `failNextStockWrite` wraps the transaction client
- * so the first write of a product row inside a transaction rejects after the
- * statements before it ran, which is what the Mongo seam does with `updateOne`.
+ * `failNextStockWrite` wraps the transaction client so the first write of a
+ * product row inside a transaction rejects after the statements before it ran.
  */
 const { Pool } = require('pg');
 const { v7: uuidv7 } = require('uuid');
@@ -99,10 +96,6 @@ async function selectOne(table, filter) {
 	return rows[0] || null;
 }
 
-const notImplemented = (name) => () => {
-	throw new Error(`${name} is not implemented for postgres`);
-};
-
 /** A fresh id nothing refers to. */
 const newId = () => uuidv7();
 
@@ -135,7 +128,7 @@ async function withOrderChildren(order) {
 	const strip = ({ orderId: _orderId, position: _position, ...rest }) => rest;
 	return {
 		...dropNulls(order, ORDER_ABSENT_WHEN_NULL),
-		items: items.map(strip),
+		items: items.map((item) => dropNulls(strip(item), new Set(['variantId', 'variantLabel']))),
 		statusHistory: history.map((entry) => dropNulls(strip(entry), new Set(['transactionCode', 'cancelReason', 'note']))),
 		internalNotes: notes.map(({ _id: _noteId, ...rest }) => strip(rest)),
 		itemsHistory: edits.map(({ _id: _editId, ...rest }) => strip(rest))
@@ -205,15 +198,25 @@ const PRODUCT_DEFAULTS = () => ({ name: `Test Product ${uuidv7()}`, price: 0, ca
 
 /**
  * Inserts a product exactly as given plus defaults for the columns that must
- * exist, bypassing every repository. Returns the stored row.
+ * exist, bypassing every repository, and the default variant every product has
+ * (holding the product's stock) unless `withDefaultVariant` is false. A given
+ * `imageUrl` is also the gallery unless `images` is given, as the cover CHECK
+ * requires. Returns the stored product row.
  */
-async function insertRawProduct(fields) {
+async function insertRawProduct({ withDefaultVariant = true, ...fields }) {
 	const row = { id: uuidv7(), ...PRODUCT_DEFAULTS(), ...fields };
+	if (row.images === undefined && row.imageUrl !== undefined && row.imageUrl !== '/fallback-product.png') row.images = [row.imageUrl];
 	const columns = Object.keys(row).map(columnOf);
 	const { rows } = await db().query(
 		`INSERT INTO products (${columns.map(quote).join(', ')}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING *`,
 		Object.values(row)
 	);
+	if (withDefaultVariant) {
+		await db().query(
+			`INSERT INTO product_variants (id, product_id, position, option_values, stock_quantity) VALUES ($1::uuid, $2::uuid, 0, '{}', $3)`,
+			[uuidv7(), rows[0].id, rows[0].stock_quantity]
+		);
+	}
 	return toPlain(rows[0]);
 }
 
@@ -307,7 +310,11 @@ const patch = (table) => async (id, fields) => {
 	const { rowCount } = await db().query(`UPDATE ${quote(table)} SET ${sets} WHERE id = $${entries.length + 1}::uuid`, [...entries.map(([, v]) => v), id]);
 	if (rowCount !== 1) throw new Error(`no ${table} row with id ${id}`);
 };
-const patchProduct = patch('products');
+const patchProductRow = patch('products');
+/** As `patch`, keeping the gallery equal to a patched `imageUrl` unless `images` is patched too (the cover CHECK). */
+const patchProduct = (id, fields) => patchProductRow(id, fields.imageUrl !== undefined && fields.images === undefined
+	? { ...fields, images: fields.imageUrl === '/fallback-product.png' ? [] : [fields.imageUrl] }
+	: fields);
 /** Scalar order columns only; the child tables are written by `insertRawOrder`. */
 const patchOrder = patch('orders');
 const patchCombo = patch('combos');
@@ -342,9 +349,6 @@ const isRowId = (value) => typeof value === 'string' && UUID.test(value);
 
 /** The name of the database the application is connected to. */
 const databaseName = () => decodeURIComponent(new URL(process.env.DATABASE_URL).pathname.slice(1));
-
-/** Nothing to create up front: the table comes with the migrations. */
-async function ensureMovementStore() {}
 
 const settingsDefaults = { notices: DEFAULT_NOTICES, contact: DEFAULT_CONTACT, noticeMaxLength: NOTICE_MAX_LENGTH };
 
@@ -442,7 +446,42 @@ const failProductCatalogReads = (message) => handleOf(vi.spyOn(data.products, 'f
 	throw new Error(message);
 }));
 
+/**
+ * A product with options and one variant per given combination, bypassing every
+ * repository. `options` is `[{name, values}]`; each variant is
+ * `{optionValues, price?, stockQuantity?, isActive?, imageUrl?}`. The product's
+ * stock is the sum of its variants'. Returns `{ product, variants }` with the
+ * variant rows in the given order (`_id` is the uuid string).
+ */
+async function insertRawProductWithOptions({ options, variants, ...fields }) {
+	const stock = variants.reduce((sum, variant) => sum + (variant.stockQuantity ?? 0), 0);
+	const product = await insertRawProduct({ ...fields, stockQuantity: stock, withDefaultVariant: false });
+	for (const [position, option] of options.entries()) {
+		await db().query('INSERT INTO product_options (id, product_id, position, name, "values") VALUES ($1::uuid, $2::uuid, $3, $4, $5)',
+			[uuidv7(), product._id, position, option.name, option.values]);
+	}
+	const rows = [];
+	for (const [position, variant] of variants.entries()) {
+		const { rows: inserted } = await db().query(
+			`INSERT INTO product_variants (id, product_id, position, option_values, price, stock_quantity, is_active, image_url)
+			 VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8) RETURNING *`,
+			[uuidv7(), product._id, position, variant.optionValues, variant.price ?? null, variant.stockQuantity ?? 0, variant.isActive ?? true, variant.imageUrl ?? null]
+		);
+		rows.push(toPlain(inserted[0]));
+	}
+	return { product, variants: rows };
+}
+
+/** The id an order movement's key names for a product without options: its default variant. */
+async function stockKeyIdOf(productId) {
+	const { rows } = await db().query(`SELECT id FROM product_variants WHERE product_id = $1::uuid AND option_values = '{}'`, [String(productId)]);
+	if (rows.length !== 1) throw new Error(`product ${productId} has no default variant`);
+	return rows[0].id;
+}
+
 module.exports = {
+	stockKeyIdOf,
+	insertRawProductWithOptions,
 	newId,
 	findProduct,
 	findProductByName,
@@ -474,14 +513,12 @@ module.exports = {
 	patchOrder,
 	patchCombo,
 	patchMovement,
-	unsetOrderField: notImplemented('unsetOrderField'),
 	deleteProduct,
 	deleteAllRows,
 	withTransaction,
 	txOptions,
 	isRowId,
 	databaseName,
-	ensureMovementStore,
 	failNextMovementInsert,
 	failNextOrderBulkInsert,
 	failNextTransactionStart,

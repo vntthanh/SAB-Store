@@ -30,7 +30,7 @@ describe('app boot', () => {
 	});
 
 	// Defence layer 1 against NoSQL injection: ?x[$ne]= must arrive as a string,
-	// not as a nested object that Mongo would read as an operator.
+	// not as a nested object that a query builder would read as an operator.
 	it('parses query strings without building nested operator objects', async () => {
 		const probe = require('express')();
 		probe.set('query parser', 'simple');

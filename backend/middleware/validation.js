@@ -11,6 +11,7 @@ const {
 	makeComboItems,
 	mailSettingsUpdate,
 	mailTestRequest,
+	productVariantSetup,
 } = require('@sab/shared');
 const { MAX_UNITS_PER_ORDER } = require('../services/pricing');
 
@@ -72,6 +73,7 @@ const validateComboItems = validateBody(makeComboItems({ maxUnits: MAX_UNITS_PER
 const validatePasswordChange = validateBody(passwordChange);
 const validateMailSettings = validateBody(mailSettingsUpdate);
 const validateMailTest = validateBody(mailTestRequest);
+const validateProductSetup = validateBody(productVariantSetup);
 
 module.exports = {
 	validateBody,
@@ -86,4 +88,5 @@ module.exports = {
 	validatePasswordChange,
 	validateMailSettings,
 	validateMailTest,
+	validateProductSetup,
 };

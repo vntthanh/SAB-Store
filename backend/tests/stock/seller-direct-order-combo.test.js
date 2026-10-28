@@ -55,8 +55,8 @@ describe('POST /api/seller/orders/direct — cart input handling', () => {
 		expect(saved.totalAmount).toBe(15000); // the combo price, not combo(15000) + individual(10000)
 	});
 
-	// Mongo matches an uppercase-hex id but `_id.toString()` is lowercase; the
-	// engine must canonicalise before comparing or a valid sale looks unknown.
+	// The stored id is lowercase; the engine must canonicalise before comparing or
+	// a valid sale looks unknown.
 	it('accepts an uppercase hex productId on a direct sale', async () => {
 		const product = await makeProduct({ price: 20000, stockQuantity: 5 });
 
@@ -75,7 +75,7 @@ describe('POST /api/seller/orders/direct — cart input handling', () => {
 });
 
 // POST /api/combos/pricing is public and uses the same engine: an uppercase-hex
-// id (accepted by isMongoId and by Mongo's $in) must not drop the cart line.
+// id (accepted by the request validation) must not drop the cart line.
 describe('POST /api/combos/pricing — id casing', () => {
 	let app;
 

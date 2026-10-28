@@ -5,9 +5,10 @@ sản phẩm/combo/seller/đơn, dashboard, import/export DB; seller bán trực
 thanh toán chuyển khoản VietQR; email xác nhận đơn qua SMTP do admin cấu hình (mặc định tắt). Gian hàng (storefront) công khai/riêng tư với quy tắc truy cập theo email/tên miền/danh sách; khách đăng nhập bằng mã email (cần SMTP) hoặc Google One Tap (Client ID nhập ở trang Cài đặt admin); staff vẫn dùng mật khẩu. Hướng dẫn admin: `docs/storefronts.md`.
 
 Stack (version: đọc `package.json` / Dockerfile / compose, không ghi ở đây):
-- `backend/`: Express + Mongoose (MongoDB), Better Auth (username/password, session, role admin/seller),
-  object storage SeaweedFS (S3 API, SDK `minio`, biến `MINIO_*`) cho file, Vitest + mongodb-memory-server.
+- `backend/`: Express + Prisma (PostgreSQL; MongoDB đã gỡ hẳn 28/10/2026), Better Auth (username/password, session, role admin/seller),
+  object storage SeaweedFS (S3 API, SDK `minio`, biến `MINIO_*`) cho file, Vitest + embedded-postgres.
+- Sản phẩm có gallery (≤9 ảnh) và phân loại kiểu Shopee (option tuỳ ý, ≤100 tổ hợp); mọi sản phẩm có ≥1 biến thể, tồn kho theo biến thể (`mem:lessons/database/product_variants`).
 - `frontend/`: React + Vite + React Router + Tailwind, Vitest; nginx trong container phục vụ SPA và proxy `/api`.
-- Deploy: `coolify.compose.yml` trên Coolify (nhánh `main`); `compose.yml` dev; `prod.compose.yml` rollback.
+- Deploy: `coolify.compose.yml` trên Coolify (nhánh `main`); `compose.yml` dev; `prod.compose.yml` cho host không Coolify.
 
 Cấu trúc chi tiết: tự tra bằng `get_symbols_overview` / code-review-graph, đừng chép vào memory.

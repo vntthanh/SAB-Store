@@ -183,7 +183,7 @@ router.get('/orders', async (req, res) => {
  * @desc    Update order status
  * @access  Private (Seller)
  *
- * Runs validateOrderUpdate, as the admin route does: Mongoose would reject an
+ * Runs validateOrderUpdate, as the admin route does: the repository would reject an
  * over-length note too, but this route's catch-all would turn that into a 500
  * instead of a 400. The validator also checks the status against the enum.
  */

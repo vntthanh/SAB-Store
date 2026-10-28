@@ -5,7 +5,6 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { POSTGRES } = require('../helpers/backend');
 const { withClient, databaseUrl, dropDatabase } = require('../helpers/postgres');
 const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 
@@ -13,7 +12,7 @@ const MIGRATIONS = path.join(__dirname, '..', '..', 'prisma', 'migrations');
 const STOREFRONTS = '20261025120000_storefronts';
 const sqlOf = (name) => fs.readFileSync(path.join(MIGRATIONS, name, 'migration.sql'), 'utf8');
 
-describe.skipIf(!POSTGRES)('storefronts migration on a populated database', () => {
+describe('storefronts migration on a populated database', () => {
 	const dbName = `migration_${process.pid}`;
 	let url;
 	let rows;

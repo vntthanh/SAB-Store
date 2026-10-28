@@ -1,24 +1,30 @@
 /**
  * Stock-ledger storage on Postgres: StockMovement rows and the one write of the
- * Product stock cache. Same functions, arguments and plain records as
- * data/mongo/stock-ledger.js.
+ * product and variant stock caches.
  *
  * `applyClaimed` is the only function in the code base that changes
- * `products.stock_quantity` after a product exists.
+ * `products.stock_quantity` or `product_variants.stock_quantity` after the row
+ * exists. A movement belongs to one variant; applying it moves that variant and
+ * its product by the same delta, so a product's stock stays the sum of its
+ * variants'.
  *
- * Lock order, always: movement row (FOR UPDATE), then product row (FOR NO KEY
- * UPDATE). Order and order-edit paths only INSERT movements and never lock a
- * product, so no path can hold the product and wait for a movement. A new code
- * path that locks a product must not then lock a movement.
+ * Lock order, always: movement row (FOR UPDATE), then variant row (FOR NO KEY
+ * UPDATE), then product row (FOR NO KEY UPDATE). Order and order-edit paths only
+ * INSERT movements and never lock a product or variant, so no path can hold
+ * either and wait for a movement. A new code path that locks a product must not
+ * then lock a variant or a movement.
  *
  * Why the locks, at Read Committed:
  * - Movement lock: a second run of the same movement blocks until the first
  *   commits, re-evaluates `status = 'pending'`, finds it applied and does nothing.
- * - Product lock: serialises appliers of one product, and makes the stock a
- *   `set_target` reads the stock it then adjusts. It is NO KEY UPDATE, not
- *   UPDATE: only `stock_quantity` changes, and FOR UPDATE would also block the
- *   KEY SHARE lock that inserts referencing the product take. Appliers still
- *   exclude each other, since NO KEY UPDATE conflicts with itself.
+ * - Variant and product locks: serialise appliers of one variant and of one
+ *   product, so both caches move by the same deltas in the same order, and make
+ *   the stock a `set_target` reads the stock it then adjusts. They are NO KEY
+ *   UPDATE, not UPDATE: only `stock_quantity` changes, and FOR UPDATE would also
+ *   block the KEY SHARE lock that inserts referencing the row take (order lines
+ *   and movements reference neither by foreign key today, but the product's
+ *   options and variants reference the product). Appliers still exclude each
+ *   other, since NO KEY UPDATE conflicts with itself.
  * - The `updateMany` count of 1 is defence in depth behind the movement lock and
  *   the `status = 'pending'` predicate of the gate: either of those alone already
  *   stops a second run, so the check is kept for the day one of them is edited
@@ -33,6 +39,7 @@ const { normalizeRecordId } = require('../ids');
 const { translating } = require('./errors');
 const { withTransaction } = require('./tx');
 const { toSkipTake, buildPaginationMeta } = require('@sab/shared');
+const { v7: uuidv7 } = require('uuid');
 
 // The database enum is the one list of movement types.
 const MOVEMENT_TYPES = Object.values(MovementType);
@@ -60,6 +67,24 @@ async function findMovementByKey(idempotencyKey, tx) {
 }
 
 /**
+ * The variant a movement that names none belongs to: the product's default
+ * variant (no option values). A product that is gone gets a fresh id, which no
+ * variant has, so the worker settles the movement as it settles any movement of
+ * deleted stock (an order line of a deleted product names no variant either).
+ *
+ * @throws {Error} the product exists but has options: its movements must name a variant
+ */
+async function defaultVariantIdOf(productId, tx) {
+	const db = clientOf(tx);
+	const variant = await db.productVariant.findFirst({ where: { productId, optionValues: { equals: [] } }, select: { id: true } });
+	if (variant) return variant.id;
+	if (await db.product.findUnique({ where: { id: productId }, select: { id: true } })) {
+		throw new Error(`Product ${productId} has options; a stock movement must name its variant`);
+	}
+	return uuidv7();
+}
+
+/**
  * Insert one movement and return it.
  *
  * A taken idempotency key rejects with a `DuplicateKeyError` naming
@@ -72,10 +97,13 @@ async function findMovementByKey(idempotencyKey, tx) {
  */
 function createMovement(record, tx) {
 	return translating(async () => {
+		// A legacy hex id from the API or an old job maps to the row's uuid.
+		const productId = normalizeRecordId(record.productId);
+		const variantId = record.variantId == null ? await defaultVariantIdOf(productId, tx) : normalizeRecordId(record.variantId);
 		const row = await clientOf(tx).stockMovement.create({
 			data: {
-				// A legacy hex id from the API or an old job maps to the row's uuid.
-				productId: normalizeRecordId(record.productId),
+				productId,
+				variantId,
 				type: record.type,
 				delta: record.delta ?? null,
 				target: record.target ?? null,
@@ -95,8 +123,8 @@ function createMovement(record, tx) {
 /**
  * Movements of the same product apply in `seq` order. `seq` is drawn at insert,
  * not at commit, so the guarantee is insertion order among COMMITTED rows: a
- * lower `seq` whose transaction commits later is invisible here (the same gap
- * Mongo's createdAt ordering has). The mitigation is the sweeper, which only
+ * lower `seq` whose transaction commits later is invisible here (a gap that
+ * timestamp ordering has too). The mitigation is the sweeper, which only
  * picks movements older than an age threshold (`listPendingIdsCreatedBefore`),
  * by which time such a straggler has committed.
  */
@@ -147,27 +175,35 @@ function applyClaimed(movementId) {
 	// withTransaction re-runs the callback on a deadlock, so it re-reads everything.
 	return withTransaction(async (tx) => {
 		const [movement] = await tx.$queryRaw`
-			SELECT id, product_id, type::text AS type, delta, target
+			SELECT id, product_id, variant_id, type::text AS type, delta, target
 			FROM stock_movements
 			WHERE id = ${id}::uuid AND status = 'pending'
 			FOR UPDATE`;
 		if (!movement) return false;
 
+		const [variant] = await tx.$queryRaw`
+			SELECT stock_quantity FROM product_variants
+			WHERE id = ${movement.variant_id}::uuid AND product_id = ${movement.product_id}::uuid FOR NO KEY UPDATE`;
 		const [product] = await tx.$queryRaw`
 			SELECT stock_quantity FROM products WHERE id = ${movement.product_id}::uuid FOR NO KEY UPDATE`;
 		const appliedAt = new Date();
 
-		if (!product) {
-			// The product was deleted. Leaving the movement pending would block the
-			// queue for a product that no longer exists.
+		if (!product || !variant) {
+			// The product (or this variant of it) was deleted. Leaving the movement
+			// pending would block the queue for stock that no longer exists. A product
+			// that still exists did not move, so its ledger records a zero delta and
+			// keeps adding up to its stock; the delta that was meant stays in the error.
 			const { count } = await tx.stockMovement.updateMany({
 				where: { id, status: 'pending' },
-				data: { status: 'applied', appliedAt, delta: movement.delta ?? 0, lastError: 'PRODUCT_NOT_FOUND' }
+				data: product
+					? { status: 'applied', appliedAt, delta: 0, lastError: `VARIANT_NOT_FOUND delta=${movement.delta ?? `target ${movement.target}`}` }
+					: { status: 'applied', appliedAt, delta: movement.delta ?? 0, lastError: 'PRODUCT_NOT_FOUND' }
 			});
 			return count === 1;
 		}
 
-		const current = product.stock_quantity;
+		// A target is the variant's stock; stock_after records the variant's too.
+		const current = variant.stock_quantity;
 		const delta = movement.type === 'set_target' ? movement.target - current : movement.delta;
 
 		// The gate: only the run that flips this movement goes on to touch the product.
@@ -178,6 +214,7 @@ function applyClaimed(movementId) {
 		if (gate.count !== 1) return false;
 
 		if (delta !== 0) {
+			await tx.productVariant.update({ where: { id: movement.variant_id }, data: { stockQuantity: { increment: delta } } });
 			await tx.product.update({ where: { id: movement.product_id }, data: { stockQuantity: { increment: delta } } });
 		}
 		return true;
@@ -234,7 +271,8 @@ async function summarizePending() {
 
 /**
  * What reconcile compares: the sum of applied deltas and the pending count per
- * product (keyed by id string), and every product's cached stock.
+ * product and per variant (keyed by id string), and every product's and variant's
+ * cached stock.
  *
  * With a `tx` the reads run inside it one after another (a transaction runs one
  * operation at a time) and see what the transaction has written. They are
@@ -244,17 +282,27 @@ async function summarizePending() {
  *
  * @param {object|null} [tx]
  * @returns {Promise<{appliedSumByProduct: Map<string, number>, pendingByProduct: Map<string, number>,
- *                    products: Array<{productId: string, name: string, stockQuantity?: number}>}>}
+ *                    products: Array<{productId: string, name: string, stockQuantity: number}>,
+ *                    appliedSumByVariant: Map<string, number>, pendingByVariant: Map<string, number>,
+ *                    variants: Array<{variantId: string, productId: string, label: string|null, stockQuantity: number}>}>}
  */
 async function readLedgerState(tx) {
 	const db = clientOf(tx);
 	const sums = await db.stockMovement.groupBy({ by: ['productId'], where: { status: 'applied' }, _sum: { delta: true } });
 	const pendingCounts = await db.stockMovement.groupBy({ by: ['productId'], where: { status: 'pending' }, _count: { _all: true } });
 	const products = await db.product.findMany({ select: { id: true, name: true, stockQuantity: true } });
+	const variantSums = await db.stockMovement.groupBy({ by: ['variantId'], where: { status: 'applied' }, _sum: { delta: true } });
+	const variantPending = await db.stockMovement.groupBy({ by: ['variantId'], where: { status: 'pending' }, _count: { _all: true } });
+	const variants = await db.productVariant.findMany({ select: { id: true, productId: true, optionValues: true, stockQuantity: true } });
 	return {
 		appliedSumByProduct: new Map(sums.map((s) => [s.productId, Number(s._sum.delta ?? 0)])),
 		pendingByProduct: new Map(pendingCounts.map((p) => [p.productId, p._count._all])),
-		products: products.map((p) => ({ productId: p.id, name: p.name, stockQuantity: p.stockQuantity }))
+		products: products.map((p) => ({ productId: p.id, name: p.name, stockQuantity: p.stockQuantity })),
+		appliedSumByVariant: new Map(variantSums.map((s) => [s.variantId, Number(s._sum.delta ?? 0)])),
+		pendingByVariant: new Map(variantPending.map((p) => [p.variantId, p._count._all])),
+		variants: variants.map((v) => ({
+			variantId: v.id, productId: v.productId, label: v.optionValues.length > 0 ? v.optionValues.join(' / ') : null, stockQuantity: v.stockQuantity
+		}))
 	};
 }
 
@@ -297,14 +345,16 @@ async function countPendingByProduct(productIds) {
 
 /**
  * One page of a product's movement history, newest first (ties by id), with the
- * fields the admin history shows. `meta.total` counts every movement of the product.
+ * fields the admin history shows, each with its `variantId` and the variant's
+ * `label` (absent for a default variant or a variant that is gone). `variantId`
+ * narrows it to one variant. `meta.total` counts every movement that matches.
  *
  * @param {string} productId
- * @param {{page: number, limit: number}} paging
+ * @param {{page: number, limit: number, variantId?: string}} paging
  * @returns {Promise<{data: object[], meta: object}>}
  */
-async function listMovementsOfProduct(productId, { page, limit }) {
-	const where = { productId: normalizeRecordId(productId) };
+async function listMovementsOfProduct(productId, { page, limit, variantId }) {
+	const where = { productId: normalizeRecordId(productId), ...(variantId && { variantId: normalizeRecordId(variantId) }) };
 	const { skip, take } = toSkipTake(page, limit);
 	const [rows, total] = await Promise.all([
 		prisma.stockMovement.findMany({
@@ -313,14 +363,16 @@ async function listMovementsOfProduct(productId, { page, limit }) {
 			skip,
 			take,
 			select: {
-				id: true, type: true, delta: true, target: true, stockAfter: true, status: true,
+				id: true, variantId: true, type: true, delta: true, target: true, stockAfter: true, status: true,
 				reason: true, createdBy: true, orderId: true, createdAt: true, appliedAt: true
 			}
 		}),
 		prisma.stockMovement.count({ where })
 	]);
+	const variants = await prisma.productVariant.findMany({ where: { productId: where.productId }, select: { id: true, optionValues: true } });
+	const labels = new Map(variants.filter((v) => v.optionValues.length > 0).map((v) => [v.id, v.optionValues.join(' / ')]));
 	return {
-		data: rows.map(({ id, ...rest }) => ({ _id: id, ...rest })),
+		data: rows.map(({ id, ...rest }) => ({ _id: id, ...rest, ...(labels.has(rest.variantId) && { label: labels.get(rest.variantId) }) })),
 		meta: buildPaginationMeta(total, { page, limit })
 	};
 }

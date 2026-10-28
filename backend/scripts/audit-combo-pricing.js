@@ -13,13 +13,11 @@
  * This script only reads. It issues no update, insert or delete, and prints no
  * personal data — order codes only, never names or student IDs.
  *
- * Run on the server, where the database URL (DATABASE_URL, or MONGODB_URI with
- * DATA_BACKEND=mongo) is already set:
+ * Run on the server, where DATABASE_URL is already set:
  *   docker exec sab-store-backend-1 node scripts/audit-combo-pricing.js
  *
  * Connects through lib/database, which applies the same start-up checks as the
- * server (applied migrations on postgres, a replica set on mongo), read-only
- * audit included.
+ * server (applied migrations), read-only audit included.
  */
 require('dotenv').config({ quiet: true });
 const { connectDB, closeDB } = require('../lib/database');

@@ -364,8 +364,8 @@ const SellerDashboard = () => {
 											<div className="text-sm text-gray-900">
 												{order.items.map((item, index) => {
 													const itemNameLength = item.productName.length;
-													// display last 4 characters only
-													const displayedName = item.productName.slice(itemNameLength - 4, itemNameLength);
+													// last 4 characters only; the variant label is appended whole so it is never cut
+													const displayedName = item.productName.slice(itemNameLength - 4, itemNameLength) + (item.variantLabel ? ` · ${item.variantLabel}` : '');
 													return (
 														<div key={index} className="flex justify-between items-center mb-1 last:mb-0">
 															<span className="text-gray-700">{displayedName}</span>

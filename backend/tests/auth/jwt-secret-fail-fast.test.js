@@ -3,10 +3,10 @@ const { clearAppModules } = require('../helpers/require-cache');
 /**
  * lib/auth.js validates JWT_SECRET at require time (module top level), so each
  * case here mutates process.env then forces a fresh module evaluation with
- * clearAppModules(). The store settings are left untouched — neither the
- * MongoClient nor the Prisma pool connects eagerly, and the secret is checked
- * before either is created, so these cases fail (or don't) purely on the
- * JWT_SECRET check, before any network I/O.
+ * clearAppModules(). The store settings are left untouched — the Prisma pool
+ * does not connect eagerly, and the secret is checked before it is created, so
+ * these cases fail (or don't) purely on the JWT_SECRET check, before any
+ * network I/O.
  */
 describe('JWT_SECRET fail-fast', () => {
 	const originalSecret = process.env.JWT_SECRET;

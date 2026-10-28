@@ -1,13 +1,13 @@
 /**
- * The rules Mongoose enforced on write (trim, required, length, minimum, enum,
+ * The rules a record must pass on write (trim, required, length, minimum, enum,
  * integer) for the places that reach a repository without passing the request
  * validation first: the database import, the seed and scripts. Messages are the
- * user-facing ones of the schemas they replace. The database keeps CHECKs for
+ * user-facing ones. The database keeps CHECKs for
  * money and counts; lengths and trimming live here because a CHECK on a trimmed
  * value would not trim it.
  *
  * Each check returns the cleaned value and records a problem instead of
- * throwing, so a write reports every field it refuses, like a schema does.
+ * throwing, so a write reports every field it refuses, like a schema validator does.
  */
 const { RecordValidationError, InvalidIdError } = require('../errors');
 const { normalizeRecordId } = require('../ids');

@@ -3,12 +3,9 @@
  * rule. `available` is the master switch; `salesChannel` narrows it to a channel.
  * `Product.isActive` is deprecated and must never influence the result.
  */
-const Product = require('../../models/Product');
-const Combo = require('../../models/Combo');
 const { products, combos } = require('../../data');
-const { SALES_CHANNELS, sellableQuery } = require('../../data/mongo/sellable');
+const { SALES_CHANNELS } = require('../../data/sale-channels');
 const { makeProduct, makeCombo } = require('../helpers/factories');
-const { POSTGRES } = require('../helpers/backend');
 
 const idsOf = (docs) => docs.map((d) => d._id.toString());
 
@@ -24,7 +21,6 @@ describe('products.findSellable', () => {
 		expect(() => products.findSellable('pos')).toThrow();
 		// "all" describes what a product allows, not a channel a sale happens on.
 		expect(() => products.findSellable('all')).toThrow();
-		expect(() => sellableQuery(undefined)).toThrow();
 	});
 
 	it('filters by channel: online-only and offline-only products stay on their own channel', async () => {
@@ -39,22 +35,6 @@ describe('products.findSellable', () => {
 		const offlineIds = idsOf(await products.findSellable('offline'));
 		expect(offlineIds).toEqual(expect.arrayContaining([both._id.toString(), offline._id.toString()]));
 		expect(offlineIds).not.toContain(online._id.toString());
-	});
-
-	// Skipped on Postgres: the row is a raw Mongo document that predates a field; Postgres columns are NOT NULL with defaults, so no such row can exist.
-	it.skipIf(POSTGRES)('treats a document written before the field existed as "all" on both channels', async () => {
-		// Mongoose applies schema defaults when hydrating, not when querying, so a
-		// raw legacy document has no salesChannel at all. The query must still match.
-		const { insertedId } = await Product.collection.insertOne({
-			name: 'Legacy product',
-			price: 1000,
-			category: 'general',
-			available: true,
-			stockQuantity: 3
-		});
-
-		expect(idsOf(await products.findSellable('online'))).toContain(insertedId.toString());
-		expect(idsOf(await products.findSellable('offline'))).toContain(insertedId.toString());
 	});
 
 	it('never lists available:false, whatever the channel', async () => {
@@ -105,20 +85,6 @@ describe('combos.findSellable', () => {
 		const offlineIds = idsOf(await combos.findSellable('offline'));
 		expect(offlineIds).toEqual(expect.arrayContaining([both._id.toString(), offline._id.toString()]));
 		expect(offlineIds).not.toContain(online._id.toString());
-	});
-
-	// Skipped on Postgres: the row is a raw Mongo document that predates a field; Postgres columns are NOT NULL with defaults, so no such row can exist.
-	it.skipIf(POSTGRES)('treats a legacy combo without the field as "all" on both channels', async () => {
-		const { insertedId } = await Combo.collection.insertOne({
-			name: 'Legacy combo',
-			price: 1000,
-			categoryRequirements: [{ category: 'general', quantity: 1 }],
-			isActive: true,
-			priority: 0
-		});
-
-		expect(idsOf(await combos.findSellable('online'))).toContain(insertedId.toString());
-		expect(idsOf(await combos.findSellable('offline'))).toContain(insertedId.toString());
 	});
 
 	it('orders by priority, then newest', async () => {

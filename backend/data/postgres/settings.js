@@ -1,15 +1,14 @@
 /**
- * The store's single settings row on Postgres: the same functions, arguments
- * and plain records as data/mongo/settings.js. The row stays keyed by SETTINGS_KEY.
+ * The store's single settings row on Postgres, as a plain record. The row stays keyed by SETTINGS_KEY.
  *
  * Unset versus hidden: NULL in a notice, contact or title column means "never
  * set" and `''` a deliberate choice to hide the box. `findStorefront` returns the
  * stored values (NULL as an absent key); `findConfig` and `upsertConfig` fill the
  * code defaults with a null check, never `||`, so `''` stays hidden.
  *
- * Partial first upsert: Mongo creates the row from the fields given plus the
- * schema defaults and leaves the bank details unset without any error. The bank
- * columns are NOT NULL here, so an unset bank detail is stored as `''` and read
+ * Partial first upsert: the row is created from the fields given plus the
+ * defaults, with the bank details possibly unset. The bank
+ * columns are NOT NULL, so an unset bank detail is stored as `''` and read
  * back as an absent key. That cannot be confused with a real value: the bank
  * fields are required and trimmed on every write, so `''` never comes from a
  * validated one.
@@ -94,7 +93,7 @@ function valuesOf(fields) {
 		[GOOGLE_CLIENT_ID_FIELD]: contact(GOOGLE_CLIENT_ID_FIELD),
 		updatedBy: checkText(problems, 'updatedBy', fields.updatedBy ?? undefined, { trim: false })
 	};
-	// Mongoose's minlength: a title given as text must keep at least one character once trimmed.
+	// Minimum length: a title given as text must keep at least one character once trimmed.
 	if (typeof values.storeTitle === 'string' && values.storeTitle === '') {
 		problems.add('storeTitle', 'Path `storeTitle` is shorter than the minimum allowed length (1).');
 	}

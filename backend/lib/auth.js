@@ -4,10 +4,7 @@ const { createAuthMiddleware, APIError } = require("better-auth/api");
 const { COMMON_PASSWORDS } = require("../utils/passwordValidator");
 const { buildTrustedProxies, toCidrs } = require("./trusted-proxies");
 const { isUuid } = require("@sab/shared");
-const { backendName } = require("../data/backend-name");
 const { OTP_EXPIRES_IN_SECONDS, CUSTOMER_ROLE, oneTapOptions, guardAuthRequest, sendSignInCode, beforeUserCreate } = require("./auth-guards");
-
-const POSTGRES = backendName === 'postgres';
 
 // Session signing secret. Better-auth only hard-fails on its own DEFAULT_SECRET,
 // so a committed placeholder would boot silently with a publicly known key.
@@ -19,31 +16,16 @@ if (/change-this|your-super-secret|secret-key-here|changeme/i.test(JWT_SECRET)) 
 	throw new Error('JWT_SECRET is still a placeholder value; set a real secret');
 }
 
-// The login tables live in whichever store the data layer runs on. Each branch
-// loads only its own driver, so a process never opens the store it does not use.
-// Better Auth hands out ObjectId-shaped ids on mongo; on postgres the id columns
-// are native uuid, which refuses anything else (22P02), so ids are minted here.
+// The id columns are native uuid, which refuse anything else (22P02), and Better
+// Auth's own ids are not uuids, so ids are minted here.
 function createStorage() {
-	if (POSTGRES) {
-		const { prismaAdapter } = require("better-auth/adapters/prisma");
-		const { v7: uuidv7 } = require("uuid");
-		const { prisma, closeDb } = require("./prisma");
-		return {
-			database: prismaAdapter(prisma, { provider: "postgresql" }),
-			generateId: () => uuidv7(),
-			close: closeDb,
-		};
-	}
-	const MONGODB_URI = process.env.MONGODB_URI;
-	if (!MONGODB_URI) {
-		throw new Error('MONGODB_URI environment variable is required');
-	}
-	const { MongoClient } = require("mongodb");
-	const { mongodbAdapter } = require("better-auth/adapters/mongodb");
-	const client = new MongoClient(MONGODB_URI);
+	const { prismaAdapter } = require("better-auth/adapters/prisma");
+	const { v7: uuidv7 } = require("uuid");
+	const { prisma, closeDb } = require("./prisma");
 	return {
-		database: mongodbAdapter(client.db()),
-		close: () => client.close(),
+		database: prismaAdapter(prisma, { provider: "postgresql" }),
+		generateId: () => uuidv7(),
+		close: closeDb,
 	};
 }
 
@@ -145,9 +127,9 @@ const auth = betterAuth({
 			const answered = await guardAuthRequest(ctx);
 			if (answered) return answered;
 			// A user id that is not a uuid reaches the native uuid column and fails there
-			// (22P02) as an empty 500; Mongo answers the same request with a 404. A legacy
-			// 24-hex id is refused too: the admin page only sends ids it got from list-users.
-			if (POSTGRES && ctx.path.startsWith("/admin/")) {
+			// (22P02) as an empty 500. A legacy 24-hex id is refused too: the admin page
+			// only sends ids it got from list-users.
+			if (ctx.path.startsWith("/admin/")) {
 				const ids = [ctx.body?.userId, ctx.path === "/admin/get-user" ? ctx.query?.id : undefined];
 				if (ids.some((id) => id !== undefined && !isUuid(id))) {
 					throw new APIError("BAD_REQUEST", { message: "Mã người dùng không hợp lệ" });

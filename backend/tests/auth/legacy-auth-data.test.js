@@ -1,24 +1,21 @@
 /**
  * Production holds users, credential accounts, sessions and JWKS rows written
  * by an older Better Auth release. These tests insert rows in that exact shape
- * (ids and user references as ObjectId, scrypt password hash, bare-hex encrypted
+ * (24-hex ids and user references, scrypt password hash, bare-hex encrypted
  * JWKS private key; the hash and the key were produced by the old package
- * itself) and require the current server to keep honouring them. On Postgres
- * the same fixtures go in as rows whose ids went through objectIdToUuidV7, the
- * mapping the migration applies, including a credential account's `accountId`,
- * which equals its user id.
+ * itself) and require the current server to keep honouring them. The fixtures
+ * go in as rows whose ids went through objectIdToUuidV7, the mapping the data
+ * migration applied, including a credential account's `accountId`, which equals
+ * its user id.
  */
 const crypto = require('crypto');
-const mongoose = require('mongoose');
 const request = require('supertest');
-const { ObjectId } = require('mongodb');
 const { Client } = require('pg');
 const http = require('http');
 const { objectIdToUuidV7 } = require('@sab/shared');
 const { buildTestApp } = require('../helpers/app');
 const { clearAppModules } = require('../helpers/require-cache');
 const { trackServer } = require('../helpers/servers');
-const { POSTGRES } = require('../helpers/backend');
 const { countAuthRows } = require('../helpers/db');
 const { POOL_OPTIONS } = require('../helpers/postgres');
 
@@ -32,46 +29,35 @@ const LEGACY_JWK_PRIVATE_ENCRYPTED =
 
 const SECRET = process.env.JWT_SECRET;
 
-// A legacy id (24-hex) as the API shows it on the backend under test.
-const shownId = (hex) => (POSTGRES ? objectIdToUuidV7(hex) : hex);
-const ID_KEYS = { mongo: ['_id', 'userId'], postgres: ['userId', 'accountId'] };
+// A legacy id: 24 hex characters, as the old store generated them.
+const newLegacyHex = () => crypto.randomBytes(12).toString('hex');
+const ID_KEYS = ['userId', 'accountId'];
 
-const forMongo = (doc) => Object.fromEntries(
-	Object.entries(doc).map(([key, value]) => [key, ID_KEYS.mongo.includes(key) ? new ObjectId(value) : value])
-);
 const forPostgres = (doc) => Object.fromEntries(
 	Object.entries(doc).map(([key, value]) => (
-		key === '_id' ? ['id', objectIdToUuidV7(value)] : [key, ID_KEYS.postgres.includes(key) ? objectIdToUuidV7(value) : value]
+		key === '_id' ? ['id', objectIdToUuidV7(value)] : [key, ID_KEYS.includes(key) ? objectIdToUuidV7(value) : value]
 	))
 );
 
 describe('data written by the previous Better Auth release', () => {
 	let app;
-	let db;
 	let pg;
-	const userHex = new ObjectId().toHexString();
-	const userId = shownId(userHex);
+	const userHex = newLegacyHex();
+	const userId = objectIdToUuidV7(userHex);
 	const token = crypto.randomBytes(16).toString('hex');
 	const email = 'legacy-admin@test.local';
 
 	beforeAll(async () => {
 		app = buildTestApp();
-		db = mongoose.connection.db;
-		if (POSTGRES) {
-			pg = new Client({ connectionString: process.env.DATABASE_URL, options: POOL_OPTIONS });
-			await pg.connect();
-		}
+		pg = new Client({ connectionString: process.env.DATABASE_URL, options: POOL_OPTIONS });
+		await pg.connect();
 	});
 
 	afterAll(async () => {
-		if (pg) await pg.end();
+		await pg.end();
 	});
 
 	async function insertRow(table, doc) {
-		if (!POSTGRES) {
-			await db.collection(table).insertOne(forMongo(doc));
-			return;
-		}
 		const row = forPostgres(doc);
 		const columns = Object.keys(row);
 		await pg.query(
@@ -81,7 +67,7 @@ describe('data written by the previous Better Auth release', () => {
 	}
 
 	const insertSession = (sessionToken, expiresAt) => insertRow('session', {
-		_id: new ObjectId().toHexString(),
+		_id: newLegacyHex(),
 		expiresAt,
 		token: sessionToken,
 		createdAt: new Date(),
@@ -91,16 +77,9 @@ describe('data written by the previous Better Auth release', () => {
 		userId: userHex,
 	});
 
-	// The suite empties the mongoose-registered collections after each test (and every
-	// table on Postgres), so the data is re-seeded. jwks, session and account have no
-	// mongoose model and must be cleared here on Mongo, and so is `user` when no loaded
-	// module registers its model, so the fixed _id below is never inserted twice.
+	// The suite empties every table after each test, so the data is re-seeded.
 	beforeEach(async () => {
 		const now = new Date();
-		if (!POSTGRES) {
-			await Promise.all(['jwks', 'session', 'account', 'user'].map((name) => db.collection(name).deleteMany({})));
-		}
-
 		await insertRow('user', {
 			_id: userHex,
 			name: 'Legacy Admin',
@@ -114,7 +93,7 @@ describe('data written by the previous Better Auth release', () => {
 			role: 'admin',
 		});
 		await insertRow('account', {
-			_id: new ObjectId().toHexString(),
+			_id: newLegacyHex(),
 			accountId: userHex,
 			providerId: 'credential',
 			userId: userHex,
@@ -124,7 +103,7 @@ describe('data written by the previous Better Auth release', () => {
 		});
 		await insertSession(token, new Date(Date.now() + 3 * 24 * 60 * 60 * 1000));
 		await insertRow('jwks', {
-			_id: new ObjectId().toHexString(),
+			_id: newLegacyHex(),
 			publicKey: LEGACY_JWK_PUBLIC,
 			privateKey: LEGACY_JWK_PRIVATE_ENCRYPTED,
 			createdAt: now,

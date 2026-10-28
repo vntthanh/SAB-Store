@@ -1,16 +1,13 @@
 /**
  * What the postgres backend does with the errors a real Postgres raises. The
  * shapes come from the live server through Prisma, not from fixtures, because the
- * driver adapter's wording is what the translation depends on. Skipped on the
- * mongo backend, whose errors data/mongo/errors.js translates.
+ * driver adapter's wording is what the translation depends on.
  */
 const { v7: uuidv7 } = require('uuid');
 const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 const { DuplicateKeyError, RecordValidationError, InvalidIdError, isDuplicateKeyOn } = require('../../data/errors');
 
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
-
-describe.skipIf(!POSTGRES)('postgres translateWriteError', () => {
+describe('postgres translateWriteError', () => {
 	let prisma;
 	let translateWriteError;
 	let stockLedger;
@@ -30,7 +27,7 @@ describe.skipIf(!POSTGRES)('postgres translateWriteError', () => {
 		(err) => err
 	);
 	const product = (overrides = {}) => ({ id: uuidv7(), name: 'p', price: 1, category: 'c', publicCode: uuidv7(), slug: 's', storefrontId: DEFAULT_STOREFRONT_ID, ...overrides });
-	const movement = (overrides = {}) => ({ id: uuidv7(), productId: uuidv7(), type: 'adjust', delta: 1, idempotencyKey: uuidv7(), ...overrides });
+	const movement = (overrides = {}) => ({ id: uuidv7(), productId: uuidv7(), variantId: uuidv7(), type: 'adjust', delta: 1, idempotencyKey: uuidv7(), ...overrides });
 
 	it('turns a unique violation into a DuplicateKeyError naming the record field', async () => {
 		await prisma.stockMovement.create({ data: movement({ idempotencyKey: 'taken' }) });

@@ -1,11 +1,9 @@
 /**
- * Product catalogue on Postgres: the same functions, arguments and plain records
- * as data/mongo/products.js.
+ * Product catalogue on Postgres, as plain records (see data/index.js).
  *
- * Differences a caller can see, all deliberate:
- * - A record has no `__v`, and an optional field that is NULL (description, sku,
- *   weight, dimensions, salePrice, the sale dates) is absent, as it is on a
- *   Mongo document that never set it. `maxOrderQuantity` stays `null`, as there.
+ * What a caller can rely on:
+ * - An optional field that is NULL (description, sku, weight, dimensions,
+ *   salePrice, the sale dates) is absent. `maxOrderQuantity` stays `null`.
  * - There is no "row without salesChannel": the column is NOT NULL, default 'all',
  *   so the channel rule is a plain `IN ('all', channel)`.
  * - `findSellable` returns oldest first and every list orders by its key and then
@@ -16,7 +14,13 @@
  *   an edit may move the product to another one. `findSellable`, `listSellable` and
  *   `findSellableForPricing` take an optional `storefrontId` to list one storefront's products.
  *
- * `stock_quantity` is written by `create` alone (the opening balance, which the
+ * - A record carries `images` (gallery order; `imageUrl` is the cover, always
+ *   `images[0]` or the fallback), `options` (`[{name, values}]`, in position order)
+ *   and `variants` (see `variantRecord`). Every product has at least one variant: a
+ *   product without options has one default variant with no option values.
+ *   Customer reads list only active variants and never their stock or SKU.
+ *
+ * `stock_quantity` (product and variant) is written by `create` alone (the opening balance, which the
  * caller records as an applied `opening` movement in the same transaction) and
  * otherwise only by the stock ledger.
  */
@@ -28,12 +32,13 @@ const { PUBLIC_CODE_PATTERN } = require('../../utils/public-code');
 const { asString } = require('../../utils/query-guard');
 const { translating } = require('./errors');
 const { containsInsensitive } = require('./like');
+const { lockVariants, saveVariantSetup, isImageInUse } = require('./product-variants');
 const { drawCodeAndSlug, slugFor, publicCodeBackfill } = require('./public-code');
 const { Problems, checkText, checkNumber, checkBoolean, checkEnum, checkDate, recordId } = require('./rules');
 
 // The only fields an edit may change. The stock cache is absent on purpose: it
 // changes only through a movement.
-const EDITABLE_FIELDS = ['name', 'description', 'price', 'category', 'imageUrl', 'available', 'salesChannel', 'minOrderQuantity', 'storefrontId'];
+const EDITABLE_FIELDS = ['name', 'description', 'price', 'category', 'imageUrl', 'images', 'available', 'salesChannel', 'minOrderQuantity', 'storefrontId'];
 
 const SEARCH_MAX_LENGTH = 100;
 const DIMENSION_COLUMNS = { length: 'dimensionLength', width: 'dimensionWidth', height: 'dimensionHeight' };
@@ -41,19 +46,50 @@ const DIMENSION_COLUMNS = { length: 'dimensionLength', width: 'dimensionWidth', 
 // A customer must never receive the stock level, the SKU or the retired flag.
 const CUSTOMER_HIDDEN = { stockQuantity: true, sku: true, isActive: true };
 
+const { FALLBACK_PRODUCT_IMAGE: FALLBACK_IMAGE, MAX_PRODUCT_IMAGES: MAX_IMAGES } = require('@sab/shared');
+
+const VARIANT_ORDER = [{ position: 'asc' }, { id: 'asc' }];
+const OPTIONS_INCLUDE = { orderBy: { position: 'asc' }, select: { name: true, values: true } };
+const VARIANTS_INCLUDE = { orderBy: VARIANT_ORDER };
+// What pricing and the public pages need of a variant: no stock or SKU is loaded.
+const SELLING_VARIANTS_INCLUDE = { orderBy: VARIANT_ORDER, select: { id: true, optionValues: true, price: true, imageUrl: true, isActive: true } };
+// Customers see the variants they can buy, without stock or SKU.
+const CUSTOMER_VARIANTS_INCLUDE = {
+	where: { isActive: true },
+	orderBy: VARIANT_ORDER,
+	select: { id: true, optionValues: true, price: true, imageUrl: true }
+};
+const FULL_INCLUDE = { options: OPTIONS_INCLUDE, variants: VARIANTS_INCLUDE };
+const CUSTOMER_INCLUDE = { options: OPTIONS_INCLUDE, variants: CUSTOMER_VARIANTS_INCLUDE };
+
 const clientOf = (tx) => tx || prisma;
 
-// Optional fields a Mongo document simply lacks when they were never set.
+// Optional fields: a product that never set one has no such key.
 const OMITTED_WHEN_NULL = new Set(['description', 'sku', 'weight', 'salePrice', 'saleStartDate', 'saleEndDate']);
+
+/**
+ * A variant as a plain record. `effectivePrice` is what one unit costs: its own
+ * price, or the product's when it has none. `label` ("Đỏ / M") is absent for the
+ * default variant, and so are a NULL price, SKU, image or archive date.
+ */
+function variantRecord(row, productPrice) {
+	const { id, productId: _productId, position: _position, createdAt: _createdAt, updatedAt: _updatedAt, ...columns } = row;
+	const record = { _id: id, ...Object.fromEntries(Object.entries(columns).filter(([, value]) => value !== null)) };
+	if (row.optionValues.length > 0) record.label = row.optionValues.join(' / ');
+	if (productPrice !== undefined) record.effectivePrice = row.price ?? productPrice;
+	return record;
+}
 
 /** A stored row as a plain record: `_id` is the uuid string, unset optional fields are absent. */
 function toRecord(row) {
-	const { id, dimensionLength, dimensionWidth, dimensionHeight, ...rest } = row;
+	const { id, dimensionLength, dimensionWidth, dimensionHeight, options, variants, ...rest } = row;
 	const record = { _id: id };
 	for (const [key, value] of Object.entries(rest)) {
 		if (value === null && OMITTED_WHEN_NULL.has(key)) continue;
 		record[key] = value;
 	}
+	if (options) record.options = options.map(({ name, values }) => ({ name, values }));
+	if (variants) record.variants = variants.map((variant) => variantRecord(variant, row.price));
 	const dimensions = Object.fromEntries(
 		Object.entries({ length: dimensionLength, width: dimensionWidth, height: dimensionHeight }).filter(([, size]) => size !== null && size !== undefined)
 	);
@@ -66,6 +102,8 @@ function selectOf(fields) {
 	const select = { id: true };
 	for (const field of fields) {
 		if (field === 'dimensions') Object.assign(select, { dimensionLength: true, dimensionWidth: true, dimensionHeight: true });
+		else if (field === 'options') select.options = OPTIONS_INCLUDE;
+		else if (field === 'variants') select.variants = SELLING_VARIANTS_INCLUDE;
 		else if (field !== '_id') select[field] = true;
 	}
 	return select;
@@ -129,6 +167,13 @@ function columnsOf(fields, { creating }) {
 		else tags = fields.tags.map((tag) => checkText(problems, 'tags', tag, {}));
 	}
 
+	let images;
+	if (fields.images !== undefined && fields.images !== null) {
+		if (!Array.isArray(fields.images) || fields.images.length > MAX_IMAGES || fields.images.some((url) => typeof url !== 'string' || url === '')) {
+			problems.add('images', `Danh sách ảnh không hợp lệ (tối đa ${MAX_IMAGES} ảnh)`);
+		} else images = fields.images;
+	}
+
 	let publicCode;
 	if (fields.publicCode !== undefined && fields.publicCode !== null) {
 		publicCode = fields.publicCode;
@@ -168,6 +213,15 @@ function columnsOf(fields, { creating }) {
 		publicCode
 	};
 	problems.throwIfAny();
+	// The cover is the gallery's first image, which the cover CHECK enforces. A body
+	// with only the older single `imageUrl` makes that image the whole gallery.
+	if (images !== undefined) {
+		columns.images = images;
+		columns.imageUrl = images[0] ?? FALLBACK_IMAGE;
+	} else {
+		if (columns.imageUrl === '') columns.imageUrl = FALLBACK_IMAGE;
+		if (columns.imageUrl !== undefined) columns.images = columns.imageUrl === FALLBACK_IMAGE ? [] : [columns.imageUrl];
+	}
 	return Object.fromEntries(Object.entries(columns).filter(([, value]) => value !== undefined));
 }
 
@@ -185,7 +239,7 @@ function findSellable(channel, { publicCode, id, storefrontId } = {}) {
 	const sellable = sellableWhere(channel);
 	return translating(async () => {
 		const where = { ...sellable, ...storefrontWhere(storefrontId), ...(publicCode !== undefined && { publicCode }), ...(id !== undefined && { id: recordId(id) }) };
-		const rows = await prisma.product.findMany({ where, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+		const rows = await prisma.product.findMany({ where, include: FULL_INCLUDE, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
 		return rows.map(toRecord);
 	});
 }
@@ -204,7 +258,7 @@ async function listSellable(channel, { category, search, forCustomers = false, s
 	const where = { ...sellableWhere(channel), ...listStorefrontWhere(storefrontId), ...(category && { category }), ...searchWhere(search) };
 	const rows = await prisma.product.findMany({
 		where,
-		...(forCustomers && { omit: CUSTOMER_HIDDEN }),
+		...(forCustomers ? { omit: CUSTOMER_HIDDEN, include: CUSTOMER_INCLUDE } : { include: FULL_INCLUDE }),
 		orderBy: [{ category: 'asc' }, { name: 'asc' }, { id: 'asc' }]
 	});
 	return rows.map(toRecord);
@@ -223,7 +277,15 @@ async function listSellable(channel, { category, search, forCustomers = false, s
  */
 function findSellableForPricing(channel, ids, fields, tx, { storefrontId } = {}) {
 	return translating(async () => {
-		const where = { id: { in: ids.map((id) => recordId(id)) }, ...sellableWhere(channel), ...storefrontWhere(storefrontId) };
+		const productIds = ids.map((id) => recordId(id));
+		const where = { id: { in: productIds }, ...sellableWhere(channel), ...storefrontWhere(storefrontId) };
+		// Inside an order's transaction the priced variants stay until it commits: a
+		// DELETE of a variant takes a row lock that conflicts with KEY SHARE, while the
+		// ledger's NO KEY UPDATE does not wait on it. Taken in id order, like every
+		// other multi-row lock, so two lockers cannot cross.
+		if (tx && fields.includes('variants')) {
+			await tx.$queryRaw`SELECT id FROM product_variants WHERE product_id = ANY(${productIds}::uuid[]) ORDER BY id FOR KEY SHARE`;
+		}
 		const rows = await clientOf(tx).product.findMany({ where, select: selectOf(fields) });
 		return rows.map(toRecord);
 	});
@@ -285,13 +347,13 @@ async function listCategories() {
  * @returns {Promise<{data: object[], meta: {page: number, limit: number, total: number, totalPages: number}}>}
  */
 async function listPage({ page, limit, search, category, available, salesChannel, storefrontId }) {
-	// A channel the enum does not have matches nothing, as it does on Mongo.
+	// A channel the enum does not have matches nothing instead of raising an error.
 	const channel = !salesChannel ? {} : SALES_CHANNELS.includes(salesChannel) ? { salesChannel } : { id: { in: [] } };
 	const where = { ...searchWhere(search), ...channel, ...listStorefrontWhere(storefrontId), ...(category && { category }), ...(available !== undefined && { available }) };
 
 	const { skip, take } = toSkipTake(page, limit);
 	const [rows, total] = await Promise.all([
-		prisma.product.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip, take }),
+		prisma.product.findMany({ where, include: FULL_INCLUDE, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip, take }),
 		prisma.product.count({ where })
 	]);
 	return { data: rows.map(toRecord), meta: buildPaginationMeta(total, { page, limit }) };
@@ -334,9 +396,9 @@ async function existsByName(name) {
 }
 
 /** The product with this id, or null. @throws {InvalidIdError} */
-function findById(id) {
+function findById(id, tx) {
 	return translating(async () => {
-		const row = await prisma.product.findUnique({ where: { id: recordId(id) } });
+		const row = await clientOf(tx).product.findUnique({ where: { id: recordId(id) }, include: FULL_INCLUDE });
 		return row ? toRecord(row) : null;
 	});
 }
@@ -367,8 +429,11 @@ function create(fields, openingStock, tx) {
 				storefrontId: columns.storefrontId ?? DEFAULT_STOREFRONT_ID,
 				...drawCodeAndSlug(columns.name, supplied),
 				...(fields._id !== undefined && { id: recordId(fields._id) }),
-				stockQuantity: opening ?? undefined
-			}
+				stockQuantity: opening ?? undefined,
+				// Every product starts with its default variant, which holds the opening stock.
+				variants: { create: { position: 0, optionValues: [], stockQuantity: opening ?? undefined } }
+			},
+			include: FULL_INCLUDE
 		});
 		return toRecord(row);
 	});
@@ -381,21 +446,22 @@ function create(fields, openingStock, tx) {
  *
  * @param {string} id
  * @param {object} changes
+ * @param {object|null} [tx]
  * @returns {Promise<object|null>}
  * @throws {RecordValidationError|DuplicateKeyError|InvalidIdError}
  */
-function update(id, changes) {
+function update(id, changes, tx) {
 	const picked = Object.fromEntries(EDITABLE_FIELDS.filter((field) => changes[field] !== undefined).map((field) => [field, changes[field]]));
 	return translating(async () => {
 		const productId = recordId(id);
 		const columns = columnsOf(picked, { creating: false });
 		if (columns.name !== undefined) {
-			const stored = await prisma.product.findUnique({ where: { id: productId }, select: { publicCode: true } });
+			const stored = await clientOf(tx).product.findUnique({ where: { id: productId }, select: { publicCode: true } });
 			if (!stored) return null;
 			columns.slug = slugFor(columns.name, stored.publicCode);
 		}
 		try {
-			return toRecord(await prisma.product.update({ where: { id: productId }, data: columns }));
+			return toRecord(await clientOf(tx).product.update({ where: { id: productId }, data: columns, include: FULL_INCLUDE }));
 		} catch (err) {
 			// Deleted between the lookup and the write.
 			if (err && err.code === 'P2025') return null;
@@ -411,6 +477,8 @@ function remove(id) {
 
 module.exports = {
 	toRecord,
+	FULL_INCLUDE,
+	FALLBACK_IMAGE,
 	SALES_CHANNELS,
 	assertSaleChannel,
 	findSellable,
@@ -428,6 +496,9 @@ module.exports = {
 	update,
 	remove,
 	findSellableForPricing,
+	lockVariants,
+	saveVariantSetup,
+	isImageInUse: (url) => isImageInUse(url, prisma),
 	storefrontIdsOf,
 	findAvailableNames,
 	listSellableInCategories

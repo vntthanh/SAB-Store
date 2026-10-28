@@ -24,7 +24,7 @@ describe('client IP resolution behind the proxy chain', () => {
 			.set('X-Forwarded-For', forwardedFor)
 			.send({ email, password });
 		expect(res.status).toBe(200);
-		// The mongo store keeps sessions across tests, so take the one just written.
+		// The newest row is the session just written.
 		return (await findAuthRows('session')).at(-1);
 	}
 

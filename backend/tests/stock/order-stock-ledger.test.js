@@ -11,6 +11,7 @@ const stockQueue = require('../../queues/stock-queue');
 const {
 	findOrder, findOrderByCode, listOrders, countRows, insertRawOrder, deleteProduct, failNextMovementInsert,
 	stockOf: cachedStock, movementsFor,
+	stockKeyIdOf,
 } = require('../helpers/db');
 
 const stockOf = (product) => cachedStock(product._id);
@@ -62,7 +63,7 @@ describe('POST /api/orders — stock ledger', () => {
 			type: 'order',
 			delta: -3,
 			status: 'pending',
-			idempotencyKey: `order:${order._id}:${product._id}:create`
+			idempotencyKey: `order:${order._id}:${await stockKeyIdOf(product._id)}:create`
 		});
 		expect(String(movements[0].orderId)).toBe(String(order._id));
 		// Only the worker writes the cache.
@@ -184,7 +185,7 @@ describe('POST /api/seller/orders/direct — stock ledger', () => {
 		const movements = await movementsOf(product);
 		expect(movements).toHaveLength(1);
 		expect(movements[0]).toMatchObject({ type: 'order', delta: -2, status: 'pending' });
-		expect(movements[0].idempotencyKey).toBe(`order:${order._id}:${product._id}:create`);
+		expect(movements[0].idempotencyKey).toBe(`order:${order._id}:${await stockKeyIdOf(product._id)}:create`);
 
 		await applyPendingMovements();
 		expect(await stockOf(product)).toBe(-2);

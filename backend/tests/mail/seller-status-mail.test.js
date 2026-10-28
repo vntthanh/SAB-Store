@@ -7,9 +7,7 @@ const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession, makeSellerSession, makeOrder } = require('../helpers/factories');
 const { MAIL_BODY, stubTransport, watchOrderMail } = require('../helpers/mail');
 
-const describePostgres = process.env.DATA_BACKEND === 'mongo' ? describe.skip : describe;
-
-describePostgres('seller status-change mail', () => {
+describe('seller status-change mail', () => {
 	let app;
 	let adminCookies;
 	let sellerCookies;

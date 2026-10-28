@@ -1,7 +1,6 @@
 /**
- * What racing writers of one order may and may not do, on whichever backend
- * DATA_BACKEND selects: status transitions with their stock effect, the item-edit
- * compare-and-set, notes, and the order/cancel/apply loops that must leave the
+ * What racing writers of one order may and may not do: status transitions with
+ * their stock effect, the item-edit compare-and-set, notes, and the order/cancel/apply loops that must leave the
  * stock cache exactly equal to the units still held by live orders.
  */
 const data = require('../../data');
@@ -10,14 +9,14 @@ const { editOrderItems } = require('../../services/order-edit');
 const { applyMovement, reconcile } = require('../../services/stock-ledger');
 const { RecordValidationError } = require('../../data/errors');
 const {
-	newId, insertRawProduct, findOrder, movements, stockOf, countRows, withTransaction
+	newId, insertRawProduct, findOrder, movements, stockOf, countRows, withTransaction,
+	stockKeyIdOf,
 } = require('../helpers/db');
 
 const { orders } = data;
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
 
 afterAll(async () => {
-	if (POSTGRES) await require('../../lib/prisma').closeDb();
+	await require('../../lib/prisma').closeDb();
 });
 
 let sequence = 0;
@@ -199,8 +198,8 @@ describe('the compare-and-set of the repository', () => {
 		expect((await findOrder(order._id)).statusHistory).toHaveLength(1);
 	});
 
-	// The Mongo repository writes whatever fields it is handed; the allowlist is the postgres hardening.
-	it.skipIf(!POSTGRES)('takes only the fields a transition sets', async () => {
+	// The repository applies an allowlist of the fields a transition may set.
+	it('takes only the fields a transition sets', async () => {
 		const order = await placeOrder([lineOf(await makeProduct())]);
 
 		await expect(data.withTransaction((tx) => orders.applyStatusChange({ ...change(order._id, 'paid'), fields: { status: 'paid', totalAmount: 1 } }, tx))).rejects.toThrow('Cannot set order field');
@@ -281,7 +280,8 @@ describe('item edits through the service', () => {
 		expect(stored.itemsHistory[0].previousItems.map((line) => [String(line.productId), line.quantity])).toEqual([[a._id, 2]]);
 		const editMovements = await movements({ type: 'order_edit' });
 		expect(editMovements.map((movement) => [String(movement.productId), movement.delta]).sort()).toEqual([[a._id, 1], [b._id, -1]].sort());
-		expect(editMovements.map((movement) => movement.idempotencyKey).sort()).toEqual([`order:${order._id}:${a._id}:edit:1`, `order:${order._id}:${b._id}:edit:1`].sort());
+		expect(editMovements.map((movement) => movement.idempotencyKey).sort())
+			.toEqual([`order:${order._id}:${await stockKeyIdOf(a._id)}:edit:1`, `order:${order._id}:${await stockKeyIdOf(b._id)}:edit:1`].sort());
 		await applyAllPending();
 		expect([await stockOf(a._id), await stockOf(b._id)]).toEqual([-1, -1]);
 	});

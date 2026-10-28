@@ -342,6 +342,60 @@ export const adminService = {
 		}
 	},
 
+	// Several product images in one request: `{ images: [{ url, filename }] }`
+	uploadImages: async (imageFiles) => {
+		try {
+			const formData = new FormData();
+			imageFiles.forEach((file) => formData.append('images', file));
+
+			const response = await api.post('/upload/product-images', formData, {
+				headers: {
+					'Content-Type': 'multipart/form-data',
+				},
+				timeout: 60000, // up to 9 files
+			});
+
+			return response.data;
+		} catch (error) {
+			throw new Error(error.response?.data?.message || 'Lỗi khi upload hình ảnh');
+		}
+	},
+
+	// Stock ledger. `variantId` is required for a product with options and omitted otherwise.
+	adjustStock: async (productId, { mode, value, reason, variantId }) => {
+		try {
+			const response = await api.post(`/admin/products/${productId}/stock-adjustments`, {
+				mode,
+				value,
+				reason,
+				...(variantId && { variantId }),
+			});
+			return response.data;
+		} catch (error) {
+			throw toApiError(error, 'Lỗi khi ghi điều chỉnh tồn kho');
+		}
+	},
+
+	getStockMovements: async (productId, { page = 1, limit = 10, variantId } = {}) => {
+		try {
+			const response = await api.get(`/admin/products/${productId}/stock-movements`, {
+				params: { page, limit, ...(variantId && { variantId }) },
+			});
+			return response.data;
+		} catch (error) {
+			throw toApiError(error, 'Lỗi khi tải lịch sử tồn kho');
+		}
+	},
+
+	getStockReconcile: async () => {
+		try {
+			const response = await api.get('/admin/stock/reconcile');
+			return response.data;
+		} catch (error) {
+			throw toApiError(error, 'Lỗi khi tải đối soát tồn kho');
+		}
+	},
+
 	// Combo management
 	getCombos: async (params = {}) => {
 		try {
