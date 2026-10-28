@@ -17,14 +17,11 @@
 		// `vi.spyOn(minio, 'getFile')`, `ledger.CRITICAL_AFTER_ATTEMPTS`, `postgres.truncateAll()`), so
 		// these files report exports that are in fact used.
 		"backend/queues/stock-queue.js": ["exports"],
-		"backend/models/Settings.js": ["exports"],
-		"backend/models/StockMovement.js": ["exports"],
 		"backend/lib/minio.js": ["exports"],
 		// auth-guards reaches the mail edge as `mailer.sendMail` so tests can spy on it.
 		"backend/services/mailer.js": ["exports"],
 		"backend/services/stock-ledger.js": ["exports"],
 		// The repositories are reached through the `data` index (`stockLedger.claimForApply()`).
-		"backend/data/mongo/*.js": ["exports"],
 		"backend/data/postgres/*.js": ["exports"],
 		"backend/utils/public-code.js": ["exports"],
 		"backend/tests/helpers/postgres.js": ["exports"],
