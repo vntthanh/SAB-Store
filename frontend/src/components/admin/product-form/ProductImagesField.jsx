@@ -2,20 +2,14 @@ import React, { useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { MAX_PRODUCT_IMAGES, productVariantSetup } from '@sab/shared';
 import LoadingSpinner from '../../LoadingSpinner';
-import {
-	processImageFile,
-	validateImageFile,
-	getRatioDisplayText,
-	getImageDimensions,
-	needsCropping
-} from '../../../utils/imageUtils';
+import { MAX_IMAGE_SIDE, processImageFile, validateImageFile } from '../../../utils/imageUtils';
 import { getImageUrl } from '../../../utils/helpers';
 import { moveItem } from './variant-setup';
 
 const ICON_BUTTON =
 	'inline-flex items-center justify-center w-7 h-7 rounded bg-white/90 text-gray-700 shadow hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed';
 
-// Same crop-to-ratio pipeline as before; a file that fails is skipped with its own toast.
+// A file that fails is skipped with its own toast.
 const prepareFile = async (file) => {
 	const validation = validateImageFile(file);
 	if (!validation.valid) {
@@ -23,12 +17,7 @@ const prepareFile = async (file) => {
 		return null;
 	}
 	try {
-		const dimensions = await getImageDimensions(file);
-		const processed = await processImageFile(file);
-		if (needsCropping(dimensions.width, dimensions.height)) {
-			toast.info(`${file.name}: đã cắt theo tỉ lệ chuẩn 1.5:1`);
-		}
-		return processed.file;
+		return await processImageFile(file);
 	} catch (error) {
 		console.error('Image processing error:', error);
 		toast.error(`${file.name}: lỗi khi xử lý hình ảnh (${error.message})`);
@@ -100,7 +89,7 @@ const ProductImagesField = ({ images, onChange, onUploadImages, onBusyChange, er
 			</div>
 			<div className="text-xs text-blue-600 mb-2">
 				<i className="fas fa-info-circle mr-1"></i>
-				{getRatioDisplayText()} - Hình ảnh upload sẽ được tự động cắt theo tỉ lệ này
+				Ảnh được lưu nguyên khung, không bị cắt (khung xem trước có thể che bớt rìa; trên trang bán hàng bấm vào ảnh để xem đầy đủ). Ảnh lớn được thu nhỏ còn cạnh dài tối đa {MAX_IMAGE_SIDE}px.
 			</div>
 
 			{images.length > 0 && (
