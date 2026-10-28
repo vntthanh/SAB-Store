@@ -5,32 +5,12 @@ import { getOrderChannel, isFinalOrderStatus } from '../../utils/order-status';
 import useFieldErrors from '../../hooks/use-field-errors';
 import FormField from '../form/FormField';
 import { orderItemsEdit } from '@sab/shared';
+import { toDraft, draftLineKey, draftSignature, draftToPayloadItems, hasOptions, activeVariants } from './order-items-draft';
 import { rulesFromSchema, requiredFromSchema, leftoverIssues } from '../../lib/schema-rules';
 
 const PREVIEW_DEBOUNCE_MS = 300;
 const MAX_REASON_LENGTH = 200;
 const MAX_LINES = 50;
-
-const lineProductId = (item) => String(item.productId?._id || item.productId);
-
-// An order can hold the same product as a combo line and as a loose line; the
-// server prices units per product, so the draft works on one line per product.
-const toDraft = (items) => {
-	const byProduct = new Map();
-	(items || []).forEach((item) => {
-		const productId = lineProductId(item);
-		const existing = byProduct.get(productId);
-		if (existing) existing.quantity += item.quantity;
-		else byProduct.set(productId, { productId, productName: item.productName, quantity: item.quantity });
-	});
-	return [...byProduct.values()];
-};
-
-const draftSignature = (draft) =>
-	draft
-		.map((line) => `${line.productId}:${line.quantity}`)
-		.sort()
-		.join('|');
 
 // The reason is the only part of the edit schema the user types; the items and the revision come
 // from the draft and the order, and are checked again in handleSave.
@@ -74,6 +54,8 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 	const [products, setProducts] = useState([]);
 	const [productsLoading, setProductsLoading] = useState(false);
 	const [search, setSearch] = useState('');
+	// Variant picked per product with options, by product id, before it is added.
+	const [pickedVariants, setPickedVariants] = useState({});
 	const previewRequestId = useRef(0);
 
 	const originalDraft = useMemo(() => toDraft(order.items), [order.items]);
@@ -126,7 +108,7 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 		const requestId = ++previewRequestId.current;
 		const timer = setTimeout(async () => {
 			try {
-				const items = draft.map(({ productId, quantity }) => ({ productId, quantity }));
+				const items = draftToPayloadItems(draft);
 				const result = await comboService.calculatePricing(items, { channel });
 				if (requestId !== previewRequestId.current) return;
 				if (result.success && typeof result.data?.totalAmount === 'number') {
@@ -151,6 +133,7 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 		setDraft(toDraft(order.items));
 		setReason('');
 		setSearch('');
+		setPickedVariants({});
 		setEditing(true);
 	};
 
@@ -160,26 +143,38 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 		setSearch('');
 	};
 
-	const changeQuantity = (productId, delta) => {
+	const changeQuantity = (key, delta) => {
 		setDraft((prev) =>
 			prev.map((line) =>
-				line.productId === productId ? { ...line, quantity: Math.max(1, line.quantity + delta) } : line
+				line.key === key ? { ...line, quantity: Math.max(1, line.quantity + delta) } : line
 			)
 		);
 	};
 
-	const removeLine = (productId) => {
-		setDraft((prev) => prev.filter((line) => line.productId !== productId));
+	const removeLine = (key) => {
+		setDraft((prev) => prev.filter((line) => line.key !== key));
 	};
 
-	const addProduct = (product) => {
+	const addProduct = (product, variant) => {
 		const productId = String(product._id);
+		const variantId = variant ? String(variant._id) : undefined;
+		const key = draftLineKey({ productId, variantId });
 		setDraft((prev) => {
-			if (prev.some((line) => line.productId === productId)) {
-				return prev.map((line) => (line.productId === productId ? { ...line, quantity: line.quantity + 1 } : line));
+			if (prev.some((line) => line.key === key)) {
+				return prev.map((line) => (line.key === key ? { ...line, quantity: line.quantity + 1 } : line));
 			}
 			if (prev.length >= MAX_LINES) return prev;
-			return [...prev, { productId, productName: product.name, quantity: 1 }];
+			return [
+				...prev,
+				{
+					key,
+					productId,
+					...(variantId && { variantId }),
+					productName: product.name,
+					...(variant?.label && { variantLabel: variant.label }),
+					quantity: 1,
+				},
+			];
 		});
 	};
 
@@ -199,7 +194,7 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 
 	const handleSave = useCallback(async () => {
 		const payload = {
-			items: draft.map(({ productId, quantity }) => ({ productId, quantity })),
+			items: draftToPayloadItems(draft),
 			expectedRevision: revision,
 			reason: trimmedReason,
 		};
@@ -275,7 +270,8 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 					{(order.items || []).map((item, index) => (
 						<li key={index} className="px-3 py-2 text-sm flex items-center justify-between gap-2">
 							<span className="text-gray-900">
-								{item.productName} × {item.quantity}
+								{item.productName}
+								{item.variantLabel && <span className="text-gray-600"> · {item.variantLabel}</span>} × {item.quantity}
 								{item.fromCombo && item.comboName && (
 									<span className="ml-2 text-xs text-gray-500">({item.comboName})</span>
 								)}
@@ -291,13 +287,16 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 					<ul className="bg-gray-50 border rounded divide-y">
 						{draft.length === 0 && <li className="px-3 py-2 text-sm text-gray-500">Chưa có sản phẩm nào</li>}
 						{draft.map((line) => (
-							<li key={line.productId} className="px-3 py-2 text-sm flex items-center justify-between gap-2">
-								<span className="text-gray-900">{line.productName}</span>
+							<li key={line.key} className="px-3 py-2 text-sm flex items-center justify-between gap-2">
+								<span className="text-gray-900">
+									{line.productName}
+									{line.variantLabel && <span className="text-gray-600"> · {line.variantLabel}</span>}
+								</span>
 								<span className="flex items-center gap-2">
 									<button
 										type="button"
-										aria-label={`Giảm số lượng ${line.productName}`}
-										onClick={() => changeQuantity(line.productId, -1)}
+										aria-label={`Giảm số lượng ${line.productName}${line.variantLabel ? ` ${line.variantLabel}` : ''}`}
+										onClick={() => changeQuantity(line.key, -1)}
 										disabled={saving || line.quantity <= 1}
 										className="w-8 h-8 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
 									>
@@ -306,8 +305,8 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 									<span className="w-8 text-center">{line.quantity}</span>
 									<button
 										type="button"
-										aria-label={`Tăng số lượng ${line.productName}`}
-										onClick={() => changeQuantity(line.productId, 1)}
+										aria-label={`Tăng số lượng ${line.productName}${line.variantLabel ? ` ${line.variantLabel}` : ''}`}
+										onClick={() => changeQuantity(line.key, 1)}
 										disabled={saving}
 										className="w-8 h-8 border rounded disabled:opacity-50 disabled:cursor-not-allowed"
 									>
@@ -315,7 +314,7 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 									</button>
 									<button
 										type="button"
-										onClick={() => removeLine(line.productId)}
+										onClick={() => removeLine(line.key)}
 										disabled={saving}
 										aria-label={`Xoá ${line.productName || 'sản phẩm'}`}
 										className="h-8 px-2 text-red-600 border border-red-200 rounded disabled:opacity-50 disabled:cursor-not-allowed"
@@ -345,21 +344,57 @@ const OrderItemsEditor = ({ order, onSaved, onReload }) => {
 							{!productsLoading && filteredProducts.length === 0 && (
 								<li className="px-3 py-2 text-sm text-gray-500">Không có sản phẩm phù hợp</li>
 							)}
-							{filteredProducts.map((product) => (
-								<li key={product._id}>
-									<button
-										type="button"
-										onClick={() => addProduct(product)}
-										disabled={saving}
-										className="w-full px-3 py-2 text-sm flex items-center justify-between gap-2 text-left hover:bg-gray-50 disabled:opacity-50"
-									>
-										<span>{product.name}</span>
-										{typeof product.price === 'number' && (
-											<span className="text-gray-500 whitespace-nowrap">{formatCurrency(product.price)}</span>
+							{filteredProducts.map((product) => {
+								const variants = hasOptions(product) ? activeVariants(product) : null;
+								const pickedId = pickedVariants[product._id] || '';
+								const picked = variants?.find((variant) => String(variant._id) === pickedId);
+								return (
+									<li key={product._id}>
+										{variants ? (
+											<div className="px-3 py-2 text-sm flex items-center justify-between gap-2">
+												<span>{product.name}</span>
+												<span className="flex items-center gap-2">
+													<select
+														aria-label={`Chọn phân loại ${product.name}`}
+														className="border rounded px-2 py-1 text-sm h-8"
+														value={pickedId}
+														onChange={(e) => setPickedVariants((prev) => ({ ...prev, [product._id]: e.target.value }))}
+														disabled={saving}
+													>
+														<option value="">Chọn phân loại…</option>
+														{variants.map((variant) => (
+															<option key={variant._id} value={variant._id}>
+																{variant.label}
+																{typeof variant.effectivePrice === 'number' ? ` · ${formatCurrency(variant.effectivePrice)}` : ''}
+															</option>
+														))}
+													</select>
+													<button
+														type="button"
+														onClick={() => addProduct(product, picked)}
+														disabled={saving || !picked}
+														className="btn btn-secondary px-3 text-sm h-8 disabled:opacity-50 disabled:cursor-not-allowed"
+													>
+														Thêm
+													</button>
+												</span>
+											</div>
+										) : (
+											<button
+												type="button"
+												onClick={() => addProduct(product)}
+												disabled={saving}
+												className="w-full px-3 py-2 text-sm flex items-center justify-between gap-2 text-left hover:bg-gray-50 disabled:opacity-50"
+											>
+												<span>{product.name}</span>
+												{typeof product.price === 'number' && (
+													<span className="text-gray-500 whitespace-nowrap">{formatCurrency(product.price)}</span>
+												)}
+											</button>
 										)}
-									</button>
-								</li>
-							))}
+									</li>
+								);
+							})}
 						</ul>
 					</div>
 
