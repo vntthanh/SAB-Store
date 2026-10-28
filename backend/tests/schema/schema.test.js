@@ -67,6 +67,7 @@ const order = (overrides = {}) =>
 const movement = (overrides = {}) =>
 	insert('stock_movements', {
 		product_id: uuidv7(),
+		variant_id: uuidv7(),
 		type: 'order',
 		delta: -1,
 		idempotency_key: `key-${next()}`,
@@ -125,14 +126,16 @@ describe('ids', () => {
 			'jwks.id',
 			'mail_settings.id',
 			'order_internal_notes.id', 'order_internal_notes.order_id',
-			'order_items.combo_id', 'order_items.id', 'order_items.order_id', 'order_items.product_id',
+			'order_items.combo_id', 'order_items.id', 'order_items.order_id', 'order_items.product_id', 'order_items.variant_id',
 			'order_items_edits.id', 'order_items_edits.order_id',
 			'order_status_history.id', 'order_status_history.order_id',
 			'orders.created_by', 'orders.id', 'orders.storefront_id',
+			'product_options.id', 'product_options.product_id',
+			'product_variants.id', 'product_variants.product_id',
 			'products.id', 'products.storefront_id',
 			'session.id', 'session.impersonatedBy', 'session.userId',
 			'settings.id',
-			'stock_movements.id', 'stock_movements.order_id', 'stock_movements.product_id',
+			'stock_movements.id', 'stock_movements.order_id', 'stock_movements.product_id', 'stock_movements.variant_id',
 			'storefront_access_rules.created_by', 'storefront_access_rules.email_list_id', 'storefront_access_rules.id', 'storefront_access_rules.storefront_id',
 			'storefronts.id',
 			'user.id',
@@ -288,6 +291,13 @@ describe('check constraints', () => {
 			'order_items_quantity_check',
 			'orders_phone_number_check',
 			'orders_total_amount_check',
+			'product_options_position_check',
+			'product_options_values_check',
+			'product_variants_archived_check',
+			'product_variants_position_check',
+			'product_variants_price_check',
+			'products_cover_check',
+			'products_images_count_check',
 			'products_min_order_quantity_check',
 			'products_price_check',
 			'products_sale_price_check',
@@ -298,6 +308,32 @@ describe('check constraints', () => {
 			'storefront_access_rules_value_lower_check',
 			'storefronts_slug_check',
 		]);
+	});
+
+	it('keeps the cover equal to the first image, at most nine images', async () => {
+		await product({ image_url: '/uploads/a.jpg', images: ['/uploads/a.jpg', '/uploads/b.jpg'] });
+		await product();
+		await expect(product({ image_url: '/uploads/a.jpg' })).rejects.toMatchObject({ code: CHECK_VIOLATION });
+		await expect(product({ image_url: '/uploads/b.jpg', images: ['/uploads/a.jpg'] })).rejects.toMatchObject({ code: CHECK_VIOLATION });
+		const ten = Array.from({ length: 10 }, (_, i) => `/uploads/${i}.jpg`);
+		await expect(product({ image_url: ten[0], images: ten })).rejects.toMatchObject({ code: CHECK_VIOLATION });
+	});
+
+	it('shapes options and variants: values present, no negative price, an archived variant is inactive', async () => {
+		const p = await product();
+		await expect(insert('product_options', { product_id: p.id, position: 0, name: 'Size', values: [] })).rejects.toMatchObject({ code: CHECK_VIOLATION });
+		await insert('product_options', { product_id: p.id, position: 0, name: 'Size', values: ['S', 'M'] });
+		await expect(insert('product_options', { product_id: p.id, position: 1, name: 'Size', values: ['L'] })).rejects.toMatchObject({ code: UNIQUE_VIOLATION });
+
+		await insert('product_variants', { product_id: p.id, position: 0, option_values: ['S'] });
+		await expect(insert('product_variants', { product_id: p.id, position: 1, option_values: ['S'] })).rejects.toMatchObject({ code: UNIQUE_VIOLATION });
+		await expect(insert('product_variants', { product_id: p.id, position: 1, option_values: ['M'], price: -1 })).rejects.toMatchObject({ code: CHECK_VIOLATION });
+		await expect(insert('product_variants', { product_id: p.id, position: 1, option_values: ['M'], archived_at: new Date() })).rejects.toMatchObject({ code: CHECK_VIOLATION });
+		await insert('product_variants', { product_id: p.id, position: 1, option_values: ['M'], archived_at: new Date(), is_active: false });
+
+		await db.query('DELETE FROM products WHERE id = $1', [p.id]);
+		expect(await count('product_options')).toBe(0);
+		expect(await count('product_variants')).toBe(0);
 	});
 
 	it('requires a Vietnamese 10-digit phone number, and allows none for a direct sale', async () => {
@@ -510,7 +546,7 @@ describe('lib/prisma', () => {
 		const user = await lib.prisma.user.create({ data: { name: 'x', email: 'prisma-id@example.invalid', username: 'prisma_id' } });
 		const combo = await lib.prisma.combo.create({ data: { name: 'x', price: 1, publicCode: 'PRISMAID', slug: 'x' } });
 		const movement = await lib.prisma.stockMovement.create({
-			data: { productId: uuidv7(), type: 'order', delta: -1, idempotencyKey: 'prisma-id' },
+			data: { productId: uuidv7(), variantId: uuidv7(), type: 'order', delta: -1, idempotencyKey: 'prisma-id' },
 		});
 		const ids = [user.id, combo.id, movement.id];
 		for (const id of ids) {
@@ -523,10 +559,10 @@ describe('lib/prisma', () => {
 
 	it('takes the next stock sequence value from the database', async () => {
 		const a = await lib.prisma.stockMovement.create({
-			data: { productId: uuidv7(), type: 'order', delta: -1, idempotencyKey: 'prisma-1' },
+			data: { productId: uuidv7(), variantId: uuidv7(), type: 'order', delta: -1, idempotencyKey: 'prisma-1' },
 		});
 		const b = await lib.prisma.stockMovement.create({
-			data: { productId: uuidv7(), type: 'order', delta: -1, idempotencyKey: 'prisma-2' },
+			data: { productId: uuidv7(), variantId: uuidv7(), type: 'order', delta: -1, idempotencyKey: 'prisma-2' },
 		});
 		expect(b.seq).toBe(a.seq + 1);
 	});

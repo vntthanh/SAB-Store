@@ -30,7 +30,7 @@ describe.skipIf(!POSTGRES)('postgres translateWriteError', () => {
 		(err) => err
 	);
 	const product = (overrides = {}) => ({ id: uuidv7(), name: 'p', price: 1, category: 'c', publicCode: uuidv7(), slug: 's', storefrontId: DEFAULT_STOREFRONT_ID, ...overrides });
-	const movement = (overrides = {}) => ({ id: uuidv7(), productId: uuidv7(), type: 'adjust', delta: 1, idempotencyKey: uuidv7(), ...overrides });
+	const movement = (overrides = {}) => ({ id: uuidv7(), productId: uuidv7(), variantId: uuidv7(), type: 'adjust', delta: 1, idempotencyKey: uuidv7(), ...overrides });
 
 	it('turns a unique violation into a DuplicateKeyError naming the record field', async () => {
 		await prisma.stockMovement.create({ data: movement({ idempotencyKey: 'taken' }) });

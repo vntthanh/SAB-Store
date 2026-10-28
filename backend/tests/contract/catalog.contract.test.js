@@ -461,9 +461,14 @@ describe('product writes and reads', () => {
 			expect(created, absent).not.toHaveProperty(absent);
 		}
 		expect(withoutVersion(created)).toEqual([
-			'_id', 'available', 'category', 'createdAt', 'description', 'featured', 'imageUrl', 'isActive', 'maxOrderQuantity', 'minOrderQuantity',
-			'name', 'price', 'publicCode', 'salesChannel', 'slug', 'stockQuantity', ...(POSTGRES ? ['storefrontId'] : []), 'tags', 'updatedAt',
+			'_id', 'available', 'category', 'createdAt', 'description', 'featured', 'imageUrl', ...(POSTGRES ? ['images'] : []), 'isActive', 'maxOrderQuantity', 'minOrderQuantity',
+			'name', ...(POSTGRES ? ['options'] : []), 'price', 'publicCode', 'salesChannel', 'slug', 'stockQuantity', ...(POSTGRES ? ['storefrontId'] : []), 'tags', 'updatedAt',
+			...(POSTGRES ? ['variants'] : []),
 		]);
+		if (POSTGRES) {
+			expect(created).toMatchObject({ images: [], options: [] });
+			expect(created.variants).toEqual([{ _id: expect.any(String), optionValues: [], effectivePrice: 5, isActive: true, stockQuantity: 3 }]);
+		}
 		expect(await products.findById(created._id)).toEqual(created);
 		expect((await findProduct(created._id)).stockQuantity).toBe(3);
 	});

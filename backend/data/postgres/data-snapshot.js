@@ -31,6 +31,11 @@
  * the default storefront (the constant of data/default-storefront.js) and puts every
  * product, every combo and every online order in it. Direct sales never get one.
  *
+ * Variants travel inside their product row (`images`, `options`, `variants`). A
+ * file made before variants existed has none: the restore gives every product one
+ * default variant holding its stock and points the product's order lines and
+ * movements at it, as the migration that introduced variants did.
+ *
  * An export from here holds uuid ids; the Mongo backend's id check accepts only
  * 24-hex, so it cannot be restored onto Mongo.
  */
@@ -39,11 +44,12 @@ const { normalizeRecordId } = require('../ids');
 const { DEFAULT_STOREFRONT_ID, DEFAULT_STOREFRONT_SLUG, DEFAULT_STOREFRONT_NAME } = require('../default-storefront');
 const { translating } = require('./errors');
 const { withSnapshotTransaction, withTransaction } = require('./tx');
-const { toRecord: productRecord } = require('./products');
+const { toRecord: productRecord, FULL_INCLUDE: PRODUCT_INCLUDE, FALLBACK_IMAGE } = require('./products');
 const { toRecord: comboRecord, STOREFRONT_SELECT } = require('./combos');
 const { toRecord: settingsRecord } = require('./settings');
 const { includeFor, toRecord: orderRecord } = require('./order-records');
 const { drawCodeAndSlug, slugFor } = require('./public-code');
+const { v7: uuidv7 } = require('uuid');
 const { mapJsonIds, HEX_ID } = require('./json-ids');
 
 const INSERT_CHUNK = 1000;
@@ -66,6 +72,13 @@ function wireRow(row) {
 	return { _id: id, ...Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== null)) };
 }
 
+/** A product as a wire record: its variants without the fields computed from the product (`label`, `effectivePrice`). */
+function productWire(row) {
+	const record = productRecord(row);
+	record.variants = record.variants.map(({ label: _label, effectivePrice: _price, ...variant }) => variant);
+	return record;
+}
+
 /** A movement row as a wire record: `seq` stays internal, an unset column is an absent key. */
 function movementWire(row) {
 	const { id, seq: _seq, ...rest } = row;
@@ -82,7 +95,7 @@ function movementWire(row) {
 function exportAll(outer) {
 	const read = async (tx) => {
 		const [products, combos, orders, movements, settings, storefronts, rules, lists, entries] = [
-			await tx.product.findMany({ orderBy: { id: 'asc' } }),
+			await tx.product.findMany({ orderBy: { id: 'asc' }, include: PRODUCT_INCLUDE }),
 			await tx.combo.findMany({
 				orderBy: { id: 'asc' },
 				include: { requirements: { orderBy: { position: 'asc' } }, storefronts: STOREFRONT_SELECT }
@@ -96,7 +109,7 @@ function exportAll(outer) {
 			await tx.emailListEntry.findMany({ orderBy: { id: 'asc' } })
 		];
 		return {
-			products: products.map((row) => toWire(productRecord(row))),
+			products: products.map((row) => toWire(productWire(row))),
 			combos: combos.map((row) => toWire(comboRecord(row))),
 			orders: orders.map((row) => toWire(orderRecord(row))),
 			stockMovements: movements.map((row) => toWire(movementWire(row))),
@@ -154,8 +167,31 @@ function mappedKey(key) {
 /** The storefront a row of the file belongs to: a file from before storefronts has none, so everything is the default one. */
 const storefrontOf = (value, legacy) => (legacy || value === null || value === undefined ? DEFAULT_STOREFRONT_ID : normalizeRecordId(value));
 
-function productRow(product, legacy) {
-	const { _id, __v, dimensions, publicCode, slug, storefrontId, ...rest } = product;
+/**
+ * A product's rows: the product, its options and its variants. A product from a
+ * file without variants gets its default variant (a new id) holding its stock,
+ * and its gallery is its one image, as the cover rule needs.
+ */
+function productRows(product, legacy) {
+	const { _id, __v, dimensions, publicCode, slug, storefrontId, images, options, variants, ...rest } = product;
+	const id = normalizeRecordId(_id);
+	const imageUrl = rest.imageUrl || FALLBACK_IMAGE;
+	const fileVariants = Array.isArray(variants)
+		? variants
+		: [{ _id: uuidv7(), optionValues: [], stockQuantity: Number.isSafeInteger(rest.stockQuantity) ? rest.stockQuantity : 0 }];
+	return {
+		product: productRow({ ...rest, imageUrl, images: Array.isArray(images) ? images : imageUrl === FALLBACK_IMAGE ? [] : [imageUrl] }, { _id, dimensions, publicCode, slug, storefrontId }, legacy),
+		options: (options ?? []).map((option, position) => ({ productId: id, position, name: option.name, values: option.values })),
+		variants: fileVariants.map((variant, position) => ({
+			...cleaned({ ...variant, _id: undefined }, ['archivedAt']),
+			id: normalizeRecordId(variant._id),
+			productId: id,
+			position
+		}))
+	};
+}
+
+function productRow(rest, { _id, dimensions, publicCode, slug, storefrontId }, legacy) {
 	return {
 		...cleaned(rest, ['createdAt', 'updatedAt', 'saleStartDate', 'saleEndDate']),
 		id: normalizeRecordId(_id),
@@ -182,7 +218,10 @@ function comboRows(combo, legacy) {
 	};
 }
 
-function orderRows(order, legacy) {
+/** The variant a line or movement of a file without variants belongs to: its product's default one, when the product is in the file. */
+const variantOf = (row, defaultVariants) => idOrUndefined(row.variantId) ?? defaultVariants.get(normalizeRecordId(row.productId));
+
+function orderRows(order, legacy, defaultVariants) {
 	const { _id, __v, items = [], statusHistory = [], internalNotes = [], itemsHistory = [], comboInfo, createdBy, phoneNumber, storefrontId, ...rest } = order;
 	const id = normalizeRecordId(_id);
 	return {
@@ -197,8 +236,8 @@ function orderRows(order, legacy) {
 			storefrontId: legacy ? (rest.isDirectSale === true ? null : DEFAULT_STOREFRONT_ID) : idOrNull(storefrontId)
 		},
 		items: items.map((item, position) => ({
-			...present({ ...item, _id: undefined, productId: undefined, comboId: undefined }),
-			...present({ id: idOrUndefined(item._id), comboId: idOrUndefined(item.comboId) }),
+			...present({ ...item, _id: undefined, productId: undefined, comboId: undefined, variantId: undefined }),
+			...present({ id: idOrUndefined(item._id), comboId: idOrUndefined(item.comboId), variantId: variantOf(item, defaultVariants) }),
 			productId: normalizeRecordId(item.productId),
 			orderId: id,
 			position
@@ -220,12 +259,15 @@ function orderRows(order, legacy) {
 	};
 }
 
-function movementRow(movement, seq) {
-	const { _id, __v, productId, orderId, idempotencyKey, ...rest } = movement;
+function movementRow(movement, seq, defaultVariants) {
+	const { _id, __v, productId, variantId: _variantId, orderId, idempotencyKey, ...rest } = movement;
 	return {
 		...cleaned(rest, ['createdAt', 'appliedAt', 'claimedAt']),
 		id: normalizeRecordId(_id),
 		productId: normalizeRecordId(productId),
+		// A movement of a product the file does not hold has no variant to name; a
+		// fresh id keeps the column NOT NULL and the ledger settles it as gone.
+		variantId: variantOf(movement, defaultVariants) ?? uuidv7(),
 		...(orderId ? { orderId: normalizeRecordId(orderId) } : {}),
 		idempotencyKey: mappedKey(idempotencyKey),
 		seq
@@ -330,9 +372,12 @@ function replaceAll(snapshot, tx) {
 		const rules = legacy ? [] : snapshot.storefrontAccessRules.map(accessRuleRow);
 		const lists = legacy ? [] : snapshot.emailLists.map(emailListRow);
 		const entries = legacy ? [] : snapshot.emailListEntries.map(emailListEntryRow);
-		const products = snapshot.products.map((product) => productRow(product, legacy));
+		const products = snapshot.products.map((product) => productRows(product, legacy));
+		// Only a file without variants needs them: every line and movement then names none.
+		const variantsLegacy = !snapshot.products.some((product) => Array.isArray(product.variants));
+		const defaultVariants = new Map(variantsLegacy ? products.map((entry) => [entry.product.id, entry.variants[0].id]) : []);
 		const combos = snapshot.combos.map((combo) => comboRows(combo, legacy));
-		const orders = snapshot.orders.map((order) => orderRows(order, legacy));
+		const orders = snapshot.orders.map((order) => orderRows(order, legacy, defaultVariants));
 		const settings = snapshot.settings.map(settingsRow);
 
 		// Taken before the first delete: asking for it after a ROW EXCLUSIVE lock is held
@@ -353,7 +398,9 @@ function replaceAll(snapshot, tx) {
 		await insertAll(tx.emailList, lists);
 		await insertAll(tx.emailListEntry, entries);
 		await insertAll(tx.storefrontAccessRule, rules);
-		await insertAll(tx.product, products);
+		await insertAll(tx.product, products.map((entry) => entry.product));
+		await insertAll(tx.productOption, products.flatMap((entry) => entry.options));
+		await insertAll(tx.productVariant, products.flatMap((entry) => entry.variants));
 		await insertAll(tx.combo, combos.map((entry) => entry.combo));
 		await insertAll(tx.comboCategoryRequirement, combos.flatMap((entry) => entry.requirements));
 		await insertAll(tx.comboStorefront, combos.flatMap((entry) => entry.links));
@@ -364,7 +411,7 @@ function replaceAll(snapshot, tx) {
 		await insertAll(tx.orderItemsEdit, orders.flatMap((entry) => entry.itemsEdits));
 
 		const firstSeq = await reserveSeq(tx, snapshot.stockMovements.length);
-		await insertAll(tx.stockMovement, snapshot.stockMovements.map((movement, index) => movementRow(movement, firstSeq + index)));
+		await insertAll(tx.stockMovement, snapshot.stockMovements.map((movement, index) => movementRow(movement, firstSeq + index, defaultVariants)));
 		await insertAll(tx.settings, settings);
 
 		return {

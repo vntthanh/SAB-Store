@@ -3,7 +3,7 @@ const { buildTestApp } = require('../helpers/app');
 const { makeProduct } = require('../helpers/factories');
 
 const PUBLIC_KEYS = [
-	'_id', 'publicCode', 'slug', 'path', 'name', 'description', 'price', 'imageUrl',
+	'_id', 'publicCode', 'slug', 'path', 'name', 'description', 'price', 'imageUrl', 'images', 'options', 'variants',
 	'category', 'available', 'minOrderQuantity', 'maxOrderQuantity', 'storefront'
 ].sort();
 const FORBIDDEN_KEYS = [

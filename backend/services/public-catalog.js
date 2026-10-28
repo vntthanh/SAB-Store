@@ -12,6 +12,7 @@ const { ERROR_CODES } = require('../constants/errorCodes');
 const { StorefrontAccessError, assertCanView, canView, describeAccess } = require('./storefront-access');
 const { mergeRequirements } = require('./combo-optimizer');
 const { normalizePublicCode } = require('../utils/public-code');
+const FALLBACK_IMAGE = '/fallback-product.png';
 
 const CHANNEL = 'online';
 const OG_VERSION_LENGTH = 8;
@@ -27,8 +28,23 @@ const comboPath = (combo) => `/c/${combo.publicCode}/${pathSegment(combo)}`;
 // Exactly what toPublicProduct reads, plus the storefront used to filter by access (never
 // output): stock and other internals are never loaded.
 const PUBLIC_PRODUCT_FIELDS = [
-	'storefrontId', 'publicCode', 'slug', 'name', 'description', 'price', 'imageUrl', 'category', 'available', 'minOrderQuantity', 'maxOrderQuantity'
+	'storefrontId', 'publicCode', 'slug', 'name', 'description', 'price', 'imageUrl', 'category', 'available', 'minOrderQuantity', 'maxOrderQuantity',
+	'images', 'options', 'variants'
 ];
+
+// What a customer may know of a variant: never its stock or SKU, and only the
+// active ones. A store without variants (the Mongo rollback) lists none.
+function toPublicVariants(doc) {
+	return (doc.variants ?? [])
+		.filter((variant) => variant.isActive !== false)
+		.map((variant) => ({
+			_id: variant._id,
+			optionValues: variant.optionValues,
+			...(variant.label && { label: variant.label }),
+			effectivePrice: variant.effectivePrice ?? doc.price,
+			...(variant.imageUrl && { imageUrl: variant.imageUrl })
+		}));
+}
 
 function toPublicProduct(doc) {
 	return {
@@ -40,6 +56,9 @@ function toPublicProduct(doc) {
 		description: doc.description,
 		price: doc.price,
 		imageUrl: doc.imageUrl,
+		images: doc.images ?? (doc.imageUrl && doc.imageUrl !== FALLBACK_IMAGE ? [doc.imageUrl] : []),
+		options: doc.options ?? [],
+		variants: toPublicVariants(doc),
 		category: doc.category,
 		available: doc.available,
 		minOrderQuantity: doc.minOrderQuantity,

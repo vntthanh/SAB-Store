@@ -4,21 +4,28 @@
  * data/mongo/stock-ledger.js.
  *
  * `applyClaimed` is the only function in the code base that changes
- * `products.stock_quantity` after a product exists.
+ * `products.stock_quantity` or `product_variants.stock_quantity` after the row
+ * exists. A movement belongs to one variant; applying it moves that variant and
+ * its product by the same delta, so a product's stock stays the sum of its
+ * variants'.
  *
- * Lock order, always: movement row (FOR UPDATE), then product row (FOR NO KEY
- * UPDATE). Order and order-edit paths only INSERT movements and never lock a
- * product, so no path can hold the product and wait for a movement. A new code
- * path that locks a product must not then lock a movement.
+ * Lock order, always: movement row (FOR UPDATE), then variant row (FOR NO KEY
+ * UPDATE), then product row (FOR NO KEY UPDATE). Order and order-edit paths only
+ * INSERT movements and never lock a product or variant, so no path can hold
+ * either and wait for a movement. A new code path that locks a product must not
+ * then lock a variant or a movement.
  *
  * Why the locks, at Read Committed:
  * - Movement lock: a second run of the same movement blocks until the first
  *   commits, re-evaluates `status = 'pending'`, finds it applied and does nothing.
- * - Product lock: serialises appliers of one product, and makes the stock a
- *   `set_target` reads the stock it then adjusts. It is NO KEY UPDATE, not
- *   UPDATE: only `stock_quantity` changes, and FOR UPDATE would also block the
- *   KEY SHARE lock that inserts referencing the product take. Appliers still
- *   exclude each other, since NO KEY UPDATE conflicts with itself.
+ * - Variant and product locks: serialise appliers of one variant and of one
+ *   product, so both caches move by the same deltas in the same order, and make
+ *   the stock a `set_target` reads the stock it then adjusts. They are NO KEY
+ *   UPDATE, not UPDATE: only `stock_quantity` changes, and FOR UPDATE would also
+ *   block the KEY SHARE lock that inserts referencing the row take (order lines
+ *   and movements reference neither by foreign key today, but the product's
+ *   options and variants reference the product). Appliers still exclude each
+ *   other, since NO KEY UPDATE conflicts with itself.
  * - The `updateMany` count of 1 is defence in depth behind the movement lock and
  *   the `status = 'pending'` predicate of the gate: either of those alone already
  *   stops a second run, so the check is kept for the day one of them is edited
@@ -33,6 +40,7 @@ const { normalizeRecordId } = require('../ids');
 const { translating } = require('./errors');
 const { withTransaction } = require('./tx');
 const { toSkipTake, buildPaginationMeta } = require('@sab/shared');
+const { v7: uuidv7 } = require('uuid');
 
 // The database enum is the one list of movement types.
 const MOVEMENT_TYPES = Object.values(MovementType);
@@ -60,6 +68,24 @@ async function findMovementByKey(idempotencyKey, tx) {
 }
 
 /**
+ * The variant a movement that names none belongs to: the product's default
+ * variant (no option values). A product that is gone gets a fresh id, which no
+ * variant has, so the worker settles the movement as it settles any movement of
+ * deleted stock (an order line of a deleted product names no variant either).
+ *
+ * @throws {Error} the product exists but has options: its movements must name a variant
+ */
+async function defaultVariantIdOf(productId, tx) {
+	const db = clientOf(tx);
+	const variant = await db.productVariant.findFirst({ where: { productId, optionValues: { equals: [] } }, select: { id: true } });
+	if (variant) return variant.id;
+	if (await db.product.findUnique({ where: { id: productId }, select: { id: true } })) {
+		throw new Error(`Product ${productId} has options; a stock movement must name its variant`);
+	}
+	return uuidv7();
+}
+
+/**
  * Insert one movement and return it.
  *
  * A taken idempotency key rejects with a `DuplicateKeyError` naming
@@ -72,10 +98,13 @@ async function findMovementByKey(idempotencyKey, tx) {
  */
 function createMovement(record, tx) {
 	return translating(async () => {
+		// A legacy hex id from the API or an old job maps to the row's uuid.
+		const productId = normalizeRecordId(record.productId);
+		const variantId = record.variantId == null ? await defaultVariantIdOf(productId, tx) : normalizeRecordId(record.variantId);
 		const row = await clientOf(tx).stockMovement.create({
 			data: {
-				// A legacy hex id from the API or an old job maps to the row's uuid.
-				productId: normalizeRecordId(record.productId),
+				productId,
+				variantId,
 				type: record.type,
 				delta: record.delta ?? null,
 				target: record.target ?? null,
@@ -147,27 +176,31 @@ function applyClaimed(movementId) {
 	// withTransaction re-runs the callback on a deadlock, so it re-reads everything.
 	return withTransaction(async (tx) => {
 		const [movement] = await tx.$queryRaw`
-			SELECT id, product_id, type::text AS type, delta, target
+			SELECT id, product_id, variant_id, type::text AS type, delta, target
 			FROM stock_movements
 			WHERE id = ${id}::uuid AND status = 'pending'
 			FOR UPDATE`;
 		if (!movement) return false;
 
+		const [variant] = await tx.$queryRaw`
+			SELECT stock_quantity FROM product_variants
+			WHERE id = ${movement.variant_id}::uuid AND product_id = ${movement.product_id}::uuid FOR NO KEY UPDATE`;
 		const [product] = await tx.$queryRaw`
 			SELECT stock_quantity FROM products WHERE id = ${movement.product_id}::uuid FOR NO KEY UPDATE`;
 		const appliedAt = new Date();
 
-		if (!product) {
-			// The product was deleted. Leaving the movement pending would block the
-			// queue for a product that no longer exists.
+		if (!product || !variant) {
+			// The product (or this variant of it) was deleted. Leaving the movement
+			// pending would block the queue for stock that no longer exists.
 			const { count } = await tx.stockMovement.updateMany({
 				where: { id, status: 'pending' },
-				data: { status: 'applied', appliedAt, delta: movement.delta ?? 0, lastError: 'PRODUCT_NOT_FOUND' }
+				data: { status: 'applied', appliedAt, delta: movement.delta ?? 0, lastError: product ? 'VARIANT_NOT_FOUND' : 'PRODUCT_NOT_FOUND' }
 			});
 			return count === 1;
 		}
 
-		const current = product.stock_quantity;
+		// A target is the variant's stock; stock_after records the variant's too.
+		const current = variant.stock_quantity;
 		const delta = movement.type === 'set_target' ? movement.target - current : movement.delta;
 
 		// The gate: only the run that flips this movement goes on to touch the product.
@@ -178,6 +211,7 @@ function applyClaimed(movementId) {
 		if (gate.count !== 1) return false;
 
 		if (delta !== 0) {
+			await tx.productVariant.update({ where: { id: movement.variant_id }, data: { stockQuantity: { increment: delta } } });
 			await tx.product.update({ where: { id: movement.product_id }, data: { stockQuantity: { increment: delta } } });
 		}
 		return true;

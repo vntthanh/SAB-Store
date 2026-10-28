@@ -27,7 +27,7 @@ const PRODUCT_CREATION_WRITERS = new Map([
 	['data/mongo/products.js', { writes: 1, why: 'create product: opening balance, recorded as an applied opening movement' }],
 	// Same contract on postgres: the `create` data names the column once, as the opening balance. The
 	// catalogue reads only name the field as `true` (select, omit, aggregate), which is not a write.
-	['data/postgres/products.js', { writes: 1, why: 'create product: opening balance, recorded as an applied opening movement' }],
+	['data/postgres/products.js', { writes: 2, why: 'create product and its default variant: opening balance, recorded as an applied opening movement' }],
 	['routes/admin/database.js', { writes: 1, why: 'database import: field whitelist of imported products, each with its opening movement' }],
 	['init-database.js', { writes: 2, why: 'first-run seed products' }],
 	// A restore inserts whole product rows with the cache the file holds. The field is never
@@ -35,10 +35,10 @@ const PRODUCT_CREATION_WRITERS = new Map([
 	// from slipping in. It reproduces a ledger-consistent snapshot: the route compares every
 	// cache with the restored ledger (reconcile) inside the same transaction and rolls back on a mismatch.
 	// The backup file format lists the field to validate a product row of a restore file; it writes nothing.
-	['data/snapshot.js', { writes: 1, why: 'restore file format: field check of a product row, no write' }],
+	['data/snapshot.js', { writes: 3, why: 'restore file format: field checks of a product row and of a variant (shape, required key), no write' }],
 	['data/mongo/data-snapshot.js', { writes: 0, why: 'restore: whole product rows, cache verified against the restored ledger before commit' }],
 	// Same on postgres: rows are built from the file's own keys and inserted as a unit, so the field is never named.
-	['data/postgres/data-snapshot.js', { writes: 0, why: 'restore: whole product rows, cache verified against the restored ledger before commit' }]
+	['data/postgres/data-snapshot.js', { writes: 1, why: 'restore: whole product rows, and a file from before variants gives each product a default variant holding its stock; caches verified against the restored ledger before commit' }]
 ]);
 
 // Top-level backend directories that hold no application code. node_modules is

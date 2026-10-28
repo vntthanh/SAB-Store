@@ -38,7 +38,9 @@ const itemRecord = (item) => ({
 	quantity: item.quantity,
 	fromCombo: item.fromCombo,
 	comboId: item.comboId,
-	comboName: item.comboName
+	comboName: item.comboName,
+	// Absent on a line of a product deleted before variants existed, and the label on a default variant.
+	...present([['variantId', item.variantId], ['variantLabel', item.variantLabel]])
 });
 
 const historyRecord = (entry) => ({

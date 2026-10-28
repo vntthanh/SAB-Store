@@ -22,7 +22,7 @@ describe.skipIf(!POSTGRES)('postgres withTransaction', () => {
 
 	const deadlock = () => Object.assign(new Error('deadlock detected'), { code: 'P2034' });
 	const movementCount = () => prisma.stockMovement.count();
-	const insert = (tx) => tx.stockMovement.create({ data: { id: uuidv7(), productId: uuidv7(), type: 'adjust', delta: 1, idempotencyKey: uuidv7() } });
+	const insert = (tx) => tx.stockMovement.create({ data: { id: uuidv7(), productId: uuidv7(), variantId: uuidv7(), type: 'adjust', delta: 1, idempotencyKey: uuidv7() } });
 
 	it('commits what the callback wrote and returns its result', async () => {
 		const result = await withTransaction(async (tx) => {

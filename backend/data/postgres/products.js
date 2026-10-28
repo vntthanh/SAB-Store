@@ -16,7 +16,13 @@
  *   an edit may move the product to another one. `findSellable`, `listSellable` and
  *   `findSellableForPricing` take an optional `storefrontId` to list one storefront's products.
  *
- * `stock_quantity` is written by `create` alone (the opening balance, which the
+ * - A record carries `images` (gallery order; `imageUrl` is the cover, always
+ *   `images[0]` or the fallback), `options` (`[{name, values}]`, in position order)
+ *   and `variants` (see `variantRecord`). Every product has at least one variant: a
+ *   product without options has one default variant with no option values.
+ *   Customer reads list only active variants and never their stock or SKU.
+ *
+ * `stock_quantity` (product and variant) is written by `create` alone (the opening balance, which the
  * caller records as an applied `opening` movement in the same transaction) and
  * otherwise only by the stock ledger.
  */
@@ -41,19 +47,50 @@ const DIMENSION_COLUMNS = { length: 'dimensionLength', width: 'dimensionWidth', 
 // A customer must never receive the stock level, the SKU or the retired flag.
 const CUSTOMER_HIDDEN = { stockQuantity: true, sku: true, isActive: true };
 
+const FALLBACK_IMAGE = '/fallback-product.png';
+
+const VARIANT_ORDER = [{ position: 'asc' }, { id: 'asc' }];
+const OPTIONS_INCLUDE = { orderBy: { position: 'asc' }, select: { name: true, values: true } };
+const VARIANTS_INCLUDE = { orderBy: VARIANT_ORDER };
+// What pricing and the public pages need of a variant: no stock or SKU is loaded.
+const SELLING_VARIANTS_INCLUDE = { orderBy: VARIANT_ORDER, select: { id: true, optionValues: true, price: true, imageUrl: true, isActive: true } };
+// Customers see the variants they can buy, without stock or SKU.
+const CUSTOMER_VARIANTS_INCLUDE = {
+	where: { isActive: true },
+	orderBy: VARIANT_ORDER,
+	select: { id: true, optionValues: true, price: true, imageUrl: true }
+};
+const FULL_INCLUDE = { options: OPTIONS_INCLUDE, variants: VARIANTS_INCLUDE };
+const CUSTOMER_INCLUDE = { options: OPTIONS_INCLUDE, variants: CUSTOMER_VARIANTS_INCLUDE };
+
 const clientOf = (tx) => tx || prisma;
 
 // Optional fields a Mongo document simply lacks when they were never set.
 const OMITTED_WHEN_NULL = new Set(['description', 'sku', 'weight', 'salePrice', 'saleStartDate', 'saleEndDate']);
 
+/**
+ * A variant as a plain record. `effectivePrice` is what one unit costs: its own
+ * price, or the product's when it has none. `label` ("Đỏ / M") is absent for the
+ * default variant, and so are a NULL price, SKU, image or archive date.
+ */
+function variantRecord(row, productPrice) {
+	const { id, productId: _productId, position: _position, createdAt: _createdAt, updatedAt: _updatedAt, ...columns } = row;
+	const record = { _id: id, ...Object.fromEntries(Object.entries(columns).filter(([, value]) => value !== null)) };
+	if (row.optionValues.length > 0) record.label = row.optionValues.join(' / ');
+	if (productPrice !== undefined) record.effectivePrice = row.price ?? productPrice;
+	return record;
+}
+
 /** A stored row as a plain record: `_id` is the uuid string, unset optional fields are absent. */
 function toRecord(row) {
-	const { id, dimensionLength, dimensionWidth, dimensionHeight, ...rest } = row;
+	const { id, dimensionLength, dimensionWidth, dimensionHeight, options, variants, ...rest } = row;
 	const record = { _id: id };
 	for (const [key, value] of Object.entries(rest)) {
 		if (value === null && OMITTED_WHEN_NULL.has(key)) continue;
 		record[key] = value;
 	}
+	if (options) record.options = options.map(({ name, values }) => ({ name, values }));
+	if (variants) record.variants = variants.map((variant) => variantRecord(variant, row.price));
 	const dimensions = Object.fromEntries(
 		Object.entries({ length: dimensionLength, width: dimensionWidth, height: dimensionHeight }).filter(([, size]) => size !== null && size !== undefined)
 	);
@@ -66,6 +103,8 @@ function selectOf(fields) {
 	const select = { id: true };
 	for (const field of fields) {
 		if (field === 'dimensions') Object.assign(select, { dimensionLength: true, dimensionWidth: true, dimensionHeight: true });
+		else if (field === 'options') select.options = OPTIONS_INCLUDE;
+		else if (field === 'variants') select.variants = SELLING_VARIANTS_INCLUDE;
 		else if (field !== '_id') select[field] = true;
 	}
 	return select;
@@ -168,6 +207,9 @@ function columnsOf(fields, { creating }) {
 		publicCode
 	};
 	problems.throwIfAny();
+	// The single image the API sends is the whole gallery; the cover CHECK needs both.
+	if (columns.imageUrl === '') columns.imageUrl = FALLBACK_IMAGE;
+	if (columns.imageUrl !== undefined && fields.images === undefined) columns.images = columns.imageUrl === FALLBACK_IMAGE ? [] : [columns.imageUrl];
 	return Object.fromEntries(Object.entries(columns).filter(([, value]) => value !== undefined));
 }
 
@@ -185,7 +227,7 @@ function findSellable(channel, { publicCode, id, storefrontId } = {}) {
 	const sellable = sellableWhere(channel);
 	return translating(async () => {
 		const where = { ...sellable, ...storefrontWhere(storefrontId), ...(publicCode !== undefined && { publicCode }), ...(id !== undefined && { id: recordId(id) }) };
-		const rows = await prisma.product.findMany({ where, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
+		const rows = await prisma.product.findMany({ where, include: FULL_INCLUDE, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
 		return rows.map(toRecord);
 	});
 }
@@ -204,7 +246,7 @@ async function listSellable(channel, { category, search, forCustomers = false, s
 	const where = { ...sellableWhere(channel), ...listStorefrontWhere(storefrontId), ...(category && { category }), ...searchWhere(search) };
 	const rows = await prisma.product.findMany({
 		where,
-		...(forCustomers && { omit: CUSTOMER_HIDDEN }),
+		...(forCustomers ? { omit: CUSTOMER_HIDDEN, include: CUSTOMER_INCLUDE } : { include: FULL_INCLUDE }),
 		orderBy: [{ category: 'asc' }, { name: 'asc' }, { id: 'asc' }]
 	});
 	return rows.map(toRecord);
@@ -291,7 +333,7 @@ async function listPage({ page, limit, search, category, available, salesChannel
 
 	const { skip, take } = toSkipTake(page, limit);
 	const [rows, total] = await Promise.all([
-		prisma.product.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip, take }),
+		prisma.product.findMany({ where, include: FULL_INCLUDE, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip, take }),
 		prisma.product.count({ where })
 	]);
 	return { data: rows.map(toRecord), meta: buildPaginationMeta(total, { page, limit }) };
@@ -336,7 +378,7 @@ async function existsByName(name) {
 /** The product with this id, or null. @throws {InvalidIdError} */
 function findById(id) {
 	return translating(async () => {
-		const row = await prisma.product.findUnique({ where: { id: recordId(id) } });
+		const row = await prisma.product.findUnique({ where: { id: recordId(id) }, include: FULL_INCLUDE });
 		return row ? toRecord(row) : null;
 	});
 }
@@ -367,8 +409,11 @@ function create(fields, openingStock, tx) {
 				storefrontId: columns.storefrontId ?? DEFAULT_STOREFRONT_ID,
 				...drawCodeAndSlug(columns.name, supplied),
 				...(fields._id !== undefined && { id: recordId(fields._id) }),
-				stockQuantity: opening ?? undefined
-			}
+				stockQuantity: opening ?? undefined,
+				// Every product starts with its default variant, which holds the opening stock.
+				variants: { create: { position: 0, optionValues: [], stockQuantity: opening ?? undefined } }
+			},
+			include: FULL_INCLUDE
 		});
 		return toRecord(row);
 	});
@@ -395,7 +440,7 @@ function update(id, changes) {
 			columns.slug = slugFor(columns.name, stored.publicCode);
 		}
 		try {
-			return toRecord(await prisma.product.update({ where: { id: productId }, data: columns }));
+			return toRecord(await prisma.product.update({ where: { id: productId }, data: columns, include: FULL_INCLUDE }));
 		} catch (err) {
 			// Deleted between the lookup and the write.
 			if (err && err.code === 'P2025') return null;
@@ -411,6 +456,8 @@ function remove(id) {
 
 module.exports = {
 	toRecord,
+	FULL_INCLUDE,
+	FALLBACK_IMAGE,
 	SALES_CHANNELS,
 	assertSaleChannel,
 	findSellable,

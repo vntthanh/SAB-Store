@@ -53,12 +53,13 @@ describe.skipIf(!POSTGRES)('postgres stock-ledger locks', () => {
 		await require('../../lib/prisma').closeDb();
 	});
 
-	it('makes an apply wait for a writer holding the product row, then read the stock that writer committed', async () => {
+	it('makes an apply wait for a writer holding the variant row, then read the stock that writer committed', async () => {
 		const product = await insertRawProduct({ stockQuantity: 10 });
 		const target = await ledger.recordMovement({ productId: product._id, type: 'set_target', target: 3, idempotencyKey: 'lock-target' });
 
 		await other.query('BEGIN');
-		await other.query('SELECT 1 FROM products WHERE id = $1::uuid FOR NO KEY UPDATE', [product._id]);
+		await other.query('SELECT 1 FROM product_variants WHERE product_id = $1::uuid FOR NO KEY UPDATE', [product._id]);
+		await other.query('UPDATE product_variants SET stock_quantity = 20 WHERE product_id = $1::uuid', [product._id]);
 		await other.query('UPDATE products SET stock_quantity = 20 WHERE id = $1::uuid', [product._id]);
 		const applying = ledger.applyMovement(target._id);
 

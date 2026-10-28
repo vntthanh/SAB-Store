@@ -6,6 +6,7 @@
  */
 const { ObjectId } = require('mongodb');
 const { objectIdToUuidV7 } = require('@sab/shared');
+const { v7: uuidv7 } = require('uuid');
 const { POSTGRES } = require('../helpers/backend');
 const { countTables } = require('../../scripts/migrate-mongo/tables');
 
@@ -204,7 +205,7 @@ suite('migrate-mongo-to-postgres loader', () => {
 		const keys = (await prisma.stockMovement.findMany({ orderBy: { seq: 'asc' } })).map((m) => m.idempotencyKey);
 		expect(keys).toEqual([`opening:${uuid(ids.p1)}`, `order:${uuid(ids.o1)}:${uuid(ids.p1)}`, 'set:manual-1']);
 		// The sequence is past the loaded rows, so the next movement inserts.
-		const next = await prisma.stockMovement.create({ data: { productId: uuid(ids.p1), type: 'adjust', delta: 1, idempotencyKey: 'after-load' } });
+		const next = await prisma.stockMovement.create({ data: { variantId: uuidv7(), productId: uuid(ids.p1), type: 'adjust', delta: 1, idempotencyKey: 'after-load' } });
 		expect(next.seq).toBeGreaterThan(3);
 	});
 

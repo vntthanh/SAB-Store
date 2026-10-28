@@ -135,7 +135,7 @@ async function withOrderChildren(order) {
 	const strip = ({ orderId: _orderId, position: _position, ...rest }) => rest;
 	return {
 		...dropNulls(order, ORDER_ABSENT_WHEN_NULL),
-		items: items.map(strip),
+		items: items.map((item) => dropNulls(strip(item), new Set(['variantId', 'variantLabel']))),
 		statusHistory: history.map((entry) => dropNulls(strip(entry), new Set(['transactionCode', 'cancelReason', 'note']))),
 		internalNotes: notes.map(({ _id: _noteId, ...rest }) => strip(rest)),
 		itemsHistory: edits.map(({ _id: _editId, ...rest }) => strip(rest))
@@ -205,15 +205,25 @@ const PRODUCT_DEFAULTS = () => ({ name: `Test Product ${uuidv7()}`, price: 0, ca
 
 /**
  * Inserts a product exactly as given plus defaults for the columns that must
- * exist, bypassing every repository. Returns the stored row.
+ * exist, bypassing every repository, and the default variant every product has
+ * (holding the product's stock) unless `withDefaultVariant` is false. A given
+ * `imageUrl` is also the gallery unless `images` is given, as the cover CHECK
+ * requires. Returns the stored product row.
  */
-async function insertRawProduct(fields) {
+async function insertRawProduct({ withDefaultVariant = true, ...fields }) {
 	const row = { id: uuidv7(), ...PRODUCT_DEFAULTS(), ...fields };
+	if (row.images === undefined && row.imageUrl !== undefined && row.imageUrl !== '/fallback-product.png') row.images = [row.imageUrl];
 	const columns = Object.keys(row).map(columnOf);
 	const { rows } = await db().query(
 		`INSERT INTO products (${columns.map(quote).join(', ')}) VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')}) RETURNING *`,
 		Object.values(row)
 	);
+	if (withDefaultVariant) {
+		await db().query(
+			`INSERT INTO product_variants (id, product_id, position, option_values, stock_quantity) VALUES ($1::uuid, $2::uuid, 0, '{}', $3)`,
+			[uuidv7(), rows[0].id, rows[0].stock_quantity]
+		);
+	}
 	return toPlain(rows[0]);
 }
 
@@ -307,7 +317,11 @@ const patch = (table) => async (id, fields) => {
 	const { rowCount } = await db().query(`UPDATE ${quote(table)} SET ${sets} WHERE id = $${entries.length + 1}::uuid`, [...entries.map(([, v]) => v), id]);
 	if (rowCount !== 1) throw new Error(`no ${table} row with id ${id}`);
 };
-const patchProduct = patch('products');
+const patchProductRow = patch('products');
+/** As `patch`, keeping the gallery equal to a patched `imageUrl` unless `images` is patched too (the cover CHECK). */
+const patchProduct = (id, fields) => patchProductRow(id, fields.imageUrl !== undefined && fields.images === undefined
+	? { ...fields, images: fields.imageUrl === '/fallback-product.png' ? [] : [fields.imageUrl] }
+	: fields);
 /** Scalar order columns only; the child tables are written by `insertRawOrder`. */
 const patchOrder = patch('orders');
 const patchCombo = patch('combos');

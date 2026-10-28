@@ -168,8 +168,10 @@ describe('applyMovement', () => {
 		const target = await recordMovement({ productId: product._id, type: 'set_target', target: 3, idempotencyKey: nextKey() });
 
 		await applyMovement(bump._id);
-		// Stock changed behind the ledger's back after the target was recorded.
+		// Stock changed behind the ledger's back after the target was recorded. On
+		// postgres a target is the variant's stock, so the default variant moves too.
 		await patchProduct(product._id, { stockQuantity: 20 });
+		if (POSTGRES) await require('../../lib/prisma').prisma.productVariant.updateMany({ where: { productId: product._id }, data: { stockQuantity: 20 } });
 		await applyMovement(target._id);
 
 		expect(await stockOf(product._id)).toBe(3);

@@ -64,8 +64,9 @@ function keyIdOf(id) {
 	return isRecordId(id) ? normalizeRecordId(id) : String(id);
 }
 
-function validateMovement({ productId, type, delta, target, idempotencyKey, reason, createdBy }) {
+function validateMovement({ productId, variantId, type, delta, target, idempotencyKey, reason, createdBy }) {
 	if (!isRecordId(productId)) throw new StockLedgerError('productId is not a valid id');
+	if (variantId !== undefined && variantId !== null && !isRecordId(variantId)) throw new StockLedgerError('variantId is not a valid id');
 	if (!MOVEMENT_TYPES.includes(type)) throw new StockLedgerError(`unknown movement type: ${String(type)}`);
 	if (typeof idempotencyKey !== 'string' || idempotencyKey.length === 0 || idempotencyKey.length > MAX_TEXT_LENGTH) {
 		throw new StockLedgerError('idempotencyKey must be a non-empty string of at most 200 characters');
@@ -93,7 +94,10 @@ function validateMovement({ productId, type, delta, target, idempotencyKey, reas
  * Idempotent on `idempotencyKey`: a repeated key returns the movement already
  * stored instead of recording a second one.
  *
- * @param {{productId, type, delta?, target?, orderId?, reason?, createdBy?, idempotencyKey}} movement
+ * `variantId` names the variant whose stock moves; without it the movement is the
+ * product's default variant's (refused by the store for a product with options).
+ *
+ * @param {{productId, variantId?, type, delta?, target?, orderId?, reason?, createdBy?, idempotencyKey}} movement
  * @param {{tx?: object|null, session?: object|null}} [opts] the transaction; callers may pass it as `tx` or `session`
  * @returns {Promise<object>} the stored movement
  */
@@ -118,9 +122,11 @@ async function recordMovement(movement, opts = {}) {
 	}
 }
 
-function buildDocument({ productId, type, delta, target, orderId, reason, createdBy, idempotencyKey }) {
+function buildDocument({ productId, variantId, type, delta, target, orderId, reason, createdBy, idempotencyKey }) {
 	return {
 		productId,
+		// The Mongo movement schema has no such path and drops it (strict mode).
+		variantId: variantId || null,
 		type,
 		delta: type === 'set_target' ? null : delta,
 		target: type === 'set_target' ? target : null,
@@ -143,16 +149,17 @@ function buildDocument({ productId, type, delta, target, orderId, reason, create
  * @param {{productId, quantity: number, stockAfter?: number, createdBy?: string, reason?: string}} opening
  * @param {{tx?: object|null, session?: object|null}} [opts] the transaction; callers may pass it as `tx` or `session`
  */
-async function recordAppliedOpening({ productId, quantity, stockAfter = quantity, createdBy, reason }, opts = {}) {
+async function recordAppliedOpening({ productId, variantId, quantity, stockAfter = quantity, createdBy, reason }, opts = {}) {
 	const tx = opts.tx || opts.session || null;
-	const idempotencyKey = `opening:${keyIdOf(productId)}`;
-	validateMovement({ productId, type: 'opening', delta: quantity, idempotencyKey, createdBy, reason });
+	// A product's default variant keeps the key a product had before variants existed.
+	const idempotencyKey = variantId ? `opening:${keyIdOf(productId)}:${keyIdOf(variantId)}` : `opening:${keyIdOf(productId)}`;
+	validateMovement({ productId, variantId, type: 'opening', delta: quantity, idempotencyKey, createdBy, reason });
 
 	const existing = await store.findMovementByKey(idempotencyKey, tx);
 	if (existing) return existing;
 
 	return store.createMovement({
-		...buildDocument({ productId, type: 'opening', delta: quantity, createdBy, reason, idempotencyKey }),
+		...buildDocument({ productId, variantId, type: 'opening', delta: quantity, createdBy, reason, idempotencyKey }),
 		status: 'applied',
 		appliedAt: new Date(),
 		stockAfter

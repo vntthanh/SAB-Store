@@ -37,12 +37,25 @@ describe('toPublicProduct', () => {
 		const dto = toPublicProduct(await findProduct(product._id));
 
 		expect(Object.keys(dto).sort()).toEqual([
-			'_id', 'publicCode', 'slug', 'path', 'name', 'description', 'price', 'imageUrl',
+			'_id', 'publicCode', 'slug', 'path', 'name', 'description', 'price', 'imageUrl', 'images', 'options', 'variants',
 			'category', 'available', 'minOrderQuantity', 'maxOrderQuantity'
 		].sort());
 		for (const key of ['stockQuantity', 'inStock', 'sku', 'isActive', 'salePrice', 'tags', 'weight', 'dimensions']) {
 			expect(dto).not.toHaveProperty(key);
 		}
+	});
+
+	it('lists only the active variants and only their public fields', async () => {
+		const product = await makeProduct({ price: 9000 });
+		const dto = toPublicProduct({
+			...(await findProduct(product._id)),
+			variants: [
+				{ _id: 'v1', optionValues: ['Đỏ'], label: 'Đỏ', price: 10000, effectivePrice: 10000, sku: 'SKU-R', imageUrl: '/uploads/r.jpg', isActive: true, stockQuantity: 4 },
+				{ _id: 'v2', optionValues: ['Xanh'], label: 'Xanh', effectivePrice: 9000, isActive: false, archivedAt: new Date(), stockQuantity: 2 }
+			]
+		});
+
+		expect(dto.variants).toEqual([{ _id: 'v1', optionValues: ['Đỏ'], label: 'Đỏ', effectivePrice: 10000, imageUrl: '/uploads/r.jpg' }]);
 	});
 });
 

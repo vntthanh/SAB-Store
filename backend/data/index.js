@@ -56,6 +56,16 @@
  *   for missing/NULL fields and never for `''`. Another backend substitutes defaults
  *   with a null check, never `||`. Partial `upsertConfig` and the layer that enforces
  *   length/trim rules: see data/mongo/settings.js.
+ * - Variants and images (postgres only): a product record carries `images` (gallery
+ *   order, `imageUrl` is its cover), `options` (`[{name, values}]`) and `variants`
+ *   (`[{_id, optionValues, label?, price?, effectivePrice, sku?, imageUrl?, isActive,
+ *   archivedAt?, stockQuantity}]`; customer reads list active variants without stock or
+ *   SKU). Every product has at least one variant; one without options has a single
+ *   default variant with no option values. `findSellableForPricing` loads variants
+ *   only when `variants` is among the fields. A stock movement and an order line carry
+ *   `variantId`; a movement recorded without one belongs to the product's default
+ *   variant. The mongo rollback store has none of this: its records carry no
+ *   `images`, `options` or `variants`, and its movements and lines no variant.
  * - Storefronts (postgres only): a product record carries `storefrontId`, a combo record
  *   `storefrontIds` (sorted; a combo is offered in one or more storefronts) and an order
  *   record `storefrontId` only when set (absent for a direct sale). `products.create`
