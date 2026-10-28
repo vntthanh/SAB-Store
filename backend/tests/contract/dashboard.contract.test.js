@@ -1,18 +1,13 @@
 /**
- * The dashboard repository contract on whichever backend DATA_BACKEND selects.
+ * The dashboard repository contract.
  * Rows go in through the raw oracle, so what is counted is what is stored.
  */
-const mongoose = require('mongoose');
 const { dashboard } = require('../../data');
 const { insertRawProduct, insertRawOrder } = require('../helpers/db');
 
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
-
 afterAll(async () => {
-	if (POSTGRES) await require('../../lib/prisma').closeDb();
+	await require('../../lib/prisma').closeDb();
 });
-
-const ref = (id) => (POSTGRES ? id : new mongoose.Types.ObjectId(id));
 
 const DAY = 86400000;
 const since = () => {
@@ -22,7 +17,7 @@ const since = () => {
 
 let sequence = 0;
 const makeProduct = (fields = {}) => insertRawProduct({ name: `Dash ${++sequence}`, price: 1000, category: 'general', available: true, ...fields });
-const lineOf = (product, quantity, { price = 1000, productName = product.name } = {}) => ({ productId: ref(product._id), productName, price, quantity });
+const lineOf = (product, quantity, { price = 1000, productName = product.name } = {}) => ({ productId: product._id, productName, price, quantity });
 const makeOrder = (fields) => insertRawOrder({ orderCode: `H${Date.now().toString(36).slice(-4).toUpperCase()}${++sequence}`.slice(0, 10), ...fields });
 
 describe('dashboard.stats: orders', () => {
@@ -110,7 +105,7 @@ describe('dashboard.stats: products', () => {
 		await makeProduct({ category: 'Mũ', salesChannel: 'all' });
 		await makeProduct({ category: 'Mũ', salesChannel: 'all', available: false });
 		await makeProduct({ category: 'Mũ', salesChannel: 'online' });
-		// No channel at all: sold everywhere, so counted under 'all' (a column default on SQL, a missing field on Mongo).
+		// No channel at all: sold everywhere, so counted under 'all' (a column default).
 		await makeProduct({ category: 'Khác' });
 
 		const { products } = await dashboard.stats(since());

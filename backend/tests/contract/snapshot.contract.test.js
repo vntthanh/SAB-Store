@@ -1,10 +1,8 @@
 /**
- * The backup contract (export, restore, row counts) on whichever backend
- * DATA_BACKEND selects. The store under test is built through the repositories
+ * The backup contract (export, restore, row counts). The store under test is built through the repositories
  * and services, so its ledger is consistent as in a live store; every result is
  * read back through tests/helpers/db.js.
  */
-const mongoose = require('mongoose');
 const { objectIdToUuidV7 } = require('@sab/shared');
 const data = require('../../data');
 const { validateSnapshot, buildMetadata } = require('../../data/snapshot');
@@ -19,21 +17,18 @@ const {
 } = require('../helpers/db');
 
 const { dataSnapshot, orders } = data;
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SECTIONS = ['products', 'combos', 'orders', 'stockMovements', 'settings'];
-// Postgres adds the storefront sections; a store with none of its own holds the default storefront.
-const STOREFRONT_COUNTS = POSTGRES ? { storefronts: 1, storefrontAccessRules: 0, emailLists: 0, emailListEntries: 0 } : {};
+// A store with no storefront of its own holds the default storefront.
+const STOREFRONT_COUNTS = { storefronts: 1, storefrontAccessRules: 0, emailLists: 0, emailListEntries: 0 };
 const EXPORTED_SECTIONS = [...SECTIONS, ...Object.keys(STOREFRONT_COUNTS)];
 
 afterAll(async () => {
-	if (POSTGRES) await require('../../lib/prisma').closeDb();
+	await require('../../lib/prisma').closeDb();
 });
 
-const ref = (id) => (POSTGRES ? id : new mongoose.Types.ObjectId(id));
-
-/** The id a legacy hex id has on this backend. */
-const mapped = (hex) => (POSTGRES ? objectIdToUuidV7(hex) : hex);
+/** The id a legacy hex id has in the store. */
+const mapped = objectIdToUuidV7;
 
 const fileOf = (snapshot) => ({ metadata: buildMetadata(snapshot, new Date()), data: snapshot });
 
@@ -149,7 +144,7 @@ describe('dataSnapshot.exportAll', () => {
 		expect(target.delta == null).toBe(true);
 	});
 
-	it.skipIf(!POSTGRES)('lists movements in ledger order, with uuid ids and no sequence number', async () => {
+	it('lists movements in ledger order, with uuid ids and no sequence number', async () => {
 		await seedStore();
 
 		const snapshot = await dataSnapshot.exportAll();
@@ -162,7 +157,7 @@ describe('dataSnapshot.exportAll', () => {
 		expect(JSON.stringify(snapshot)).not.toMatch(/"seq"/);
 	});
 
-	it.skipIf(!POSTGRES)('lists movements by their place in the ledger, which is not always id order', async () => {
+	it('lists movements by their place in the ledger, which is not always id order', async () => {
 		await seedStore();
 		const ledger = await movements();
 		await patchMovement(ledger[0]._id, { seq: 1000000 });
@@ -174,7 +169,7 @@ describe('dataSnapshot.exportAll', () => {
 		expect((await movements()).at(-1)._id).toBe(ledger[0]._id);
 	});
 
-	it.skipIf(!POSTGRES)('reads every section from one point in time: a movement applied mid-export cannot split the cache from the ledger', async () => {
+	it('reads every section from one point in time: a movement applied mid-export cannot split the cache from the ledger', async () => {
 		const { badge } = await seedStore();
 		const pending = (await movements({ status: 'pending', productId: badge._id }))[0];
 		const { prisma } = require('../../lib/prisma');
@@ -304,7 +299,7 @@ describe('dataSnapshot.replaceAll', () => {
 
 		expect(await dataSnapshot.exportAll()).toEqual({
 			...empty,
-			...(POSTGRES && { storefronts: [expect.objectContaining({ _id: DEFAULT_STOREFRONT_ID })], storefrontAccessRules: [], emailLists: [], emailListEntries: [] })
+			storefronts: [expect.objectContaining({ _id: DEFAULT_STOREFRONT_ID })], storefrontAccessRules: [], emailLists: [], emailListEntries: []
 		});
 		expect(await countRows('movement')).toBe(0);
 		const product = await data.withTransaction((tx) => data.products.create({ name: 'Fresh', price: 1, category: 'c' }, 0, tx));
@@ -312,7 +307,7 @@ describe('dataSnapshot.replaceAll', () => {
 		expect((await applyMovement(movement._id)).applied).toBe(true);
 	});
 
-	it.skipIf(!POSTGRES)('numbers the restored movements past the sequence, so the next movement does not collide with one', async () => {
+	it('numbers the restored movements past the sequence, so the next movement does not collide with one', async () => {
 		const stamp = '2026-10-02T03:04:05.000Z';
 		const product = { _id: newId(), name: 'Bulk', price: 1, category: 'c', stockQuantity: 40 };
 		const ledger = Array.from({ length: 40 }, (_, index) => ({
@@ -328,7 +323,7 @@ describe('dataSnapshot.replaceAll', () => {
 		expect(keys.at(-1)).toBe('after-bulk');
 	});
 
-	it.skipIf(!POSTGRES)('gives a product from before public codes existed a code and a slug', async () => {
+	it('gives a product from before public codes existed a code and a slug', async () => {
 		const snapshot = await dataSnapshot.exportAll();
 		const legacy = { _id: newId(), name: 'Áo thun cũ', price: 1000, category: 'cũ', stockQuantity: 0 };
 
@@ -341,7 +336,7 @@ describe('dataSnapshot.replaceAll', () => {
 });
 
 describe('a backup made before the migration', () => {
-	// Mongo-format ids (24 hex) everywhere an id can appear.
+	// Legacy-format ids (24 hex) everywhere an id can appear.
 	const H = {
 		p1: '68f1a2b3c4d5e6f708192a31', p2: '68f1a2b3c4d5e6f708192a32', c1: '68f1a2b3c4d5e6f708192a33', r1: '68f1a2b3c4d5e6f708192a34',
 		o1: '68f1a2b3c4d5e6f708192a35', o2: '68f1a2b3c4d5e6f708192a36', i0: '68f1a2b3c4d5e6f708192a37', i1: '68f1a2b3c4d5e6f708192a38',
@@ -443,15 +438,13 @@ describe('a backup made before the migration', () => {
 		const exported = await dataSnapshot.exportAll();
 
 		expect(validateSnapshot(fileOf(exported).metadata, exported)).toEqual([]);
-		if (POSTGRES) {
-			expect(JSON.stringify(exported)).not.toMatch(/"[0-9a-f]{24}"/);
-			expect(exported.products.map((product) => product._id).sort()).toEqual([mapped(H.p1), mapped(H.p2)].sort());
-		}
+		expect(JSON.stringify(exported)).not.toMatch(/"[0-9a-f]{24}"/);
+		expect(exported.products.map((product) => product._id).sort()).toEqual([mapped(H.p1), mapped(H.p2)].sort());
 		await restore(exported);
 		expect(await dataSnapshot.exportAll()).toEqual(exported);
 	});
 
-	it.skipIf(!POSTGRES)('drops the storage version key and an empty phone number', async () => {
+	it('drops the storage version key and an empty phone number', async () => {
 		const file = legacyFile();
 		file.orders[1].phoneNumber = '';
 

@@ -1,8 +1,7 @@
 /**
- * The stock-ledger contract, run against whichever backend DATA_BACKEND selects
- * (postgres by default; `pnpm test:contract:mongo` runs it on the rollback store). Every
- * assertion re-reads the database through tests/helpers/db.js, so a backend that
- * returns the right values but stores the wrong ones fails here.
+ * The stock-ledger contract. Every assertion re-reads the database through
+ * tests/helpers/db.js, so a backend that returns the right values but stores
+ * the wrong ones fails here.
  */
 const data = require('../../data');
 const ledger = require('../../services/stock-ledger');
@@ -16,10 +15,8 @@ const {
 const { recordMovement, applyMovement, reconcile, recordAppliedOpening, countPendingByProduct } = ledger;
 const { stockLedger } = data;
 
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
-
 afterAll(async () => {
-	if (POSTGRES) await require('../../lib/prisma').closeDb();
+	await require('../../lib/prisma').closeDb();
 });
 
 let sequence = 0;
@@ -168,10 +165,10 @@ describe('applyMovement', () => {
 		const target = await recordMovement({ productId: product._id, type: 'set_target', target: 3, idempotencyKey: nextKey() });
 
 		await applyMovement(bump._id);
-		// Stock changed behind the ledger's back after the target was recorded. On
-		// postgres a target is the variant's stock, so the default variant moves too.
+		// Stock changed behind the ledger's back after the target was recorded. A
+		// target is the variant's stock, so the default variant moves too.
 		await patchProduct(product._id, { stockQuantity: 20 });
-		if (POSTGRES) await require('../../lib/prisma').prisma.productVariant.updateMany({ where: { productId: product._id }, data: { stockQuantity: 20 } });
+		await require('../../lib/prisma').prisma.productVariant.updateMany({ where: { productId: product._id }, data: { stockQuantity: 20 } });
 		await applyMovement(target._id);
 
 		expect(await stockOf(product._id)).toBe(3);
@@ -375,7 +372,7 @@ describe('ledger reads', () => {
 		expect(page.data.map((row) => row._id)).toEqual([created[2]._id, created[1]._id]);
 		expect(page.data[0]).toMatchObject({ type: 'adjust', delta: 3, status: 'pending', orderId: null });
 		expect(Object.keys(page.data[0]).sort()).toEqual(
-			['_id', 'appliedAt', 'createdAt', 'createdBy', 'delta', 'orderId', 'reason', 'status', 'stockAfter', 'target', 'type', ...(POSTGRES ? ['variantId'] : [])].sort()
+			['_id', 'appliedAt', 'createdAt', 'createdBy', 'delta', 'orderId', 'reason', 'status', 'stockAfter', 'target', 'type', 'variantId'].sort()
 		);
 	});
 });

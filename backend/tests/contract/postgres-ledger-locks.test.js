@@ -1,13 +1,10 @@
 /**
  * The row locks the postgres ledger relies on, observed from a second
- * connection. Skipped on the mongo backend, which serialises through write
- * conflicts instead.
+ * connection.
  */
 const { Client } = require('pg');
 const { POOL_OPTIONS } = require('../helpers/postgres');
 const { insertRawProduct, findMovement, stockOf } = require('../helpers/db');
-
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
 
 /**
  * Resolves once some other backend of this database is waiting for a lock, i.e.
@@ -32,7 +29,7 @@ const isPending = async (promise) => {
 	return (await Promise.race([promise.then(() => null, () => null), Promise.resolve(marker)])) === marker;
 };
 
-describe.skipIf(!POSTGRES)('postgres stock-ledger locks', () => {
+describe('postgres stock-ledger locks', () => {
 	let other;
 	let ledger;
 	let stockLedger;

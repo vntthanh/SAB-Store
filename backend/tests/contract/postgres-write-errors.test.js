@@ -1,16 +1,13 @@
 /**
  * What the postgres backend does with the errors a real Postgres raises. The
  * shapes come from the live server through Prisma, not from fixtures, because the
- * driver adapter's wording is what the translation depends on. Skipped on the
- * mongo backend, whose errors data/mongo/errors.js translates.
+ * driver adapter's wording is what the translation depends on.
  */
 const { v7: uuidv7 } = require('uuid');
 const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 const { DuplicateKeyError, RecordValidationError, InvalidIdError, isDuplicateKeyOn } = require('../../data/errors');
 
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
-
-describe.skipIf(!POSTGRES)('postgres translateWriteError', () => {
+describe('postgres translateWriteError', () => {
 	let prisma;
 	let translateWriteError;
 	let stockLedger;

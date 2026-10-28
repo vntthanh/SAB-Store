@@ -8,7 +8,6 @@ const { v7: uuidv7 } = require('uuid');
 const data = require('../../data');
 const { recordMovement, applyMovement } = require('../../services/stock-ledger');
 const { insertRawProduct, findProduct, deleteProduct } = require('../helpers/db');
-const { POSTGRES } = require('../helpers/backend');
 const { generatePublicCode } = require('../../utils/public-code');
 
 const { products } = data;
@@ -26,7 +25,7 @@ async function sizedProduct({ price = 10000, stockQuantity = 0 } = {}) {
 
 const variantStock = async (id) => (await prisma().productVariant.findUnique({ where: { id } })).stockQuantity;
 
-describe.skipIf(!POSTGRES)('product records: images, options and variants', () => {
+describe('product records: images, options and variants', () => {
 	it('gives a new product its default variant holding the opening stock, and keeps the cover as the gallery', async () => {
 		const created = await data.withTransaction((tx) => products.create({ name: 'Mũ', price: 5000, category: 'c', imageUrl: '/uploads/a.jpg' }, 4, tx));
 
@@ -73,7 +72,7 @@ describe.skipIf(!POSTGRES)('product records: images, options and variants', () =
 	});
 });
 
-describe.skipIf(!POSTGRES)('stock movements per variant', () => {
+describe('stock movements per variant', () => {
 	const movement = (fields) => recordMovement({ type: 'adjust', delta: 2, idempotencyKey: `k-${uuidv7()}`, createdBy: 'admin', reason: 'r', ...fields });
 
 	it('moves the named variant and its product by the same delta', async () => {
@@ -141,7 +140,7 @@ describe.skipIf(!POSTGRES)('stock movements per variant', () => {
 	});
 });
 
-describe.skipIf(!POSTGRES)('snapshot of variants', () => {
+describe('snapshot of variants', () => {
 	const { validateSnapshot, buildMetadata } = require('../../data/snapshot');
 	const { reconcile } = require('../../services/stock-ledger');
 

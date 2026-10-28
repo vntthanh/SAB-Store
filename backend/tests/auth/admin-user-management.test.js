@@ -10,7 +10,6 @@ const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession } = require('../helpers/factories');
 const { auth } = require('../../lib/auth');
-const { POSTGRES } = require('../helpers/backend');
 const { findUser, countRows } = require('../helpers/db');
 
 const PASSWORD = 'Str0ngPassw0rd!';
@@ -189,9 +188,8 @@ describe('admin user management through the auth handler', () => {
 		const postAs = (name, body) => asAdmin(request(app).post(`/api/auth/admin/${name}`)).send(body);
 		const getUser = (id) => asAdmin(request(app).get('/api/auth/admin/get-user')).query({ id });
 
-		// Postgres refuses a malformed id up front; Mongo has no id type, so it looks the
-		// id up and finds nobody. Either way the caller gets a 4xx, never a store error.
-		const MALFORMED_STATUS = POSTGRES ? 400 : 404;
+		// A malformed id is refused up front, so the caller gets a 4xx, never a store error.
+		const MALFORMED_STATUS = 400;
 
 		it.each(BY_BODY)('%s: a valid uuid that matches no user is a 404', async (name, body) => {
 			const res = await postAs(name, body(ABSENT_UUID));

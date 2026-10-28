@@ -1,8 +1,7 @@
 /**
- * The product and combo repositories, run against whichever backend DATA_BACKEND
- * selects (postgres by default; `pnpm test:contract:mongo` runs it on the rollback store).
- * Rows are written and re-read through tests/helpers/db.js, so a backend that
- * returns the right records but stores the wrong rows fails here.
+ * The product and combo repositories. Rows are written and re-read through
+ * tests/helpers/db.js, so a backend that returns the right records but stores
+ * the wrong rows fails here.
  */
 const data = require('../../data');
 const publicCodeUtil = require('../../utils/public-code');
@@ -16,10 +15,9 @@ const {
 } = require('../helpers/db');
 
 const { products, combos } = data;
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
 
 afterAll(async () => {
-	if (POSTGRES) await require('../../lib/prisma').closeDb();
+	await require('../../lib/prisma').closeDb();
 });
 
 let sequence = 0;
@@ -38,7 +36,7 @@ const VALID_COMBO = { name: 'Bộ đôi', price: 5000, categoryRequirements: [{ 
 
 const failure = (promise) => promise.then(() => { throw new Error('expected the call to reject'); }, (error) => error);
 const fieldsOf = (error) => error.fieldErrors.map((entry) => entry.field);
-/** The keys of a record, sorted, without the Mongo-only version key callers must not read. */
+/** The keys of a record, sorted, without a storage version key callers must not read. */
 const withoutVersion = (record) => Object.keys(record).filter((key) => key !== '__v').sort();
 
 describe('sellable products per channel', () => {
@@ -138,8 +136,8 @@ describe('sellable products per channel', () => {
 	});
 });
 
-// Mongo compares bytes; the postgres databases use the builtin C.UTF-8 collation, which is code point order too.
-// A different collation would reorder the storefront between backends without any test noticing.
+// The databases use the builtin C.UTF-8 collation, which is code point order.
+// A different collation would reorder the storefront without any test noticing.
 describe('code point sort order', () => {
 	const MIXED = ['Z', 'a', 'Áo', 'ao', 'Đ', 'B'];
 	const CODE_POINT_ORDER = ['B', 'Z', 'a', 'ao', 'Áo', 'Đ'];
@@ -377,7 +375,7 @@ describe('search escaping', () => {
 	});
 });
 
-describe.skipIf(!POSTGRES)('what Prisma does with the characters of a LIKE pattern (postgres)', () => {
+describe('what Prisma does with the characters of a LIKE pattern (postgres)', () => {
 	it('does not escape them in contains, which is why every search goes through escapeLike', async () => {
 		const { prisma } = require('../../lib/prisma');
 		await rawProduct({ name: '50% off' });
@@ -461,14 +459,12 @@ describe('product writes and reads', () => {
 			expect(created, absent).not.toHaveProperty(absent);
 		}
 		expect(withoutVersion(created)).toEqual([
-			'_id', 'available', 'category', 'createdAt', 'description', 'featured', 'imageUrl', ...(POSTGRES ? ['images'] : []), 'isActive', 'maxOrderQuantity', 'minOrderQuantity',
-			'name', ...(POSTGRES ? ['options'] : []), 'price', 'publicCode', 'salesChannel', 'slug', 'stockQuantity', ...(POSTGRES ? ['storefrontId'] : []), 'tags', 'updatedAt',
-			...(POSTGRES ? ['variants'] : []),
+			'_id', 'available', 'category', 'createdAt', 'description', 'featured', 'imageUrl', 'images', 'isActive', 'maxOrderQuantity', 'minOrderQuantity',
+			'name', 'options', 'price', 'publicCode', 'salesChannel', 'slug', 'stockQuantity', 'storefrontId', 'tags', 'updatedAt',
+			'variants',
 		]);
-		if (POSTGRES) {
-			expect(created).toMatchObject({ images: [], options: [] });
-			expect(created.variants).toEqual([{ _id: expect.any(String), optionValues: [], effectivePrice: 5, isActive: true, stockQuantity: 3 }]);
-		}
+		expect(created).toMatchObject({ images: [], options: [] });
+		expect(created.variants).toEqual([{ _id: expect.any(String), optionValues: [], effectivePrice: 5, isActive: true, stockQuantity: 3 }]);
 		expect(await products.findById(created._id)).toEqual(created);
 		expect((await findProduct(created._id)).stockQuantity).toBe(3);
 	});
@@ -611,7 +607,7 @@ describe('combo writes and reads', () => {
 		const ids = created.categoryRequirements.map((requirement) => String(requirement._id));
 		expect(new Set(ids).size).toBe(2);
 		expect(withoutVersion(created)).toEqual([
-			'_id', 'categoryRequirements', 'createdAt', 'description', 'isActive', 'name', 'price', 'priority', 'publicCode', 'salesChannel', 'slug', ...(POSTGRES ? ['storefrontIds'] : []), 'updatedAt',
+			'_id', 'categoryRequirements', 'createdAt', 'description', 'isActive', 'name', 'price', 'priority', 'publicCode', 'salesChannel', 'slug', 'storefrontIds', 'updatedAt',
 		]);
 		expect(created).not.toHaveProperty('totalRequiredQuantity');
 		expect(created).not.toHaveProperty('id');
@@ -659,8 +655,8 @@ describe('combo writes and reads', () => {
 		expect(fieldsOf(error)).toEqual(['price']);
 	});
 
-	// Mongo saves the combo as one document, so this is about the row lock of the table design.
-	it.skipIf(!POSTGRES)('serialises edits of one combo that replace its requirements at the same time', async () => {
+	// The requirements live in their own rows, so concurrent edits are serialised by the combo row lock.
+	it('serialises edits of one combo that replace its requirements at the same time', async () => {
 		const created = await combos.create(VALID_COMBO);
 		const lists = Array.from({ length: 8 }, (_, i) => Array.from({ length: (i % 3) + 1 }, (__, j) => ({ category: `c${i}`, quantity: j + 1 })));
 

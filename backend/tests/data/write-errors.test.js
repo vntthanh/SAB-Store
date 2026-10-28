@@ -1,13 +1,10 @@
 /**
- * Repositories report a refused write as a domain error, so callers (and the
- * Postgres implementation) never inspect an engine's error name or code.
+ * Repositories report a refused write as a domain error, so callers never
+ * inspect an engine's error name or code.
  */
 const { products, combos } = require('../../data');
 const { DuplicateKeyError, RecordValidationError, InvalidIdError } = require('../../data/errors');
-const { translateWriteError } = require('../../data/mongo/errors');
-const Product = require('../../models/Product');
 const { makeProduct, makeCombo } = require('../helpers/factories');
-const { POSTGRES } = require('../helpers/backend');
 
 const VALID = { name: 'Bút', price: 1000, category: 'general' };
 
@@ -45,34 +42,5 @@ describe('repository write errors', () => {
 
 		expect(error).toBeInstanceOf(RecordValidationError);
 		expect(error.fieldErrors.map((entry) => entry.field)).toEqual(['price']);
-	});
-
-	it('does not touch an error that is none of the three', async () => {
-		const failure = new Error('boom');
-
-		expect(translateWriteError(failure)).toBe(failure);
-	});
-
-	// Skipped on Postgres: spies on Product.findByIdAndUpdate to fake an engine error; the Postgres translation is covered by contract/postgres-write-errors.test.js.
-	it.skipIf(POSTGRES)('product update reports a taken unique value as DuplicateKeyError', async () => {
-		const product = await makeProduct();
-		vi.spyOn(Product, 'findByIdAndUpdate').mockRejectedValueOnce(
-			Object.assign(new Error('E11000'), { code: 11000, keyPattern: { sku: 1 } })
-		);
-
-		const error = await products.update(product._id.toString(), { name: 'Khác' }).catch((e) => e);
-
-		expect(error).toBeInstanceOf(DuplicateKeyError);
-		expect(error.fields).toEqual(['sku']);
-	});
-
-	it('names every field of a compound index when the error carries only its message', () => {
-		const bulk = Object.assign(new Error('E11000 duplicate key error collection: x index: a_1_b_-1 dup key: { }'), { code: 11000 });
-
-		expect(translateWriteError(bulk).fields).toEqual(['a', 'b']);
-	});
-
-	it('reports no field when the error does not name one', () => {
-		expect(translateWriteError(Object.assign(new Error('E11000'), { code: 11000 })).fields).toEqual([]);
 	});
 });

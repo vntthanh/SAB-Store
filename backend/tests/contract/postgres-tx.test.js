@@ -1,13 +1,11 @@
 /**
  * The postgres transaction wrapper: rollback, the single retry class and its
- * limit, and the log line a retry leaves. Skipped on the mongo backend.
+ * limit, and the log line a retry leaves.
  */
 const { v7: uuidv7 } = require('uuid');
 const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
-
-describe.skipIf(!POSTGRES)('postgres withTransaction', () => {
+describe('postgres withTransaction', () => {
 	let prisma;
 	let withTransaction;
 

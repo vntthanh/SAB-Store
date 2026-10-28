@@ -1,5 +1,5 @@
 /**
- * The settings repository, run against whichever backend DATA_BACKEND selects.
+ * The settings repository.
  * A field never set is "unset" (the caller shows the code default); an empty
  * string is the admin's deliberate "hide this".
  */
@@ -8,10 +8,8 @@ const { RecordValidationError } = require('../../data/errors');
 const { DEFAULT_STORE_TITLE, DEFAULT_NOTICES, DEFAULT_CONTACT, NOTICE_FIELDS, CONTACT_FIELDS, STORE_TITLE_MAX_LENGTH, NOTICE_MAX_LENGTH } = require('../../constants/settings');
 const { insertRawSettings, findSettings, countRows } = require('../helpers/db');
 
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
-
 afterAll(async () => {
-	if (POSTGRES) await require('../../lib/prisma').closeDb();
+	await require('../../lib/prisma').closeDb();
 });
 
 const BANK = { bankNameId: 'MB', bankAccountId: '0123456789' };
@@ -59,7 +57,7 @@ describe('reading a stored row', () => {
 		expect(await settings.findConfig()).toBeNull();
 	});
 
-	it.skipIf(!POSTGRES)('treats NULL like a field that was never set', async () => {
+	it('treats NULL like a field that was never set', async () => {
 		await insertRawSettings({ ...BANK, eventNotice: null, storeTitle: null, contactEmail: null, paymentNotice: '' });
 
 		const storefront = await settings.findStorefront();
@@ -155,8 +153,8 @@ describe('upsertConfig', () => {
 		expect(saved.eventNotice).toHaveLength(NOTICE_MAX_LENGTH);
 	});
 
-	// Mongo writes whatever the caller names; the admin route and the seed only ever name settings.
-	it.skipIf(!POSTGRES)('ignores a field that is not a setting', async () => {
+	// The repository takes only settings columns, whatever the caller names.
+	it('ignores a field that is not a setting', async () => {
 		const saved = await settings.upsertConfig({ ...BANK, key: 'elsewhere', createdAt: new Date(0), unrelated: 1 });
 
 		expect(saved.key).toBe('payment_config');

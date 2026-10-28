@@ -1,10 +1,8 @@
 /**
- * The orders repository contract, run against whichever backend DATA_BACKEND
- * selects. Rows are made through the repository (what the routes do) or the raw
- * oracle, and every stored result is re-read through tests/helpers/db.js, so a
+ * The orders repository contract. Rows are made through the repository (what
+ * the routes do) or the raw oracle, and every stored result is re-read through tests/helpers/db.js, so a
  * backend that returns the right record but stores the wrong rows fails here.
  */
-const mongoose = require('mongoose');
 const data = require('../../data');
 const { isDuplicateKeyOn, DuplicateKeyError, InvalidIdError, RecordValidationError } = require('../../data/errors');
 const {
@@ -12,14 +10,10 @@ const {
 } = require('../helpers/db');
 
 const { orders } = data;
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
 
 afterAll(async () => {
-	if (POSTGRES) await require('../../lib/prisma').closeDb();
+	await require('../../lib/prisma').closeDb();
 });
-
-/** A reference to another row in the form the raw oracle stores it. */
-const ref = (id) => (POSTGRES ? id : new mongoose.Types.ObjectId(id));
 
 /** The record as the API serialises it, without the storage version key. */
 function asJson(value) {
@@ -195,7 +189,7 @@ describe('orders reads', () => {
 		const at = (hour) => new Date(Date.UTC(2026, 9, 1, hour));
 		const raw = await insertRawOrder({
 			orderCode: `O${++sequence}`,
-			items: [3, 1, 2].map((quantity) => lineOf(product, quantity, { productId: ref(product._id) })),
+			items: [3, 1, 2].map((quantity) => lineOf(product, quantity, { productId: product._id })),
 			statusHistory: ['confirmed', 'paid', 'delivered'].map((status, hour) => ({ status, updatedBy: `actor-${hour}`, updatedAt: at(hour) })),
 			internalNotes: ['first', 'second', 'third'].map((note, hour) => ({ note, by: 'admin', at: at(hour) })),
 			itemsHistory: ['one', 'two'].map((reason, hour) => ({ previousItems: [], previousComboInfo: null, editedBy: 'admin', editedAt: at(hour), reason }))
@@ -241,7 +235,7 @@ describe('orders reads', () => {
 		const product = await makeProduct();
 		const stamp = new Date('2026-10-05T01:00:00.000Z');
 		const created = [];
-		for (let i = 0; i < 4; i += 1) created.push(await insertRawOrder({ orderCode: `L${i}${++sequence}`, createdAt: stamp, items: [lineOf(product, 1, { productId: ref(product._id) })] }));
+		for (let i = 0; i < 4; i += 1) created.push(await insertRawOrder({ orderCode: `L${i}${++sequence}`, createdAt: stamp, items: [lineOf(product, 1, { productId: product._id })] }));
 		const newest = await insertRawOrder({ orderCode: `L9${++sequence}`, createdAt: new Date('2026-10-06T01:00:00.000Z') });
 
 		const recent = await orders.listRecent({ limit: 3 });
@@ -276,8 +270,8 @@ describe('orders reads', () => {
 	it('reports the orders with a combo in either stored shape', async () => {
 		const product = await makeProduct();
 		const comboId = newId();
-		await insertRawOrder({ orderCode: `C1${++sequence}`, items: [lineOf(product, 1, { productId: ref(product._id) })], comboInfo: { combos: [{ comboId: ref(comboId), comboName: 'Twin', applications: 1, savings: 1 }], finalTotal: 1 } });
-		await insertRawOrder({ orderCode: `C2${++sequence}`, comboInfo: { comboId: ref(comboId), comboName: 'Old shape' } });
+		await insertRawOrder({ orderCode: `C1${++sequence}`, items: [lineOf(product, 1, { productId: product._id })], comboInfo: { combos: [{ comboId: comboId, comboName: 'Twin', applications: 1, savings: 1 }], finalTotal: 1 } });
+		await insertRawOrder({ orderCode: `C2${++sequence}`, comboInfo: { comboId: comboId, comboName: 'Old shape' } });
 		await insertRawOrder({ orderCode: `C3${++sequence}` });
 
 		const found = await orders.listWithCombo();
@@ -395,7 +389,7 @@ describe('orders.listPage', () => {
 
 	it('attaches the product fields on a page and leaves out the admin-only arrays', async () => {
 		const product = await makeProduct({ name: 'Paged' });
-		await seed([{ items: [lineOf(product, 1, { productId: ref(product._id) })], internalNotes: [{ note: 'secret', by: 'admin' }] }]);
+		await seed([{ items: [lineOf(product, 1, { productId: product._id })], internalNotes: [{ note: 'secret', by: 'admin' }] }]);
 
 		const result = await page({ omit: ['internalNotes', 'itemsHistory'], withProducts: ['name'] });
 

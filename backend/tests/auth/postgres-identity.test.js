@@ -1,21 +1,19 @@
 /**
  * What the database itself guarantees about login identities, and the id shape
- * Better Auth writes into native uuid columns. Postgres only: the Mongo store
- * has neither the unique indexes nor uuid ids.
+ * Better Auth writes into native uuid columns.
  */
 const { Client } = require('pg');
 const request = require('supertest');
 const { buildTestApp } = require('../helpers/app');
 const { createAccount } = require('../helpers/factories');
 const { findAuthRows, insertRawUser } = require('../helpers/db');
-const { POSTGRES } = require('../helpers/backend');
 const { POOL_OPTIONS } = require('../helpers/postgres');
 
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const UUID_ANY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const UNIQUE_VIOLATION = '23505';
 
-describe.skipIf(!POSTGRES)('login identities on postgres', () => {
+describe('login identities on postgres', () => {
 	let pg;
 
 	beforeAll(async () => {
