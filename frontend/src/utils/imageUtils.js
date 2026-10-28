@@ -1,128 +1,74 @@
 /**
- * Image utility functions for product image processing
- * Standard ratio based on fallback-product.png: 1.5009:1 (width:height)
+ * Image utility functions for product image processing.
+ *
+ * Uploads are only scaled down, never cropped: a size chart or a landscape photo must reach the
+ * shop whole. Every product view frames images with `object-cover`, so files of mixed ratios still
+ * line up, and the fullscreen viewer shows the whole file.
  */
 
-// Standard ratio for product images (width / height) - matches fallback-product.png (800x533)
-const PRODUCT_IMAGE_RATIO = 1.50093808630394;
+// Longest side after scaling: large enough that text in a size chart stays readable when zoomed.
+export const MAX_IMAGE_SIDE = 1600;
 
-/**
- * Get image dimensions from file or URL
- * @param {File|string} source - Image file or URL
- * @returns {Promise<{width: number, height: number}>}
- */
-export const getImageDimensions = (source) => {
-	return new Promise((resolve, reject) => {
-		const img = new Image();
+// The upload route refuses files over 10MB. A lossless PNG of a photo can pass that at 1600px, so a
+// PNG this large is re-encoded as JPEG; charts and drawings stay PNG and keep their text sharp.
+const PNG_LIMIT_BYTES = 8 * 1024 * 1024;
 
-		img.onload = () => {
-			resolve({
-				width: img.naturalWidth,
-				height: img.naturalHeight
-			});
-		};
-
-		img.onerror = () => {
-			reject(new Error('Failed to load image'));
-		};
-
-		if (source instanceof File) {
-			img.src = URL.createObjectURL(source);
-		} else {
-			img.src = source;
-		}
+const toBlob = (canvas, type, quality) =>
+	new Promise((resolve, reject) => {
+		canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Failed to process image'))), type, quality);
 	});
+
+// The backend checks the extension against the bytes, so the name must follow the encoded type.
+const renamed = (name, type) => `${name.replace(/\.[^.]+$/, '')}.${type === 'image/jpeg' ? 'jpg' : 'png'}`;
+
+const encode = async (canvas, file, quality) => {
+	let type = file.type.startsWith('image/jpeg') ? 'image/jpeg' : 'image/png';
+	let blob = await toBlob(canvas, type, quality);
+	if (type === 'image/png' && blob.size > PNG_LIMIT_BYTES) {
+		type = 'image/jpeg';
+		blob = await toBlob(canvas, type, quality);
+	}
+	return new File([blob], renamed(file.name, type), { type, lastModified: Date.now() });
 };
 
 /**
- * Resize and crop image to standard ratio
- * @param {File} file - Image file to process
- * @param {number} maxWidth - Maximum width (default: 800px)
- * @param {number} quality - JPEG quality (0-1, default: 0.9)
- * @returns {Promise<{file: File, preview: string}>}
+ * Scale an image down so its longest side is at most `maxSide`, keeping its aspect ratio.
+ * A file already within the limit is returned untouched: re-encoding it would only lose quality.
+ * @param {File} file
+ * @param {number} maxSide - Maximum width or height in pixels
+ * @param {number} quality - JPEG quality (0-1)
+ * @returns {Promise<File>}
  */
-export const processImageFile = async (file, maxWidth = 800, quality = 0.9) => {
+export const processImageFile = async (file, maxSide = MAX_IMAGE_SIDE, quality = 0.9) => {
 	return new Promise((resolve, reject) => {
 		const img = new Image();
+		const url = URL.createObjectURL(file);
 
 		img.onload = () => {
+			URL.revokeObjectURL(url);
 			try {
-				const canvas = document.createElement('canvas');
-				const ctx = canvas.getContext('2d');
-
-				// Calculate dimensions for standard ratio
-				const originalWidth = img.naturalWidth;
-				const originalHeight = img.naturalHeight;
-				const originalRatio = originalWidth / originalHeight;
-
-				let sourceX = 0;
-				let sourceY = 0;
-				let sourceWidth = originalWidth;
-				let sourceHeight = originalHeight;
-
-				// Crop to standard ratio (center crop)
-				if (originalRatio > PRODUCT_IMAGE_RATIO) {
-					// Image is wider than standard ratio - crop width
-					sourceWidth = originalHeight * PRODUCT_IMAGE_RATIO;
-					sourceX = (originalWidth - sourceWidth) / 2;
-				} else if (originalRatio < PRODUCT_IMAGE_RATIO) {
-					// Image is taller than standard ratio - crop height
-					sourceHeight = originalWidth / PRODUCT_IMAGE_RATIO;
-					sourceY = (originalHeight - sourceHeight) / 2;
+				const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+				if (scale === 1) {
+					resolve(file);
+					return;
 				}
+				const canvas = document.createElement('canvas');
+				canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+				canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+				canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
 
-				// Calculate output dimensions
-				const outputWidth = Math.min(maxWidth, sourceWidth);
-				const outputHeight = outputWidth / PRODUCT_IMAGE_RATIO;
-
-				// Set canvas size
-				canvas.width = outputWidth;
-				canvas.height = outputHeight;
-
-				// Draw cropped and resized image
-				ctx.drawImage(
-					img,
-					sourceX, sourceY, sourceWidth, sourceHeight,
-					0, 0, outputWidth, outputHeight
-				);
-
-				// Convert to blob
-				canvas.toBlob(
-					(blob) => {
-						if (!blob) {
-							reject(new Error('Failed to process image'));
-							return;
-						}
-
-						// Create new file with processed image
-						const processedFile = new File(
-							[blob],
-							file.name,
-							{ type: file.type, lastModified: Date.now() }
-						);
-
-						// Create preview URL
-						const previewUrl = canvas.toDataURL('image/jpeg', quality);
-
-						resolve({
-							file: processedFile,
-							preview: previewUrl
-						});
-					},
-					file.type.startsWith('image/jpeg') ? 'image/jpeg' : 'image/png',
-					quality
-				);
-
+				encode(canvas, file, quality).then(resolve, reject);
 			} catch (error) {
 				reject(error);
 			}
 		};
 
 		img.onerror = () => {
+			URL.revokeObjectURL(url);
 			reject(new Error('Failed to load image for processing'));
 		};
 
-		img.src = URL.createObjectURL(file);
+		img.src = url;
 	});
 };
 
@@ -165,24 +111,4 @@ export const validateImageFile = (file) => {
 	}
 
 	return { valid: true };
-};
-
-/**
- * Get ratio info text for display
- * @returns {string}
- */
-export const getRatioDisplayText = () => {
-	return `Tỉ lệ chuẩn: 1.5:1 (rộng:cao) - 800x533px`;
-};
-
-/**
- * Check if image needs cropping
- * @param {number} width 
- * @param {number} height 
- * @returns {boolean}
- */
-export const needsCropping = (width, height) => {
-	const currentRatio = width / height;
-	const tolerance = 0.01; // 1% tolerance
-	return Math.abs(currentRatio - PRODUCT_IMAGE_RATIO) > tolerance;
 };
