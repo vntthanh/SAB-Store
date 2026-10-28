@@ -10,7 +10,7 @@ số file, thời gian chạy) cũng không sống ở đây: chạy lệnh và 
 | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | Tạo `CLAUDE.md` / `CLAUDE.local.md` trong repo hoặc thư mục cha                    | Claude Code sẽ đọc nó và bỏ qua `AGENTS.md` này                                         |
 | Commit / push / merge vào `main` khi user chưa yêu cầu thẳng                       | `main` là production: Coolify deploy từ `main`. Làm việc trên `dev` (§5)                |
-| Gọi dịch vụ ngoài (App Script, email, QR) bên trong transaction MongoDB            | Transaction có thể thử lại hoặc huỷ; tác dụng phụ bên ngoài thì không huỷ được (§3)     |
+| Gọi dịch vụ ngoài (App Script, email, QR) bên trong transaction PostgreSQL          | Transaction có thể thử lại hoặc huỷ; tác dụng phụ bên ngoài thì không huỷ được (§3)     |
 | Ghi `Product.stockQuantity` ngoài worker của stock ledger                          | Chỉ worker ghi cache; mọi thay đổi khác tạo `StockMovement` để truy vết và tính lại được (§3) |
 | Tin giá / tổng tiền / combo do client gửi                                          | Giá luôn tính lại server-side trong `backend/services/pricing.js` (§3)                  |
 | Dùng `${VAR:?message}` trong `coolify.compose.yml`                                 | Coolify thay biến bằng chính chuỗi message, không fail (§2)                             |
@@ -85,7 +85,7 @@ trí nhớ; repo GitHub ngoài → `deepwiki`; tìm web → `exa` / `tavily` / `
 Version và tên image nằm ở `package.json`, `pnpm-lock.yaml`, `Dockerfile`, các file compose — đọc ở đó.
 
 - **Package manager: pnpm workspace** (`pnpm-workspace.yaml`: `backend`, `frontend`, `packages/*`), **một** `pnpm-lock.yaml` ở gốc, không lockfile con. `pnpm install` chạy ở gốc; lệnh theo gói dùng `pnpm --filter <tên>`. Phiên bản pnpm ghim ở `packageManager` trong `package.json` gốc, Dockerfile ghim cùng phiên bản qua corepack. Không `npm`/`yarn`, không commit `package-lock.json`/`yarn.lock`. Cài đặt pnpm dùng chung (`onlyBuiltDependencies`…) nằm ở `pnpm-workspace.yaml`, không ở package con. Cắt optional peer lọt vào image (`vitest`/`prisma` của better-auth) nằm ở `.pnpmfile.cjs` gốc: Dockerfile phải `COPY` nó cùng manifest, và `pnpmfileChecksum` trong lockfile phải khớp. Mỗi `pnpm install` trong Dockerfile phải nêu rõ `--prod` hoặc `--prod=false`, không dựa vào `NODE_ENV` (Coolify bơm nó vào mọi stage).
-- **Backend** CommonJS (Express + Mongoose); **frontend** ESM (Vite + React). Không trộn kiểu module trong cùng một package.
+- **Backend** CommonJS (Express + Prisma/PostgreSQL); **frontend** ESM (Vite + React). Không trộn kiểu module trong cùng một package.
 - **Auth: Better Auth** — tra `context7`, đừng đoán API. `backend/lib/auth.js` validate secret ngay lúc `require()`: thiếu env là crash khi boot, đó là thiết kế fail-fast, không phải lỗi cần né.
 - **Build context của image là gốc repo** (`context: .`, `dockerfile: backend/Dockerfile`) để thấy `packages/shared`. `.dockerignore` gốc và `*/Dockerfile.dockerignore` viết bằng mẫu `**/` (tên trần chỉ khớp ở gốc context). Thư mục build output của shared không bao giờ commit hay copy từ host vào image: `@sab/shared` được build trong image từ cây sạch.
 - **Ba file compose, ba vai trò**:
@@ -104,11 +104,11 @@ Version và tên image nằm ở `package.json`, `pnpm-lock.yaml`, `Dockerfile`,
   - Mật khẩu là credential: validate giá trị **thô**, không trim. `MAX_UNITS_PER_ORDER` ở lại `services/pricing.js` và được truyền vào `makeComboItems` (từ `@sab/shared`); đường tiền không phụ thuộc artifact build.
   - Đổi validation của route phải qua golden fixtures (`packages/shared/tests/fixtures`): chỗ lệch bản chụp là thay đổi cố ý, ghi `intentional` kèm lý do.
   - Backend/frontend đọc shared qua bản build: `pretest`/`predev`/`prebuild` build lại; sửa shared khi đang chạy dev thì chạy `pnpm --filter @sab/shared build:watch`. Test xanh trên bản build cũ là xanh giả.
-- **Transaction MongoDB được dùng.** Từ 04/10/2026 production là replica set 1 node `rs0` (`coolify.compose.yml`); backend từ chối khởi động nếu mongo không phải replica set (`backend/lib/require-replica-set.js`), nên "xanh ở test, throw ở production" không còn xảy ra âm thầm. Thao tác nhiều bước (đơn + kho) chạy trong một transaction; service nhận `session` và dùng nó cho mọi query. Gọi dịch vụ ngoài chỉ **sau** khi commit. Rollback hạ tầng về standalone phải đi cùng revert phần kiểm replica set của backend.
+- **Transaction PostgreSQL được dùng.** Thao tác nhiều bước (đơn + kho) chạy trong một transaction; service nhận `tx` và dùng nó cho mọi query. Gọi dịch vụ ngoài chỉ **sau** khi commit.
 - **Tồn kho**: `Product.stockQuantity` chỉ được ghi bởi worker của stock ledger (`backend/services/stock-ledger.js`), trừ lúc tạo sản phẩm (tạo/import) — khi đó ghi kèm movement `opening` đã áp, cùng transaction; mọi thay đổi khác (đơn, huỷ, điều chỉnh) tạo một `StockMovement` — đơn ghi movement trong cùng transaction với đơn. Không `save()` product với stock đọc trước rồi cộng trừ trong JS. Hết hàng không bao giờ chặn đơn; tồn có thể âm.
 - **Giá**: tổng tiền, giá combo, giảm giá luôn tính lại trong `backend/services/pricing.js` từ dữ liệu DB; payload client chỉ mang id + số lượng. Hiển thị và thanh toán dùng cùng một hàm tính.
 - **Sửa sản phẩm trong đơn** chỉ đi qua `backend/services/order-edit.js`: tổng tiền của đơn không bao giờ đổi, bộ mới phải tính ra đúng `totalAmount` đã lưu, chênh lệch kho ghi bằng movement `order_edit` trong cùng transaction.
-- **Query string** không đưa thẳng vào filter Mongo: đi qua helper trong `backend/utils/query-guard.js` (Express có thể giao object như `{ $ne: null }` — operator injection).
+- **Query string** không đưa thẳng vào filter truy vấn: đi qua helper trong `backend/utils/query-guard.js` (Express có thể giao object như `{ $ne: null }` — operator injection).
 - **Mass-assignment**: không đưa nguyên `req.body` vào `create`/`update`/`findOneAndUpdate`; chọn field tường minh. Import/export database không bao giờ ghi hay xuất credential.
 - **Mã lỗi** dùng hằng trong `backend/constants/errorCodes.js`, không viết chuỗi rải rác. Không nuốt lỗi im lặng.
 - **Upload**: theo `docs/FILE_UPLOAD_SECURITY.md` (kiểm loại thật của file, giới hạn cỡ, tên file do server sinh).
@@ -189,7 +189,7 @@ mỗi phát hiện phải neo `file:line` + kịch bản hỏng có thật — b
 ### Xét theo TOÀN pipeline, không xét hàm đơn lẻ
 
 Câu hỏi đúng: **"đầu vào xấu có tới được đây không, sau mọi cổng phía trước?"** — middleware
-validation, kiểm quyền, schema Mongoose, index unique, nginx. Cổng trước đã chặn thì không phải
+validation, kiểm quyền, ràng buộc/index unique của schema Prisma, nginx. Cổng trước đã chặn thì không phải
 phát hiện và không thêm kiểm tra. Ngoại lệ được phép trùng lớp (phải ghi lý do): ranh giới tin cậy
 đổi chủ, fail-closed cho tiền/tồn kho/quyền, invariant mà schema không giữ được.
 
