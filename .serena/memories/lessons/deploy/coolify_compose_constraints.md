@@ -80,3 +80,4 @@ Nguồn: comment đầu `coolify.compose.yml` + commit message của file đó. 
   Hướng tiếp (user chọn để sau): tách mongo/redis/seaweedfs sang resource Coolify riêng để deploy code không restart dữ liệu
   (JudgeHub deploy bằng `compose up -d` nên chỉ tạo lại service đổi ảnh/cấu hình).
   **Deploy 94 (10/10 14:28, đổi ảnh node 24 + redis 8, probe 1 req/s): trang 58 s, API 62 s** — ổn định quanh 60 s.
+- Đọc DB production (Postgres, đo 28/10): `ssh -p 24700 david0403@ssh.noboroto.id.vn`, container chọn bằng label project ở trên + `grep -i postgres`, rồi `docker exec -i "$C" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -X'` với SQL từ stdin bọc trong `BEGIN READ ONLY; … ROLLBACK;`. Biến môi trường nằm trong container nên không có secret trên argv. Chỉ SELECT cột không phải dữ liệu khách.
