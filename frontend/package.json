@@ -17,7 +17,8 @@
 		"react-router-dom": "^7.18.4",
 		"react-toastify": "^11.1.0",
 		"remark-gfm": "^4.0.1",
-		"sweetalert2": "^11.26.25"
+		"sweetalert2": "^11.26.25",
+		"yet-another-react-lightbox": "3.32.2"
 	},
 	"scripts": {
 		"predev": "pnpm --filter @sab/shared build",

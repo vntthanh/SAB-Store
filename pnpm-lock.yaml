@@ -146,6 +146,9 @@ importers:
       sweetalert2:
         specifier: ^11.26.25
         version: 11.26.25
+      yet-another-react-lightbox:
+        specifier: 3.32.2
+        version: 3.32.2(@types/react@18.3.31)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
     devDependencies:
       '@vitejs/plugin-react':
         specifier: ^6.1.2
@@ -4185,6 +4188,20 @@ packages:
     resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
     engines: {node: '>= 14.6'}
     hasBin: true
+
+  yet-another-react-lightbox@3.32.2:
+    resolution: {integrity: sha512-F4HtHQfUNpvkj+AmECgWM4XRdCqMY5gXpKgOUx39+T+FyxLe8II4SK/pwMyYj2X54KH9lFSQeHYY1/GfYf3SdA==}
+    engines: {node: '>=14'}
+    peerDependencies:
+      '@types/react': ^16 || ^17 || ^18 || ^19
+      '@types/react-dom': ^16 || ^17 || ^18 || ^19
+      react: ^16.8.0 || ^17 || ^18 || ^19
+      react-dom: ^16.8.0 || ^17 || ^18 || ^19
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+      '@types/react-dom':
+        optional: true
 
   zeptomatch@2.1.0:
     resolution: {integrity: sha512-KiGErG2J0G82LSpniV0CtIzjlJ10E04j02VOudJsPyPwNZgGnRKQy7I1R7GMyg/QswnE4l7ohSGrQbQbjXPPDA==}
@@ -8454,6 +8471,13 @@ snapshots:
   yallist@5.0.0: {}
 
   yaml@2.9.1: {}
+
+  yet-another-react-lightbox@3.32.2(@types/react@18.3.31)(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
+    dependencies:
+      react: 19.3.0
+      react-dom: 19.3.0(react@19.3.0)
+    optionalDependencies:
+      '@types/react': 18.3.31
 
   zeptomatch@2.1.0:
     dependencies:
