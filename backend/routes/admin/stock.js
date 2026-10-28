@@ -61,17 +61,15 @@ router.post('/products/:id/stock-adjustments', gated(async (req, res) => {
 		if (!product) {
 			return res.status(404).json({ success: false, code: ERROR_CODES.NOT_FOUND, message: 'Không tìm thấy sản phẩm' });
 		}
-		// The Mongo rollback store has no variants: the product is its own stock.
-		const variants = product.variants;
-		if (variants && variantId === null && product.options.length > 0) return invalid(res, 'Chọn phân loại cần điều chỉnh tồn kho');
-		if (variants && variantId !== null && !variants.some((variant) => variant._id === variantId)) {
+		if (variantId === null && product.options.length > 0) return invalid(res, 'Chọn phân loại cần điều chỉnh tồn kho');
+		if (variantId !== null && !product.variants.some((variant) => variant._id === variantId)) {
 			return invalid(res, 'Phân loại không thuộc sản phẩm này');
 		}
 
 		const isTarget = parsed.mode === 'target';
 		const movement = await recordMovement({
 			productId: id,
-			variantId: variants ? variantId : null,
+			variantId,
 			type: isTarget ? 'set_target' : 'adjust',
 			delta: isTarget ? undefined : parsed.value,
 			target: isTarget ? parsed.value : undefined,

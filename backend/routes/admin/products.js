@@ -237,9 +237,9 @@ router.put('/:id', validateBody(productStorefrontLink), validateProductSetup, ga
 	try {
 		const { id } = req.params;
 
-		// Explicit allow-list, not `{...req.body}`: mongoose `strict` drops
+		// Explicit allow-list, not `{...req.body}`: a store's `strict` mode drops
 		// unknown paths but every *real* schema path — including `sku`
-		// (unique; setting it to another product's value would 11000-block that
+		// (unique; setting it to another product's value would block that
 		// product's own future update) and `createdAt` — was still writable.
 		// `stockQuantity` is deliberately absent: it is a cache of the stock
 		// ledger and changes only through POST /:id/stock-adjustments.

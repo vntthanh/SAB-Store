@@ -12,7 +12,6 @@ const { ERROR_CODES } = require('../constants/errorCodes');
 const { StorefrontAccessError, assertCanView, canView, describeAccess } = require('./storefront-access');
 const { mergeRequirements } = require('./combo-optimizer');
 const { normalizePublicCode } = require('../utils/public-code');
-const FALLBACK_IMAGE = '/fallback-product.png';
 
 const CHANNEL = 'online';
 const OG_VERSION_LENGTH = 8;
@@ -33,9 +32,9 @@ const PUBLIC_PRODUCT_FIELDS = [
 ];
 
 // What a customer may know of a variant: never its stock or SKU, and only the
-// active ones. A store without variants (the Mongo rollback) lists none.
+// active ones.
 function toPublicVariants(doc) {
-	return (doc.variants ?? [])
+	return doc.variants
 		.filter((variant) => variant.isActive !== false)
 		.map((variant) => ({
 			_id: variant._id,
@@ -56,8 +55,8 @@ function toPublicProduct(doc) {
 		description: doc.description,
 		price: doc.price,
 		imageUrl: doc.imageUrl,
-		images: doc.images ?? (doc.imageUrl && doc.imageUrl !== FALLBACK_IMAGE ? [doc.imageUrl] : []),
-		options: doc.options ?? [],
+		images: doc.images,
+		options: doc.options,
 		variants: toPublicVariants(doc),
 		category: doc.category,
 		available: doc.available,

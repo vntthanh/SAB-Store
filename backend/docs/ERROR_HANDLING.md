@@ -160,15 +160,15 @@ router.post('/orders', async (req, res, next) => {
 
 Global error handler tự động xử lý:
 
-- Mongoose validation errors
-- Cast errors (invalid ObjectId)
-- Duplicate key errors
+- Lỗi validate dữ liệu của repository (`RecordValidationError`)
+- Id không hợp lệ (`InvalidIdError`)
+- Vi phạm unique constraint (`DuplicateKeyError`)
 - CORS errors
 - Operational vs system errors
 
 ```javascript
 app.use((err, req, res, next) => {
-	// Tự động detect và convert Mongoose errors
+	// Tự động detect và convert lỗi của repository (data/errors.js)
 	// Tự động log với full context
 	// Tự động format response cho client
 	ErrorResponse.sendErrorResponse(res, error, req);
@@ -177,25 +177,18 @@ app.use((err, req, res, next) => {
 
 ### 5. Database Error Handling (`lib/database.js`)
 
-Database connection với improved logging:
+Kết nối PostgreSQL (qua Prisma) với structured logging. Chỉ host được log, không bao giờ log connection string vì nó chứa mật khẩu:
 
 ```javascript
 const ErrorLogger = require('../utils/errorLogger');
 
 // Connection với structured logging
 await connectDB();
-// [INFO] Connecting to MongoDB... { host: 'xxx' }
-// [OK] MongoDB connected successfully { readyState: 1 }
+// [INFO] Connecting to PostgreSQL... { host: 'xxx' }
+// [OK] PostgreSQL connected successfully via Prisma
 
-// Error events
-mongoose.connection.on('error', (err) => {
-	ErrorLogger.logDatabase('connection_error', err, { readyState });
-});
-
-// Reconnection events
-mongoose.connection.on('reconnected', () => {
-	ErrorLogger.logInfo('MongoDB reconnected', { readyState });
-});
+// Lỗi kết nối được log rồi ném lại cho caller
+ErrorLogger.logDatabase('connect', error, { step: 'connection' });
 ```
 
 ## Best Practices

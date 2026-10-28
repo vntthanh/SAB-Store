@@ -125,7 +125,6 @@ async function recordMovement(movement, opts = {}) {
 function buildDocument({ productId, variantId, type, delta, target, orderId, reason, createdBy, idempotencyKey }) {
 	return {
 		productId,
-		// The Mongo movement schema has no such path and drops it (strict mode).
 		variantId: variantId || null,
 		type,
 		delta: type === 'set_target' ? null : delta,
@@ -288,8 +287,7 @@ async function reconcile(opts = {}) {
 			state.appliedSumByProduct.get(product.productId) || 0, state.pendingByProduct.get(product.productId) || 0);
 		if (diff !== null) productDiffs.set(product.productId, diff);
 	}
-	// The Mongo rollback store keeps no variants.
-	for (const variant of state.variants ?? []) {
+	for (const variant of state.variants) {
 		// A default variant is its product's whole stock: the drift its product row
 		// already shows is not repeated, a different one is.
 		const variantDiff = (variant.stockQuantity || 0) - (state.appliedSumByVariant.get(variant.variantId) || 0);

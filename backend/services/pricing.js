@@ -39,9 +39,7 @@ class PricingError extends Error {
 }
 
 // Only what the engine reads, so the stock cache and other internals are never
-// loaded. The combo search itself stays in Node: a dynamic program as an
-// aggregation pipeline would run on the small mongod (512 MB, 0.25 GB cache)
-// and be slower than this in-memory one.
+// loaded. The combo search itself stays in Node, an in-memory dynamic program.
 const PRODUCT_FIELDS = ['_id', 'name', 'price', 'category', 'minOrderQuantity', 'maxOrderQuantity', 'available', 'salesChannel', 'storefrontId', 'variants'];
 const COMBO_FIELDS = ['_id', 'name', 'price', 'categoryRequirements', 'priority', 'salesChannel', 'isActive', 'storefrontIds'];
 
@@ -169,16 +167,15 @@ const byProductThenKey = (a, b) => compareText(a.productId, b.productId) || comp
  * naming none buys the product's default variant (a product without options); a
  * product with options needs the variant named, so an old cart line never buys
  * an option the customer did not pick. Every bad line is reported at once, so a
- * cart can drop exactly those. A store without variants (the Mongo rollback)
- * sells the product itself and refuses any variant. A variant in `keepVariantIds`
+ * cart can drop exactly those. A variant in `keepVariantIds`
  * is accepted even when it is no longer sold: an order that already holds it
  * stays editable after the variant is retired.
  *
  * @param {Array<{productId: string, variantId: string|null, quantity: number}>} requested canonical ids
  * @param {Map<string, object>} productMap
  * @param {Set<string>} keepVariantIds
- * @returns {Array<{key: string, productId: string, product: object, variant: object|null, unitPrice: number, quantity: number}>}
- *          ordered by product, then variant; `key` is the variant id (the product id on a store without variants)
+ * @returns {Array<{key: string, productId: string, product: object, variant: object, unitPrice: number, quantity: number}>}
+ *          ordered by product, then variant; `key` is the variant id
  * @throws {PricingError} VARIANT_UNAVAILABLE, VARIANT_REQUIRED
  */
 function resolveVariants(requested, productMap, keepVariantIds) {
@@ -187,25 +184,19 @@ function resolveVariants(requested, productMap, keepVariantIds) {
 	const required = [];
 	for (const { productId, variantId, quantity } of requested) {
 		const product = productMap.get(productId);
-		let variant = null;
-		if (product.variants) {
-			variant = variantId === null
-				? product.variants.find((candidate) => candidate.optionValues.length === 0)
-				: product.variants.find((candidate) => candidate._id === variantId);
-			if (variantId === null && !variant) {
-				required.push({ productId, variantId: null });
-				continue;
-			}
-			if (!variant || (variant.isActive === false && !keepVariantIds.has(variant._id))) {
-				unavailable.push({ productId, variantId });
-				continue;
-			}
-		} else if (variantId !== null) {
+		const variant = variantId === null
+			? product.variants.find((candidate) => candidate.optionValues.length === 0)
+			: product.variants.find((candidate) => candidate._id === variantId);
+		if (variantId === null && !variant) {
+			required.push({ productId, variantId: null });
+			continue;
+		}
+		if (!variant || (variant.isActive === false && !keepVariantIds.has(variant._id))) {
 			unavailable.push({ productId, variantId });
 			continue;
 		}
-		const key = variant ? variant._id : productId;
-		const line = lines.get(key) || { key, productId, product, variant, unitPrice: variant ? variant.effectivePrice : product.price, quantity: 0 };
+		const key = variant._id;
+		const line = lines.get(key) || { key, productId, product, variant, unitPrice: variant.effectivePrice, quantity: 0 };
 		line.quantity += quantity;
 		lines.set(key, line);
 	}
@@ -229,9 +220,9 @@ function productQuantities(lines) {
 function orderItemOf(line, quantity, combo) {
 	return {
 		productId: line.product._id,
-		...(line.variant && { variantId: line.variant._id }),
+		variantId: line.variant._id,
 		productName: line.product.name,
-		...(line.variant && line.variant.label && { variantLabel: line.variant.label }),
+		...(line.variant.label && { variantLabel: line.variant.label }),
 		price: line.unitPrice,
 		quantity,
 		fromCombo: Boolean(combo),
@@ -348,29 +339,26 @@ function groupByStorefront(lines, present, sellableCombos) {
  *   totalAmount: number,
  *   savings: number,
  *   orderItems: Array<{
- *     productId: NativeId,
- *     variantId?: string,
+ *     productId: string,
+ *     variantId: string,
  *     productName: string,
  *     variantLabel?: string,
  *     price: number,
  *     quantity: number,
  *     fromCombo: boolean,
- *     comboId: NativeId|null,
+ *     comboId: string|null,
  *     comboName: string|null
  *   }>,
  *   comboInfo: {
  *     savings: number,
  *     originalTotal: number,
  *     finalTotal: number,
- *     combos: Array<{comboId: NativeId, comboName: string, applications: number, savings: number}>
+ *     combos: Array<{comboId: string, comboName: string, applications: number, savings: number}>
  *   }|null,
  *   overMaxLines: Array<{productId: string, productName: string, quantity: number, max: number}>,
  *   products: Map<string, object>
  * }>}
- *        `orderItems[].productId` and `comboId` (and `comboInfo.combos[].comboId`)
- *        are the store's native id: an ObjectId on MongoDB, a lowercase uuid
- *        string on postgres. Callers only `String()` them or compare the
- *        normalised form; nothing here depends on it being an object. Combo lines keep the
+ *        Ids are lowercase uuid strings. Combo lines keep the
  *        retail unit price; `totalAmount` is NOT their price x quantity.
  *        `comboInfo` covers the combo lines only: `originalTotal` is their retail
  *        value and `finalTotal` what the combos charge for them, so

@@ -59,7 +59,7 @@ const upload = multer({
  * Only these fields can be written by a merge-imported record.
  *
  * `createdAt`/`updatedAt` are absent from every whitelist on purpose:
- * Mongoose manages timestamps itself when the field is left out, so an
+ * the repository stamps them itself when the field is left out, so an
  * imported record cannot backdate itself. (A restore is the opposite case: it
  * reproduces the store's own rows, timestamps included.)
  *
@@ -142,8 +142,7 @@ const KNOWN_IMPORT_SECTIONS = [
  *
  * `_id` gets special handling: it is accepted only when it is a well-formed
  * record id string (see F2 doc comment on IMPORT_WHITELIST above) — a
- * missing/malformed/forged `_id` is silently dropped, same as before this
- * field was ever whitelisted, and Mongo assigns a fresh one.
+ * missing/malformed/forged `_id` is silently dropped, and the repository assigns a fresh one.
  *
  * `dropped` receives the name of every key of `obj` that was not carried over,
  * so the import can report what it left behind instead of hiding it.
@@ -171,7 +170,7 @@ function pick(obj, allowed, dropped = []) {
 }
 
 /**
- * Validate the whole import payload's shape before a single document is
+ * Validate the whole import payload's shape before a single record is
  * written. A merge import is deliberately not one transaction: it adds what is
  * missing record by record, and one bad record must not block the rest. So the
  * only all-or-nothing gate is refusing to start when the structure itself is
@@ -260,7 +259,7 @@ function importErrorMessage(error, { model, entity, publicCode }) {
  * GET /api/admin/database/export
  * Admin authentication handled by parent router
  *
- * The file holds complete documents (ids, timestamps, every sub-array), the stock
+ * The file holds complete records (ids, timestamps, every sub-array), the stock
  * ledger and the settings row, so a Restore can reproduce the store exactly.
  * Deliberately excludes users, accounts, sessions and jwks (Q7): this is a
  * business-data backup, so it never carries credential hashes or session and

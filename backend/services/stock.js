@@ -22,9 +22,9 @@ const MOVEMENT_SIGN = { order: -1, order_cancel: 1 };
 
 /**
  * Units per variant across all lines: a combo line and a retail line of one
- * variant count together. A line that names no variant (a product without
- * options on the Mongo rollback store, or a line of a product deleted before
- * variants existed) counts as its product's, keyed by the product id.
+ * variant count together. A line that names no variant (a line of a product
+ * deleted before variants existed, or of an order imported by merge) counts as
+ * its product's, keyed by the product id.
  *
  * @returns {Map<string, {productId: string, variantId: string|null, quantity: number}>}
  */

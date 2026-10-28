@@ -150,17 +150,14 @@ class ErrorResponse {
 }
 
 /**
- * True for a failed write the repositories report (or, for routes not yet behind
- * a repository, the engine's own error for the same three cases).
+ * True for a failed write the repositories report (or, for code not yet behind a
+ * repository, a Prisma error that `translateWriteError` turns into one of them).
  */
-// The `name`/`code` checks go once every route reaches the store through `data/`.
 function isDataError(error) {
 	return error instanceof RecordValidationError
 		|| error instanceof InvalidIdError
 		|| error instanceof DuplicateKeyError
-		|| error.name === 'ValidationError'
-		|| error.name === 'CastError'
-		|| error.code === 11000;
+		|| translateWriteError(error) !== error;
 }
 
 function handleDataError(raw) {
