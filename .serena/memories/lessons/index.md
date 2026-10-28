@@ -8,7 +8,7 @@
 - `mem:lessons/auth/better_auth_email_otp_one_tap` — đọc trước khi sửa `lib/auth.js`/`auth-guards.js`: email-otp xoá account chưa verify + 500 trên Postgres, lỗi gửi mail bị nuốt, strip `username`, linking Google, rate limit, admin update-user, guard phải kiểm session trước.
 
 ## database
-- `mem:lessons/database/no_mongo_transactions` — prod lên replica set `rs0` 04/10 (đã đo, keyfile /etc/mongo chmod 755, key không xuống dòng); backend fail-fast; rollback phải revert cả kiểm replica set.
+- `mem:lessons/database/product_variants` — đọc trước khi đụng sản phẩm/giá/kho/đơn: mọi sản phẩm ≥1 biến thể (mặc định = option rỗng), khoá movement→variant→product, KEY SHARE khi định giá, lưu trữ thay vì xoá biến thể có lịch sử, migration một chiều, script gộp sản phẩm.
 - `mem:lessons/database/storefront_default_and_uuid7_sql` — id gian hàng mặc định cố định; migration tự dựng UUIDv7 bằng `pg_temp.uuid_v7()` vì PG17 không có; harness reseed; kiểm migrate diff.
 
 - `mem:lessons/database/postgres_migration_harness` — read before touching Prisma/Postgres or the test harness. Covers: embedded PG with one database per file (cost in seconds), sweeping leftovers after SIGKILL, UTC on every session, a deps-only commit failing knip, the simple query parser hiding the guard in route tests, Prisma gen/release stages, and production-data facts.
@@ -28,7 +28,7 @@
 
 ## workflow
 - `mem:lessons/workflow/agent_tooling_pitfalls` — scout-block hook chặn chuỗi `node_modules`/`build` trong Bash; tin cross-session khác permission mode hết hạn → đọc thẳng repo anh em.
-- `mem:lessons/workflow/regex_redos_order_email` — regex email `\w+([.-]?\w+)*@` backtrack hàm mũ (249 s/request); `models/Order.js` (Mongo) còn dạng cũ.
+- `mem:lessons/workflow/regex_redos_order_email` — regex email `\w+([.-]?\w+)*@` backtrack hàm mũ (249 s/request).
 
 ## machine
 - `mem:lessons/machine/shared_mac_resources` — watchdog reset 30/09 và 04/10 18:22 (3 node 19 GB RSS, hook chạy đôi): không worktree thừa, một agent nặng, eslint 1 luồng, verify trình duyệt có stack = nặng; reboot xoá scratchpad.
