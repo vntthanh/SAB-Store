@@ -1,11 +1,10 @@
 /**
- * Prisma, pg and MongoDB errors can quote the connection string they were given,
+ * Prisma and pg errors can quote the connection string they were given,
  * and the log leaves the database's access controls (it goes to the shared log
  * pipeline). A database error must reach the log with the host and without the
  * userinfo part of the URL, whatever characters the password holds.
  */
 const ErrorLogger = require('../../utils/errorLogger');
-const { backendName } = require('../../data/backend-name');
 
 function loggedText(spy) {
 	return spy.mock.calls.map((args) => args.map(String).join(' ')).join('\n');
@@ -22,8 +21,6 @@ const PASSWORDS = [
 ];
 const SCHEMES = [
 	['PostgreSQL', 'postgresql', 'db.internal:5432/sabstore', 'DATABASE_URL'],
-	['MongoDB', 'mongodb', 'mongo.internal:27017/sabstore?replicaSet=rs0', 'MONGODB_URI'],
-	['MongoDB SRV', 'mongodb+srv', 'cluster.internal/sabstore', 'MONGODB_URI'],
 ];
 
 describe('ErrorLogger connection-string redaction', () => {
@@ -31,7 +28,7 @@ describe('ErrorLogger connection-string redaction', () => {
 	let savedEnv;
 	beforeEach(() => {
 		errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-		savedEnv = { DATABASE_URL: process.env.DATABASE_URL, MONGODB_URI: process.env.MONGODB_URI };
+		savedEnv = { DATABASE_URL: process.env.DATABASE_URL };
 	});
 	afterEach(() => {
 		errorSpy.mockRestore();
@@ -68,7 +65,6 @@ describe('ErrorLogger connection-string redaction', () => {
 
 	it.each(SCHEMES)('removes the userinfo of a %s URL even when the configuration does not hold it', (_, scheme, rest) => {
 		delete process.env.DATABASE_URL;
-		delete process.env.MONGODB_URI;
 		const { password, tail } = PASSWORDS[1];
 		const error = new Error(`connect failed for ${scheme}://sab:${password}@${rest}`);
 
@@ -102,7 +98,7 @@ describe('ErrorLogger connection-string redaction', () => {
 
 	it('logDatabase names the store it is running on', () => {
 		const info = ErrorLogger.logDatabase('connect', new Error('boom'));
-		expect(info.context.database).toBe(backendName === 'postgres' ? 'postgresql' : 'mongodb');
+		expect(info.context.database).toBe('postgresql');
 	});
 
 	it('logCritical, used for a failed start, drops the userinfo as well', () => {

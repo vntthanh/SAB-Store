@@ -5,7 +5,11 @@ const {
 	ogVersion
 } = require('../../services/public-catalog');
 const { makeProduct, makeCombo } = require('../helpers/factories');
-const { findProduct, patchProduct, patchCombo } = require('../helpers/db');
+const { patchProduct, patchCombo } = require('../helpers/db');
+const { products } = require('../../data');
+
+// The record the catalog is handed in production: the repository's, variants included.
+const findProduct = (id) => products.findById(id);
 
 describe('findPublicProductByCode', () => {
 	it('returns a product sellable online, found by a case- and space-insensitive code', async () => {

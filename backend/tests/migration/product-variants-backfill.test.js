@@ -9,7 +9,6 @@ const fs = require('fs');
 const path = require('path');
 const { v7: uuidv7 } = require('uuid');
 const postgres = require('../helpers/postgres');
-const { POSTGRES } = require('../helpers/backend');
 const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 
 const MIGRATIONS = path.join(__dirname, '..', '..', 'prisma', 'migrations');
@@ -18,7 +17,7 @@ const VARIANTS_MIGRATION = '20261028100000_product_variants';
 const migrationSql = (name) => fs.readFileSync(path.join(MIGRATIONS, name, 'migration.sql'), 'utf8');
 const migrationsBefore = () => fs.readdirSync(MIGRATIONS).filter((name) => /^\d{14}_/.test(name)).sort().filter((name) => name < VARIANTS_MIGRATION);
 
-describe.skipIf(!POSTGRES)('product variants migration on existing data', () => {
+describe('product variants migration on existing data', () => {
 	const dbName = `variants_mig_${process.pid}`;
 	let url;
 

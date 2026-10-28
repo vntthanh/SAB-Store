@@ -39,8 +39,7 @@ describe('computeOrderPricing', () => {
 		expect(result.orderItems).toHaveLength(1);
 		expect(result.orderItems[0].price).toBe(75000);
 		expect(result.orderItems[0].quantity).toBe(3);
-		// productId must be an ObjectId, not a string, so it writes to Order
-		// without re-casting.
+		// productId is the store's native id, so it writes to the order without re-casting.
 		expect(isRowId(result.orderItems[0].productId)).toBe(true);
 		expect(result.orderItems[0].productId.toString()).toBe(product._id.toString());
 		expect(result.comboInfo).toBeNull();
@@ -220,7 +219,7 @@ describe('computeOrderPricing', () => {
 	});
 
 	describe('opts.session', () => {
-		it('accepts a null session (production is a standalone mongod)', async () => {
+		it('accepts a null session (no transaction)', async () => {
 			const product = await makeProduct({ price: 5000 });
 
 			const result = await computeOrderPricing(

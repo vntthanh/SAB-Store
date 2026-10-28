@@ -10,11 +10,10 @@ const { applyPendingMovements } = require('../helpers/stock');
 const { expectedTotalFor } = require('../helpers/pricing');
 const { reconcile } = require('../../services/stock-ledger');
 const {
-	findOrder, findOrderByCode, movements, countRows, patchProduct, patchOrder, unsetOrderField, failNextMovementInsert,
+	findOrder, findOrderByCode, movements, countRows, patchProduct, patchOrder, failNextMovementInsert,
 	stockOf: cachedStock,
 	stockKeyIdOf,
 } = require('../helpers/db');
-const { POSTGRES } = require('../helpers/backend');
 
 const customer = {
 	studentId: '24120001',
@@ -299,23 +298,6 @@ describe('PUT /api/admin/orders/:id/items', () => {
 		expect(res.status).toBe(400);
 		expect(res.body.code).toBe('CART_TOO_MANY_UNITS');
 		expect(await reload(order)).toEqual(before);
-	});
-
-	// Skipped on Postgres: unsets a stored field; a Postgres column cannot be missing (itemsRevision is NOT NULL DEFAULT 0).
-	it.skipIf(POSTGRES)('edits an order stored without itemsRevision and keeps counting from there', async () => {
-		const [a, b, c] = [await product(), await product(), await product()];
-		const order = await placeOrder([line(a)]);
-		await unsetOrderField(order._id, 'itemsRevision');
-		expect((await reload(order)).itemsRevision).toBeUndefined();
-
-		const first = await edit(order._id, { items: [line(b)], expectedRevision: 0 });
-		const second = await edit(order._id, { items: [line(c)], expectedRevision: 1 });
-
-		expect(first.status).toBe(200);
-		expect(second.status).toBe(200);
-		const stored = await reload(order);
-		expect(stored.itemsRevision).toBe(2);
-		expect(stored.itemsHistory).toHaveLength(2);
 	});
 
 	it('records no movement for a product whose units stay the same while its combo/retail split changes', async () => {

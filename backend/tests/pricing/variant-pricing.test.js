@@ -10,7 +10,6 @@ const { buildTestApp } = require('../helpers/app');
 const { makeProduct, makeCombo, makeOrder, makeAdminSession } = require('../helpers/factories');
 const { insertRawProductWithOptions, findOrderByCode, movementsFor, stockOf } = require('../helpers/db');
 const { applyPendingMovements } = require('../helpers/stock');
-const { POSTGRES } = require('../helpers/backend');
 const { generatePublicCode } = require('../../utils/public-code');
 
 const ONLINE = { channel: 'online' };
@@ -30,7 +29,7 @@ async function shirt(fields = {}) {
 
 const variantLine = (product, variant, quantity) => ({ productId: product._id, variantId: variant._id, quantity });
 
-describe.skipIf(!POSTGRES)('pricing per variant', () => {
+describe('pricing per variant', () => {
 	it('prices each variant at its own price, or the product price, as separate lines', async () => {
 		const { product, small, medium } = await shirt();
 
@@ -87,7 +86,7 @@ describe.skipIf(!POSTGRES)('pricing per variant', () => {
 	});
 });
 
-describe.skipIf(!POSTGRES)('orders per variant', () => {
+describe('orders per variant', () => {
 	let app;
 	let admin;
 	const customer = { studentId: '24120001', fullName: 'Nguyen Van A', email: 'a@example.com', phoneNumber: '0987654321' };

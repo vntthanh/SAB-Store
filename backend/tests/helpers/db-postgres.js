@@ -1,21 +1,18 @@
 /**
- * The PostgreSQL implementation of tests/helpers/db.js, selected by
- * DATA_BACKEND=postgres. Same function names, same plain shapes: ids are uuid
- * strings, `_id` is the row id, columns come back camelCased, `seq` is dropped.
+ * The PostgreSQL implementation behind tests/helpers/db.js (which documents the
+ * interface). Plain shapes: ids are uuid strings, `_id` is the row id, columns
+ * come back camelCased, `seq` is dropped.
  *
  * Reads and writes go through a separate `pg` pool with plain SQL, not through
  * the repositories or Prisma models under test. Only the fault seams touch the
- * code under test, and only at the boundary the header of db.js names for them.
- *
- * `unsetOrderField` can never apply (a column cannot be missing) and throws.
+ * code under test, and only at the repository boundary.
  *
  * The login tables (`user`, `account`, `session`, `jwks`, `verification`) belong
  * to the auth library and keep its camelCase column names, unlike the store
  * tables, so their helpers address columns by the key as given.
  *
- * Fault seams: see db.js. Here `failNextStockWrite` wraps the transaction client
- * so the first write of a product row inside a transaction rejects after the
- * statements before it ran, which is what the Mongo seam does with `updateOne`.
+ * `failNextStockWrite` wraps the transaction client so the first write of a
+ * product row inside a transaction rejects after the statements before it ran.
  */
 const { Pool } = require('pg');
 const { v7: uuidv7 } = require('uuid');
@@ -98,10 +95,6 @@ async function selectOne(table, filter) {
 	const rows = await select(table, filter);
 	return rows[0] || null;
 }
-
-const notImplemented = (name) => () => {
-	throw new Error(`${name} is not implemented for postgres`);
-};
 
 /** A fresh id nothing refers to. */
 const newId = () => uuidv7();
@@ -357,9 +350,6 @@ const isRowId = (value) => typeof value === 'string' && UUID.test(value);
 /** The name of the database the application is connected to. */
 const databaseName = () => decodeURIComponent(new URL(process.env.DATABASE_URL).pathname.slice(1));
 
-/** Nothing to create up front: the table comes with the migrations. */
-async function ensureMovementStore() {}
-
 const settingsDefaults = { notices: DEFAULT_NOTICES, contact: DEFAULT_CONTACT, noticeMaxLength: NOTICE_MAX_LENGTH };
 
 /**
@@ -523,14 +513,12 @@ module.exports = {
 	patchOrder,
 	patchCombo,
 	patchMovement,
-	unsetOrderField: notImplemented('unsetOrderField'),
 	deleteProduct,
 	deleteAllRows,
 	withTransaction,
 	txOptions,
 	isRowId,
 	databaseName,
-	ensureMovementStore,
 	failNextMovementInsert,
 	failNextOrderBulkInsert,
 	failNextTransactionStart,

@@ -1,33 +1,20 @@
 /**
  * Test data factories.
  *
- * `makeProduct`, `makeCombo` and `makeOrder` write through the real Mongoose
- * model instead of inserting a plain object, so their output stays honest with
- * schema defaults, validation and indexes — a factory that drifts from the
- * schema would let a test pass against a document production code could never
- * actually produce. `makeSettings` and the legacy factories are the exception:
- * they exist to store shapes the model would never write.
- *
- * On `DATA_BACKEND=postgres` there is no model: the same fixtures go through the
- * repositories, whose validation and column defaults play the model's part, and
- * the result is the repository's plain record (`_id` a uuid string) instead of a
- * Mongoose document. A test that needs a document method (`save`, `toObject`)
- * is Mongo-only and says so.
+ * `makeProduct`, `makeCombo` and `makeOrder` go through the repositories, whose
+ * validation and column defaults keep the fixtures honest with what production
+ * can write, and return the repository's plain record (`_id` a uuid string).
+ * `makeSettings` and the legacy factories are the exception: they exist to
+ * store shapes the repositories would never write.
  */
 const { randomUUID } = require('crypto');
 const request = require('supertest');
-const mongoose = require('mongoose');
 const data = require('../../data');
 const { DEFAULT_STOREFRONT_ID } = require('../../data/default-storefront');
 const { insertRawProduct, insertRawSettings, patchProduct, patchCombo, patchOrder } = require('./db');
-const Product = require('../../models/Product');
-const Combo = require('../../models/Combo');
-const Order = require('../../models/Order');
 
-const POSTGRES = process.env.DATA_BACKEND === 'postgres';
-
-// The model lets a caller choose the timestamps of a new document (a backdated
-// order); a repository stamps rows itself, so the fixture sets them afterwards.
+// A caller may choose the timestamps of a new row (a backdated order); a
+// repository stamps rows itself, so the fixture sets them afterwards.
 const STAMPS = ['createdAt', 'updatedAt'];
 
 async function createStamped(create, patch, find, fields) {
@@ -60,9 +47,8 @@ async function makeProduct(overrides = {}) {
 		stockQuantity: 10,
 		...overrides,
 	};
-	if (!POSTGRES) return Product.create(fields);
-	// The repository takes the opening balance apart from the fields and, like the
-	// model, writes it to the cache without a movement: the fixture is stock-neutral.
+	// The repository takes the opening balance apart from the fields and writes it
+	// to the cache without a movement: the fixture is stock-neutral.
 	const { stockQuantity, ...rest } = fields;
 	rest.storefrontId ??= DEFAULT_STOREFRONT_ID;
 	return createStamped((own) => data.products.create(own, stockQuantity), patchProduct, data.products.findById, rest);
@@ -83,7 +69,6 @@ async function makeCombo(overrides = {}) {
 		isActive: true,
 		...overrides,
 	};
-	if (!POSTGRES) return Combo.create(fields);
 	fields.storefrontIds ??= [DEFAULT_STOREFRONT_ID];
 	return createStamped(data.combos.create, patchCombo, data.combos.findById, fields);
 }
@@ -94,8 +79,7 @@ async function makeCombo(overrides = {}) {
  * fixture is stock-neutral: it records no movement and leaves the product's
  * cached stock untouched. When the caller passes `items`, no product is
  * created and `totalAmount` defaults to 0, so a test that counts products is
- * not disturbed. Like the other factories it returns a Mongoose document,
- * unlike the plain objects of helpers/db.js.
+ * not disturbed.
  */
 async function makeOrder(overrides = {}) {
 	let lines = { totalAmount: 0 };
@@ -120,8 +104,8 @@ async function makeOrder(overrides = {}) {
 		statusHistory: [{ status: 'confirmed', updatedBy: 'system', updatedAt: new Date() }],
 		...overrides,
 	};
-	if (POSTGRES && !fields.isDirectSale) fields.storefrontId ??= DEFAULT_STOREFRONT_ID;
-	return POSTGRES ? createStamped((own) => data.orders.create(own), patchOrder, (id) => data.orders.findById(id), fields) : Order.create(fields);
+	if (!fields.isDirectSale) fields.storefrontId ??= DEFAULT_STOREFRONT_ID;
+	return createStamped((own) => data.orders.create(own), patchOrder, (id) => data.orders.findById(id), fields);
 }
 
 /**
@@ -133,12 +117,9 @@ async function makeOrder(overrides = {}) {
 const makeSettings = (fields) => insertRawSettings(fields);
 
 /**
- * A document the way one written before public codes existed looks: inserted
- * through db.js's raw insert, so no hook runs and there is no `publicCode`.
- * Returns the stored document with its native ObjectId `_id`, which the
- * legacy tests pass to the raw driver.
+ * A product the way one written before public codes existed looks: inserted
+ * through db.js's raw insert, so there is no `publicCode`.
  */
-const asStored = (row) => (POSTGRES ? row : { ...row, _id: new mongoose.Types.ObjectId(row._id) });
 
 function makeLegacyProduct(overrides = {}) {
 	const n = nextSequence();
@@ -149,7 +130,7 @@ function makeLegacyProduct(overrides = {}) {
 		available: true,
 		stockQuantity: 10,
 		...overrides,
-	}).then(asStored);
+	});
 }
 
 const TEST_PASSWORD = 'factory-test-password-1';

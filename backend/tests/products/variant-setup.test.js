@@ -11,13 +11,12 @@ const { buildTestApp } = require('../helpers/app');
 const { makeAdminSession } = require('../helpers/factories');
 const { findProduct } = require('../helpers/db');
 const { applyPendingMovements } = require('../helpers/stock');
-const { POSTGRES } = require('../helpers/backend');
 const { reconcile } = require('../../services/stock-ledger');
 const { optionCombinations } = require('@sab/shared');
 
 const prisma = () => require('../../lib/prisma').prisma;
 
-describe.skipIf(!POSTGRES)('product options and variants through the admin routes', () => {
+describe('product options and variants through the admin routes', () => {
 	let app;
 	let cookies;
 

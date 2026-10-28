@@ -119,9 +119,9 @@ describe('POST /api/admin/database/import', () => {
 		expect(JSON.stringify(res.body)).not.toMatch(/at Object|at process|\.js:\d+:\d+/);
 	});
 
-	it('ignores a file-supplied _id and lets Mongo assign a new one', async () => {
+	it('ignores a file-supplied _id and lets the store assign a new one', async () => {
 		const { cookies } = await makeAdminSession(app);
-		const forgedId = 'this-is-not-a-real-mongo-id';
+		const forgedId = 'this-is-not-a-real-record-id';
 
 		const payload = {
 			data: {
