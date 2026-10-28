@@ -375,7 +375,7 @@ describe('ledger reads', () => {
 		expect(page.data.map((row) => row._id)).toEqual([created[2]._id, created[1]._id]);
 		expect(page.data[0]).toMatchObject({ type: 'adjust', delta: 3, status: 'pending', orderId: null });
 		expect(Object.keys(page.data[0]).sort()).toEqual(
-			['_id', 'appliedAt', 'createdAt', 'createdBy', 'delta', 'orderId', 'reason', 'status', 'stockAfter', 'target', 'type']
+			['_id', 'appliedAt', 'createdAt', 'createdBy', 'delta', 'orderId', 'reason', 'status', 'stockAfter', 'target', 'type', ...(POSTGRES ? ['variantId'] : [])].sort()
 		);
 	});
 });

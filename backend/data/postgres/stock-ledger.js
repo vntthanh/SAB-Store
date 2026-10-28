@@ -191,10 +191,14 @@ function applyClaimed(movementId) {
 
 		if (!product || !variant) {
 			// The product (or this variant of it) was deleted. Leaving the movement
-			// pending would block the queue for stock that no longer exists.
+			// pending would block the queue for stock that no longer exists. A product
+			// that still exists did not move, so its ledger records a zero delta and
+			// keeps adding up to its stock; the delta that was meant stays in the error.
 			const { count } = await tx.stockMovement.updateMany({
 				where: { id, status: 'pending' },
-				data: { status: 'applied', appliedAt, delta: movement.delta ?? 0, lastError: product ? 'VARIANT_NOT_FOUND' : 'PRODUCT_NOT_FOUND' }
+				data: product
+					? { status: 'applied', appliedAt, delta: 0, lastError: `VARIANT_NOT_FOUND delta=${movement.delta ?? `target ${movement.target}`}` }
+					: { status: 'applied', appliedAt, delta: movement.delta ?? 0, lastError: 'PRODUCT_NOT_FOUND' }
 			});
 			return count === 1;
 		}
@@ -268,7 +272,8 @@ async function summarizePending() {
 
 /**
  * What reconcile compares: the sum of applied deltas and the pending count per
- * product (keyed by id string), and every product's cached stock.
+ * product and per variant (keyed by id string), and every product's and variant's
+ * cached stock.
  *
  * With a `tx` the reads run inside it one after another (a transaction runs one
  * operation at a time) and see what the transaction has written. They are
@@ -278,17 +283,27 @@ async function summarizePending() {
  *
  * @param {object|null} [tx]
  * @returns {Promise<{appliedSumByProduct: Map<string, number>, pendingByProduct: Map<string, number>,
- *                    products: Array<{productId: string, name: string, stockQuantity?: number}>}>}
+ *                    products: Array<{productId: string, name: string, stockQuantity: number}>,
+ *                    appliedSumByVariant: Map<string, number>, pendingByVariant: Map<string, number>,
+ *                    variants: Array<{variantId: string, productId: string, label: string|null, stockQuantity: number}>}>}
  */
 async function readLedgerState(tx) {
 	const db = clientOf(tx);
 	const sums = await db.stockMovement.groupBy({ by: ['productId'], where: { status: 'applied' }, _sum: { delta: true } });
 	const pendingCounts = await db.stockMovement.groupBy({ by: ['productId'], where: { status: 'pending' }, _count: { _all: true } });
 	const products = await db.product.findMany({ select: { id: true, name: true, stockQuantity: true } });
+	const variantSums = await db.stockMovement.groupBy({ by: ['variantId'], where: { status: 'applied' }, _sum: { delta: true } });
+	const variantPending = await db.stockMovement.groupBy({ by: ['variantId'], where: { status: 'pending' }, _count: { _all: true } });
+	const variants = await db.productVariant.findMany({ select: { id: true, productId: true, optionValues: true, stockQuantity: true } });
 	return {
 		appliedSumByProduct: new Map(sums.map((s) => [s.productId, Number(s._sum.delta ?? 0)])),
 		pendingByProduct: new Map(pendingCounts.map((p) => [p.productId, p._count._all])),
-		products: products.map((p) => ({ productId: p.id, name: p.name, stockQuantity: p.stockQuantity }))
+		products: products.map((p) => ({ productId: p.id, name: p.name, stockQuantity: p.stockQuantity })),
+		appliedSumByVariant: new Map(variantSums.map((s) => [s.variantId, Number(s._sum.delta ?? 0)])),
+		pendingByVariant: new Map(variantPending.map((p) => [p.variantId, p._count._all])),
+		variants: variants.map((v) => ({
+			variantId: v.id, productId: v.productId, label: v.optionValues.length > 0 ? v.optionValues.join(' / ') : null, stockQuantity: v.stockQuantity
+		}))
 	};
 }
 
@@ -331,14 +346,16 @@ async function countPendingByProduct(productIds) {
 
 /**
  * One page of a product's movement history, newest first (ties by id), with the
- * fields the admin history shows. `meta.total` counts every movement of the product.
+ * fields the admin history shows, each with its `variantId` and the variant's
+ * `label` (absent for a default variant or a variant that is gone). `variantId`
+ * narrows it to one variant. `meta.total` counts every movement that matches.
  *
  * @param {string} productId
- * @param {{page: number, limit: number}} paging
+ * @param {{page: number, limit: number, variantId?: string}} paging
  * @returns {Promise<{data: object[], meta: object}>}
  */
-async function listMovementsOfProduct(productId, { page, limit }) {
-	const where = { productId: normalizeRecordId(productId) };
+async function listMovementsOfProduct(productId, { page, limit, variantId }) {
+	const where = { productId: normalizeRecordId(productId), ...(variantId && { variantId: normalizeRecordId(variantId) }) };
 	const { skip, take } = toSkipTake(page, limit);
 	const [rows, total] = await Promise.all([
 		prisma.stockMovement.findMany({
@@ -347,14 +364,16 @@ async function listMovementsOfProduct(productId, { page, limit }) {
 			skip,
 			take,
 			select: {
-				id: true, type: true, delta: true, target: true, stockAfter: true, status: true,
+				id: true, variantId: true, type: true, delta: true, target: true, stockAfter: true, status: true,
 				reason: true, createdBy: true, orderId: true, createdAt: true, appliedAt: true
 			}
 		}),
 		prisma.stockMovement.count({ where })
 	]);
+	const variants = await prisma.productVariant.findMany({ where: { productId: where.productId }, select: { id: true, optionValues: true } });
+	const labels = new Map(variants.filter((v) => v.optionValues.length > 0).map((v) => [v.id, v.optionValues.join(' / ')]));
 	return {
-		data: rows.map(({ id, ...rest }) => ({ _id: id, ...rest })),
+		data: rows.map(({ id, ...rest }) => ({ _id: id, ...rest, ...(labels.has(rest.variantId) && { label: labels.get(rest.variantId) }) })),
 		meta: buildPaginationMeta(total, { page, limit })
 	};
 }

@@ -255,9 +255,11 @@ async function recordFailure(movement, err) {
 }
 
 /**
- * Compare each product's cache with the sum of its applied movements, from the
- * source and without touching the cache. Returns only products that disagree.
- * Pending movements are reported alongside but are not counted on either side.
+ * Compare each product's cache, and each variant's, with the sum of its applied
+ * movements, from the source and without touching a cache. Returns only those
+ * that disagree; a variant row carries `variantId` and its `label` (null for a
+ * default variant). Pending movements are reported alongside but are not counted
+ * on either side.
  *
  * Fix a discrepancy by recording an `adjust` movement, never by writing the cache.
  *
@@ -265,25 +267,37 @@ async function recordFailure(movement, err) {
  * be checked before it commits.
  *
  * @param {{tx?: object|null}} [opts]
- * @returns {Promise<Array<{productId: string, name: string, cached: number, ledgerSum: number, diff: number, pending: number}>>}
+ * @returns {Promise<Array<{productId: string, variantId?: string, label?: string|null, name: string,
+ *                          cached: number, ledgerSum: number, diff: number, pending: number}>>}
  */
 async function reconcile(opts = {}) {
-	const { appliedSumByProduct, pendingByProduct, products } = await store.readLedgerState(opts.tx || null);
+	const state = await store.readLedgerState(opts.tx || null);
 
 	const discrepancies = [];
-	for (const product of products) {
-		const id = product.productId;
-		const cached = product.stockQuantity || 0;
-		const ledgerSum = appliedSumByProduct.get(id) || 0;
-		if (cached === ledgerSum) continue;
-		discrepancies.push({
-			productId: id,
-			name: product.name,
-			cached,
-			ledgerSum,
-			diff: cached - ledgerSum,
-			pending: pendingByProduct.get(id) || 0
-		});
+	const reportIfDrifted = (row, cachedValue, ledgerSum, pending) => {
+		const cached = cachedValue || 0;
+		if (cached === ledgerSum) return null;
+		discrepancies.push({ ...row, cached, ledgerSum, diff: cached - ledgerSum, pending });
+		return cached - ledgerSum;
+	};
+	const productDiffs = new Map();
+	const names = new Map();
+	for (const product of state.products) {
+		names.set(product.productId, product.name);
+		const diff = reportIfDrifted({ productId: product.productId, name: product.name }, product.stockQuantity,
+			state.appliedSumByProduct.get(product.productId) || 0, state.pendingByProduct.get(product.productId) || 0);
+		if (diff !== null) productDiffs.set(product.productId, diff);
+	}
+	// The Mongo rollback store keeps no variants.
+	for (const variant of state.variants ?? []) {
+		// A default variant is its product's whole stock: the drift its product row
+		// already shows is not repeated, a different one is.
+		const variantDiff = (variant.stockQuantity || 0) - (state.appliedSumByVariant.get(variant.variantId) || 0);
+		if (variant.label === null && productDiffs.get(variant.productId) === variantDiff) continue;
+		reportIfDrifted(
+			{ productId: variant.productId, variantId: variant.variantId, label: variant.label, name: names.get(variant.productId) },
+			variant.stockQuantity, state.appliedSumByVariant.get(variant.variantId) || 0, state.pendingByVariant.get(variant.variantId) || 0
+		);
 	}
 	return discrepancies;
 }

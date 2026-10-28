@@ -127,8 +127,8 @@ async function writeAndVerify(tx, store, auth) {
 
 	problems.push(...compareStore(store.data, await dataSnapshot.exportAll(tx)));
 
-	for (const { productId, cached, ledgerSum } of await reconcile({ tx })) {
-		problems.push(`Sản phẩm ${productId}: tồn kho ${cached}, lịch sử nhập xuất cho ${ledgerSum}`);
+	for (const { productId, variantId, cached, ledgerSum } of await reconcile({ tx })) {
+		problems.push(`${variantId ? `Phân loại ${variantId} của sản phẩm` : 'Sản phẩm'} ${productId}: tồn kho ${cached}, lịch sử nhập xuất cho ${ledgerSum}`);
 	}
 
 	const hashes = await tx.account.findMany({ where: { password: { not: null } }, select: { password: true } });

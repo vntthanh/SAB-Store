@@ -652,8 +652,8 @@ router.post('/restore', upload.single('dataFile'), async (req, res) => {
 		}
 	} catch (error) {
 		if (error instanceof StockMismatchError) {
-			const problems = error.mismatches.slice(0, 20).map(({ productId, name, cached, ledgerSum }) =>
-				`${name} (${productId}): tồn kho ${cached}, lịch sử nhập xuất cho ${ledgerSum}`);
+			const problems = error.mismatches.slice(0, 20).map(({ productId, variantId, label, name, cached, ledgerSum }) =>
+				`${name}${variantId ? ` — phân loại ${label ?? 'mặc định'}` : ''} (${variantId ?? productId}): tồn kho ${cached}, lịch sử nhập xuất cho ${ledgerSum}`);
 			return sendCodedError(res, ERROR_CODES.RESTORE_STOCK_MISMATCH, correlationId, problems);
 		}
 		if (isDuplicateKeyError(error)) {

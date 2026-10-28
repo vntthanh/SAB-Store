@@ -20,25 +20,38 @@ const { FINAL_ORDER_STATUSES } = orders;
 
 const MOVEMENT_SIGN = { order: -1, order_cancel: 1 };
 
-/** Units per product across all lines: a combo line and a retail line of one product count together. */
-function unitsByProduct(items) {
+/**
+ * Units per variant across all lines: a combo line and a retail line of one
+ * variant count together. A line that names no variant (a product without
+ * options on the Mongo rollback store, or a line of a product deleted before
+ * variants existed) counts as its product's, keyed by the product id.
+ *
+ * @returns {Map<string, {productId: string, variantId: string|null, quantity: number}>}
+ */
+function unitsByVariant(items) {
 	const units = new Map();
 	for (const item of items) {
-		const key = String(item.productId);
-		units.set(key, (units.get(key) || 0) + item.quantity);
+		const variantId = item.variantId == null ? null : String(item.variantId);
+		const key = variantId ?? String(item.productId);
+		const entry = units.get(key) || { productId: String(item.productId), variantId, quantity: 0 };
+		entry.quantity += item.quantity;
+		units.set(key, entry);
 	}
 	return units;
 }
 
 /**
- * Record one pending movement per product of an order. Call inside the
+ * Record one pending movement per variant of an order. Call inside the
  * transaction that writes the order, then `enqueueMovements` after it commits.
  *
  * `keyTag` makes the idempotency key unique per event of the order: creating is
  * `create`, while every cancel carries the order's status-history
  * length so its key stays unique per event of the order.
  *
- * @param {{orderId: *, items: Array<{productId: *, quantity: number}>, type: 'order'|'order_cancel',
+ * The idempotency key names the variant, or the product for a line without one,
+ * which is the key every order had before variants existed.
+ *
+ * @param {{orderId: *, items: Array<{productId: *, variantId?: *, quantity: number}>, type: 'order'|'order_cancel',
  *          keyTag: string, createdBy: string, reason: string}} movement
  * @param {{tx?: object, session?: object}} opts the transaction; callers may pass it as `tx` or `session`
  * @returns {Promise<Array<object>>}
@@ -48,15 +61,16 @@ async function recordOrderMovements({ orderId, items, type, keyTag, createdBy, r
 	const sign = MOVEMENT_SIGN[type];
 	const recorded = [];
 	// Sequential: one transaction cannot run concurrent operations.
-	for (const [productId, quantity] of unitsByProduct(items)) {
+	for (const [key, { productId, variantId, quantity }] of unitsByVariant(items)) {
 		recorded.push(await recordMovement({
 			productId,
+			variantId,
 			type,
 			delta: sign * quantity,
 			orderId,
 			reason,
 			createdBy,
-			idempotencyKey: `order:${keyIdOf(orderId)}:${keyIdOf(productId)}:${keyTag}`
+			idempotencyKey: `order:${keyIdOf(orderId)}:${keyIdOf(key)}:${keyTag}`
 		}, { tx }));
 	}
 	return recorded;
@@ -136,4 +150,4 @@ async function transitionOrderWithStock({ orderId, status, setFields, historyEnt
 	return result;
 }
 
-module.exports = { unitsByProduct, recordOrderMovements, transitionOrderWithStock };
+module.exports = { unitsByVariant, recordOrderMovements, transitionOrderWithStock };

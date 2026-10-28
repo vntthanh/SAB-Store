@@ -135,7 +135,7 @@ describe.skipIf(!POSTGRES)('stock movements per variant', () => {
 		await applyMovement(recorded._id);
 
 		const stored = await prisma().stockMovement.findUnique({ where: { id: recorded._id } });
-		expect(stored).toMatchObject({ status: 'applied', lastError: 'VARIANT_NOT_FOUND' });
+		expect(stored).toMatchObject({ status: 'applied', delta: 0, lastError: 'VARIANT_NOT_FOUND delta=2' });
 		expect(await variantStock(small.id)).toBe(3);
 		expect((await findProduct(product._id)).stockQuantity).toBe(3);
 	});

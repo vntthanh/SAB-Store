@@ -104,7 +104,9 @@ describe('admin stock routes', () => {
 			expect(res.body.data.map((m) => m.delta)).toEqual([3, 2]);
 			expect(res.body.meta).toEqual({ page: 1, limit: 2, total: 3, totalPages: 2 });
 			expect(Object.keys(res.body.data[0]).sort()).toEqual(
-				['_id', 'appliedAt', 'createdAt', 'createdBy', 'delta', 'orderId', 'reason', 'status', 'stockAfter', 'target', 'type'].sort()
+				['_id', 'appliedAt', 'createdAt', 'createdBy', 'delta', 'orderId', 'reason', 'status', 'stockAfter', 'target', 'type',
+					// The rollback store keeps no variants.
+					...(process.env.DATA_BACKEND === 'mongo' ? [] : ['variantId'])].sort()
 			);
 
 			const page2 = await request(app).get(`/api/admin/products/${product._id}/stock-movements?page=2&limit=2`).set('Cookie', cookies);

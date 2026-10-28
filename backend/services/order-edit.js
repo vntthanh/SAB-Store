@@ -15,19 +15,25 @@
  */
 const { orders, withTransaction } = require('../data');
 const { computeOrderPricing } = require('./pricing');
-const { unitsByProduct } = require('./stock');
+const { unitsByVariant } = require('./stock');
 const { recordMovement, keyIdOf } = require('./stock-ledger');
 
 const EDITABLE_ORDER_STATUSES = ['confirmed', 'paid'];
 
-/** Units gained (+) or lost (-) per product between two item sets; zero differences are dropped. */
+/**
+ * Units gained (+) or lost (-) per variant between two item sets, keyed by the
+ * variant id (the product id for a line without one); zero differences are dropped.
+ *
+ * @returns {Map<string, {productId: string, variantId: string|null, difference: number}>}
+ */
 function unitDifferences(previousItems, nextItems) {
-	const before = unitsByProduct(previousItems);
-	const after = unitsByProduct(nextItems);
+	const before = unitsByVariant(previousItems);
+	const after = unitsByVariant(nextItems);
 	const differences = new Map();
-	for (const productId of new Set([...before.keys(), ...after.keys()])) {
-		const difference = (after.get(productId) || 0) - (before.get(productId) || 0);
-		if (difference !== 0) differences.set(productId, difference);
+	for (const key of new Set([...before.keys(), ...after.keys()])) {
+		const { productId, variantId } = after.get(key) || before.get(key);
+		const difference = (after.get(key)?.quantity || 0) - (before.get(key)?.quantity || 0);
+		if (difference !== 0) differences.set(key, { productId, variantId, difference });
 	}
 	return differences;
 }
@@ -93,16 +99,17 @@ function editOrderItems({ orderId, items, expectedRevision, reason, actor }) {
 		const movements = [];
 		if (existing.stockDeducted === true) {
 			// Sequential: one transaction cannot run concurrent operations.
-			for (const [productId, difference] of differences) {
+			for (const [key, { productId, variantId, difference }] of differences) {
 				movements.push(await recordMovement({
 					productId,
+					variantId,
 					type: 'order_edit',
 					delta: -difference,
 					orderId: order._id,
 					// The admin's own reason lives in itemsHistory; the ledger caps text at 200 characters.
 					reason: `Sửa đơn ${order.orderCode}`,
 					createdBy: actor,
-					idempotencyKey: `order:${keyIdOf(order._id)}:${keyIdOf(productId)}:edit:${newRevision}`
+					idempotencyKey: `order:${keyIdOf(order._id)}:${keyIdOf(key)}:edit:${newRevision}`
 				}, { tx }));
 			}
 		}

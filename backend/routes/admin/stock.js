@@ -8,7 +8,7 @@
 const express = require('express');
 const { randomUUID } = require('crypto');
 const { products, stockLedger } = require('../../data');
-const { isRecordId } = require('../../data/ids');
+const { isRecordId, normalizeRecordId } = require('../../data/ids');
 const { asPageLimit } = require('../../utils/query-guard');
 const { ERROR_CODES } = require('../../constants/errorCodes');
 const { recordMovement, enqueueMovements, reconcile } = require('../../services/stock-ledger');
@@ -40,8 +40,10 @@ function parseAdjustment(body) {
 
 /**
  * @route   POST /api/admin/products/:id/stock-adjustments
- * @body    { mode: 'delta' | 'target', value: integer, reason: string }
- * @desc    Add/remove N units, or set the stock to X. 202: recorded, applied shortly.
+ * @body    { mode: 'delta' | 'target', value: integer, reason: string, variantId?: string }
+ * @desc    Add/remove N units of one variant, or set its stock to X. 202: recorded,
+ *          applied shortly. `variantId` may be left out only for a product without
+ *          options (its default variant); an archived variant can still be adjusted.
  */
 router.post('/products/:id/stock-adjustments', gated(async (req, res) => {
 	try {
@@ -51,14 +53,25 @@ router.post('/products/:id/stock-adjustments', gated(async (req, res) => {
 		const parsed = parseAdjustment(req.body);
 		if (parsed.error) return invalid(res, parsed.error);
 
-		const exists = await products.exists(id);
-		if (!exists) {
+		const given = req.body.variantId;
+		if (given != null && !isRecordId(given)) return invalid(res, 'ID phân loại không hợp lệ');
+		const variantId = given == null ? null : normalizeRecordId(given);
+
+		const product = await products.findById(id);
+		if (!product) {
 			return res.status(404).json({ success: false, code: ERROR_CODES.NOT_FOUND, message: 'Không tìm thấy sản phẩm' });
+		}
+		// The Mongo rollback store has no variants: the product is its own stock.
+		const variants = product.variants;
+		if (variants && variantId === null && product.options.length > 0) return invalid(res, 'Chọn phân loại cần điều chỉnh tồn kho');
+		if (variants && variantId !== null && !variants.some((variant) => variant._id === variantId)) {
+			return invalid(res, 'Phân loại không thuộc sản phẩm này');
 		}
 
 		const isTarget = parsed.mode === 'target';
 		const movement = await recordMovement({
 			productId: id,
+			variantId: variants ? variantId : null,
 			type: isTarget ? 'set_target' : 'adjust',
 			delta: isTarget ? undefined : parsed.value,
 			target: isTarget ? parsed.value : undefined,
@@ -77,8 +90,8 @@ router.post('/products/:id/stock-adjustments', gated(async (req, res) => {
 }));
 
 /**
- * @route   GET /api/admin/products/:id/stock-movements?page&limit
- * @desc    Movement history of one product, newest first.
+ * @route   GET /api/admin/products/:id/stock-movements?page&limit&variantId
+ * @desc    Movement history of one product, or of one of its variants, newest first.
  */
 router.get('/products/:id/stock-movements', async (req, res) => {
 	try {
@@ -87,7 +100,13 @@ router.get('/products/:id/stock-movements', async (req, res) => {
 			return res.status(400).json({ success: false, code: ERROR_CODES.VALIDATION_ERROR, message: 'ID sản phẩm không hợp lệ' });
 		}
 
-		const { data, meta } = await stockLedger.listMovementsOfProduct(id, asPageLimit(req.query.page, req.query.limit));
+		// A repeated key arrives as an array: refused, not read as "no filter".
+		const { variantId } = req.query;
+		if (variantId !== undefined && (typeof variantId !== 'string' || !isRecordId(variantId))) {
+			return res.status(400).json({ success: false, code: ERROR_CODES.VALIDATION_ERROR, message: 'ID phân loại không hợp lệ' });
+		}
+
+		const { data, meta } = await stockLedger.listMovementsOfProduct(id, { ...asPageLimit(req.query.page, req.query.limit), variantId: variantId || undefined });
 
 		res.json({ success: true, data, meta });
 	} catch (error) {
