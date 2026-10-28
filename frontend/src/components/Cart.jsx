@@ -1,6 +1,7 @@
 import React from 'react';
 import { useCart } from '../context/CartContext';
 import { getImageUrl } from '../utils/helpers';
+import { lineKey } from '../lib/cart-line';
 
 const Cart = () => {
 	const {
@@ -56,7 +57,7 @@ const Cart = () => {
 			<div className="p-4 max-h-96 overflow-y-auto">
 				<div className="space-y-4">
 					{cart.items.map(item => (
-						<div key={item.productId} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
+						<div key={lineKey(item)} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
 							{/* Product Image */}
 							<img
 								src={getImageUrl(item.image)}
@@ -72,6 +73,9 @@ const Cart = () => {
 								<h4 className="font-medium text-gray-900 text-sm line-clamp-2 mb-1">
 									{item.productName}
 								</h4>
+								{item.variantLabel && (
+									<p className="text-gray-500 text-xs mb-1 break-words">{item.variantLabel}</p>
+								)}
 								<p className="text-primary-600 font-semibold text-sm">
 									{formatCurrency(item.price)}
 								</p>
@@ -81,7 +85,7 @@ const Cart = () => {
 							<div className="flex flex-col items-center space-y-2">
 								<div className="flex items-center space-x-2">
 									<button
-										onClick={() => decreaseQuantity(item.productId)}
+										onClick={() => decreaseQuantity(lineKey(item))}
 										className="w-7 h-7 bg-gray-200 hover:bg-gray-300 rounded-full flex items-center justify-center transition-colors"
 									>
 										<i className="fas fa-minus text-xs"></i>
@@ -92,7 +96,7 @@ const Cart = () => {
 									</span>
 
 									<button
-										onClick={() => increaseQuantity(item.productId)}
+										onClick={() => increaseQuantity(lineKey(item))}
 										className="w-7 h-7 bg-primary-200 hover:bg-primary-300 rounded-full flex items-center justify-center transition-colors"
 										disabled={item.quantity >= 99}
 									>

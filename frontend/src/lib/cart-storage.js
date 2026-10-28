@@ -29,8 +29,16 @@ const remove = (storage, key) => {
 	}
 };
 
+// variantId/variantLabel are optional: carts saved before variants existed have neither.
+const isOptionalString = (value) => value === undefined || value === null || typeof value === 'string';
+
 const isLine = (line) =>
-	line && typeof line.productId === 'string' && Number.isInteger(line.quantity) && line.quantity > 0;
+	line &&
+	typeof line.productId === 'string' &&
+	Number.isInteger(line.quantity) &&
+	line.quantity > 0 &&
+	isOptionalString(line.variantId) &&
+	isOptionalString(line.variantLabel);
 
 const parseItems = (raw) => {
 	if (!raw) return [];

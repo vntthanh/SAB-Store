@@ -272,6 +272,9 @@ const OrderTrackingPage = () => {
 										<div key={index} className="flex justify-between items-center py-3 border-b border-gray-100 last:border-b-0">
 											<div className="flex-1">
 												<h4 className="font-medium text-gray-900">{item.productName}</h4>
+												{item.variantLabel && (
+													<p className="text-gray-500 text-xs break-words">{item.variantLabel}</p>
+												)}
 												<p className="text-gray-600 text-sm">
 													{formatCurrency(item.price)} x {item.quantity}
 												</p>

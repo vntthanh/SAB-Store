@@ -1,11 +1,20 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useCart, CART_MAX_QUANTITY } from '../context/CartContext';
 import { productService } from '../services/api';
 import usePublicDetail from '../hooks/use-public-detail';
-import { getImageUrl } from '../utils/helpers';
 import ShareButton from '../components/ShareButton';
 import GatedStorefrontView from '../components/shop/GatedStorefrontView';
+import ProductGallery from '../components/shop/ProductGallery';
+import VariantPicker from '../components/shop/VariantPicker';
+import {
+	chosenVariant,
+	emptyChoice,
+	formatPriceRange,
+	hasOptions,
+	pickValue,
+	priceRange
+} from '../lib/variant-choice';
 import { storefrontPath } from '../lib/storefront-tabs';
 import NotFoundPage from './NotFoundPage';
 
@@ -31,6 +40,7 @@ const ProductDetailPage = () => {
 
 	const { data: product, status, retry, error } = usePublicDetail(productService.getByCode, code);
 	const [quantity, setQuantity] = useState(1);
+	const [choice, setChoice] = useState([]);
 
 	// The cart the product goes into is its own storefront's, not whichever tab was open before.
 	useEffect(() => {
@@ -39,7 +49,16 @@ const ProductDetailPage = () => {
 
 	// Each loaded product restarts at its own minimum order quantity.
 	useEffect(() => {
-		if (product) setQuantity(Math.max(1, product.minOrderQuantity || 1));
+		if (product) {
+			setQuantity(Math.max(1, product.minOrderQuantity || 1));
+			setChoice(emptyChoice(product));
+		}
+	}, [product]);
+
+	// Stable identity: the gallery re-focuses the cover whenever this array changes.
+	const images = useMemo(() => {
+		if (!product) return [];
+		return Array.isArray(product.images) && product.images.length > 0 ? product.images : [product.imageUrl];
 	}, [product]);
 
 	const min = Math.max(1, product?.minOrderQuantity || 1);
@@ -54,6 +73,11 @@ const ProductDetailPage = () => {
 
 	// The field may hold '' while the customer is typing; step from 0 then.
 	const step = (delta) => setQuantity((q) => clamp((Number.parseInt(q, 10) || 0) + delta));
+
+	const withOptions = hasOptions(product);
+	// The effect above resets the choice a render after the product loads; until then it may be stale.
+	const activeChoice = withOptions && choice.length === product.options.length ? choice : emptyChoice(product);
+	const variant = withOptions ? chosenVariant(product, activeChoice) : null;
 
 	if (status === 'loading') return <DetailSkeleton />;
 	if (status === 'gated') return <GatedStorefrontView error={error} onAccessChanged={retry} />;
@@ -80,23 +104,29 @@ const ProductDetailPage = () => {
 				← Về cửa hàng
 			</Link>
 			<div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-				<img
-					src={getImageUrl(product.imageUrl)}
-					alt={product.name}
-					className="w-full rounded-lg object-cover aspect-square bg-gray-100"
-					onError={(e) => {
-						e.target.onerror = null;
-						e.target.src = '/fallback-product.png';
-					}}
-				/>
+				<ProductGallery images={images} alt={product.name} focusImage={variant?.imageUrl} />
 				<div className="min-w-0">
 					{product.category && <span className="badge-primary">{product.category}</span>}
 					<h1 className="text-2xl md:text-3xl font-bold text-gray-900 mt-2 mb-3 break-words">
 						{product.name}
 					</h1>
-					<p className="text-2xl font-bold text-primary-600 mb-4">{formatCurrency(product.price)}</p>
+					<p className="text-2xl font-bold text-primary-600 mb-4">
+						{withOptions
+							? variant
+								? formatCurrency(variant.effectivePrice)
+								: formatPriceRange(priceRange(product, activeChoice), formatCurrency)
+							: formatCurrency(product.price)}
+					</p>
 					{product.description && (
 						<p className="text-gray-700 mb-6 whitespace-pre-line break-words">{product.description}</p>
+					)}
+
+					{withOptions && (
+						<VariantPicker
+							product={product}
+							choice={activeChoice}
+							onPick={(optionIndex, value) => setChoice(pickValue(activeChoice, optionIndex, value))}
+						/>
 					)}
 
 					{product.available && (
@@ -141,12 +171,12 @@ const ProductDetailPage = () => {
 							<button
 								type="button"
 								className="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
-								disabled={!canOrder}
+								disabled={!canOrder || (withOptions && !variant)}
 								title={canOrder ? undefined : 'Chế độ xem trước: không thể đặt hàng'}
-								onClick={() => addToCart(product, clamp(quantity))}
+								onClick={() => addToCart(product, clamp(quantity), variant)}
 							>
 								<i className="fas fa-plus mr-2"></i>
-								Thêm vào giỏ
+								{withOptions && !variant ? 'Chọn phân loại' : 'Thêm vào giỏ'}
 							</button>
 						)}
 						<ShareButton path={product.path} title={product.name} mode="share" />

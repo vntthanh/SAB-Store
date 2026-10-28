@@ -89,6 +89,20 @@ describe('per-storefront carts', () => {
 		expect(loadCart(storage, 's')).toEqual([LINE]);
 	});
 
+	it('loads variant lines next to old lines without a variant', () => {
+		const variantLine = { ...LINE, variantId: 'v1', variantLabel: 'Đỏ / M' };
+		const storage = makeStorage();
+		saveCart(storage, 's', [LINE, variantLine]);
+		expect(loadCart(storage, 's')).toEqual([LINE, variantLine]);
+	});
+
+	it('discards a line whose variant fields are not strings', () => {
+		const storage = makeStorage({
+			[cartKey('s')]: JSON.stringify({ items: [{ ...LINE, variantId: 7 }, { ...LINE, variantLabel: {} }] }),
+		});
+		expect(loadCart(storage, 's')).toEqual([]);
+	});
+
 	it('survives a storage that throws', () => {
 		const broken = {
 			getItem: () => {

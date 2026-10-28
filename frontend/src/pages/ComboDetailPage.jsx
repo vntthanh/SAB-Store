@@ -23,7 +23,7 @@ const DetailSkeleton = () => (
 
 const ComboDetailPage = () => {
 	const { code } = useParams();
-	const { cart, formatCurrency, setActiveStorefront } = useCart();
+	const { getProductQuantity, formatCurrency, setActiveStorefront } = useCart();
 
 	const { data: combo, status, retry, error } = usePublicDetail(comboService.getByCode, code);
 
@@ -50,10 +50,7 @@ const ComboDetailPage = () => {
 
 	// Any product of the requirement's category counts, since the combo is category-based.
 	const pickedFor = (requirement) => {
-		const ids = new Set((requirement.products || []).map((product) => product._id));
-		return cart.items
-			.filter((item) => ids.has(item.productId))
-			.reduce((sum, item) => sum + item.quantity, 0);
+		return (requirement.products || []).reduce((sum, product) => sum + getProductQuantity(product._id), 0);
 	};
 
 	return (

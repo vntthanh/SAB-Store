@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useCart, CART_MAX_QUANTITY } from '../context/CartContext';
 import { getImageUrl } from '../utils/helpers';
 import { productPath } from '../utils/share-links';
+import { lineKey } from '../lib/cart-line';
+import { formatPriceRange, hasOptions, priceRange } from '../lib/variant-choice';
 
 // Defined at module level so a re-render does not remount the image.
 const DetailLink = ({ to, className, children }) =>
@@ -18,7 +20,10 @@ const ProductCard = ({ product }) => {
 		canOrder
 	} = useCart();
 
-	const quantity = getItemQuantity(product._id);
+	// A product with options is added from its page, where the variant is picked.
+	const withOptions = hasOptions(product);
+	const cartKey = lineKey({ productId: product._id });
+	const quantity = getItemQuantity(cartKey);
 	// Legacy records without a public code have no detail page to link to.
 	const detailPath = product.path ?? productPath(product);
 
@@ -28,12 +33,12 @@ const ProductCard = ({ product }) => {
 
 	const handleIncrease = (e) => {
 		e.stopPropagation();
-		increaseQuantity(product._id);
+		increaseQuantity(cartKey);
 	};
 
 	const handleDecrease = (e) => {
 		e.stopPropagation();
-		decreaseQuantity(product._id);
+		decreaseQuantity(cartKey);
 	};
 
 	return (
@@ -68,14 +73,24 @@ const ProductCard = ({ product }) => {
 				</p>
 				<div className="flex items-center justify-between mb-4">
 					<span className="text-xl font-bold text-primary-600">
-						{formatCurrency(product.price)}
+						{withOptions ? formatPriceRange(priceRange(product), formatCurrency) : formatCurrency(product.price)}
 					</span>
 				</div>
 				<div className="flex-1"></div>
 				{/* Add to Cart Controls */}
 				{product.available && (
 					<div className="flex items-center justify-between mt-4">
-						{quantity === 0 ? (
+						{withOptions ? (
+							detailPath ? (
+								<Link to={detailPath} className="btn-primary w-full text-center">
+									Chọn phân loại
+								</Link>
+							) : (
+								<button type="button" disabled className="btn-primary w-full opacity-50 cursor-not-allowed">
+									Chọn phân loại
+								</button>
+							)
+						) : quantity === 0 ? (
 							<button
 								onClick={handleAddToCart}
 								disabled={!canOrder}
