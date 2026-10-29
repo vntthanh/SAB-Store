@@ -20,3 +20,11 @@ onlyBuiltDependencies:
   - "@embedded-postgres/linux-ppc64"
   - "@embedded-postgres/linux-x64"
   - "@embedded-postgres/windows-x64"
+
+# Security floors for transitive deps whose parents pin the vulnerable
+# version (monaco-editor pins dompurify exactly, @better-auth/core pins zod).
+# Drop an entry once every parent resolves to the patched version itself.
+overrides:
+  dompurify@<3.4.17: 3.4.17
+  zod@>=4.0.0 <4.6.7: ^4.6.7
+  body-parser@>=2.0.0 <2.4.0: ^2.4.0
