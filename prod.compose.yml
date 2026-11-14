@@ -135,7 +135,7 @@ services:
 
   # SAB Store PostgreSQL. Guard, tuning and healthcheck: see coolify.compose.yml.
   sabstore-postgres:
-    image: postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:17-alpine@sha256:34261f594522cf41dfcb76aefd42b9d201098b0e6b23c9c68733f169e4218b6f
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-c"]
     command:
